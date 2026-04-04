@@ -2728,6 +2728,84 @@ body.dark-mode .profile-report-popover {
     .search-discover-grid {
         gap: 0.55rem;
     }
+
+    .comments-inline-list {
+        max-height: none;
+        overflow: visible;
+        padding-right: 0;
+    }
+
+    .comment-thread-item {
+        grid-template-columns: 32px minmax(0, 1fr);
+        gap: 0.6rem;
+    }
+
+    .comment-thread-avatar .user-avatar,
+    .comment-thread-avatar .emoji-avatar {
+        width: 32px;
+        height: 32px;
+    }
+
+    .comment-thread-avatar .emoji-avatar {
+        font-size: 0.82rem;
+    }
+
+    .comment-thread-head {
+        align-items: flex-start;
+        gap: 0.24rem 0.4rem;
+    }
+
+    .comment-thread-time {
+        width: 100%;
+        margin-left: 0;
+        font-size: 0.76rem;
+    }
+
+    .comment-thread-actions {
+        flex-wrap: wrap;
+        gap: 0.5rem 0.75rem;
+    }
+
+    .comment-replies summary {
+        display: inline-flex;
+        width: fit-content;
+        max-width: 100%;
+        white-space: normal;
+        line-height: 1.25;
+    }
+
+    .comment-replies-list {
+        gap: 0.6rem;
+    }
+
+    .nested-comment {
+        margin-left: 0.6rem;
+    }
+
+    .inline-comments-composer {
+        grid-template-columns: 32px minmax(0, 1fr) auto;
+        gap: 0.55rem;
+    }
+
+    .inline-comments-composer .user-avatar,
+    .inline-comments-composer .emoji-avatar {
+        width: 32px;
+        height: 32px;
+    }
+
+    .comments-compose-main {
+        min-width: 0;
+    }
+
+    .comments-compose-main input[type="text"] {
+        min-width: 0;
+        padding: 0.68rem 0.8rem;
+    }
+
+    .comments-post-button {
+        min-height: 38px;
+        padding: 0.6rem 0.78rem;
+    }
 }
 
 @media (min-width: 1101px) {
