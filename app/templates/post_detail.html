@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="post-detail-page">
+<section class="feed-list">
+    {% include "_post_card.html" %}
+</section>
+<section class="feed-header">
+    <h2>Replies</h2>
+</section>
+<section class="feed-list comment-thread">
+    {% for post in replies %}
+        {% include "_comment_item.html" %}
+    {% else %}
+    <div class="card empty-state-card"><p>No replies yet.</p></div>
+    {% endfor %}
+</section>
+</section>
+{% endblock %}

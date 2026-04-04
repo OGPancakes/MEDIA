@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card notifications-card">
+    <div class="notifications-head">
+        <h2>Notifications</h2>
+        <p class="muted">Your latest activity and alerts.</p>
+    </div>
+    {% for note in notifications %}
+    <a class="notification-item" href="{{ note.link or '/' }}">
+        <div class="notification-badge">{{ note.type|title }}</div>
+        <div class="notification-copy">
+            <strong>{{ note.message }}</strong>
+            <span>{{ note.created_at|timesince }}</span>
+        </div>
+    </a>
+    {% else %}
+    <p class="muted">No notifications yet.</p>
+    {% endfor %}
+</section>
+{% endblock %}

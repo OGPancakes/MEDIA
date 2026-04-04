@@ -1,0 +1,26 @@
+{% from "_avatar.html" import render_avatar with context %}
+{% from "_verified.html" import render_verified with context %}
+<article class="card comment-item">
+    <div class="comment-head">
+        <a href="{{ url_for('profile', username=post.author.username) }}" class="user-row">
+            {{ render_avatar(post.author, "user-avatar") }}
+            <div class="user-copy">
+                <strong class="name-line">{{ post.author.display_name }}{{ render_verified(post.author) }}</strong>
+                <span>@{{ post.author.username }}</span>
+            </div>
+        </a>
+        <span class="comment-time">{{ post.created_at|timesince }}</span>
+    </div>
+    {% if post.body %}
+    <p class="comment-body">{{ post.body }}</p>
+    {% endif %}
+    {% if post.media_path %}
+        {% if post.media_type == 'video' %}
+        <video controls class="comment-media">
+            <source src="{{ url_for('static', filename=post.media_path) }}">
+        </video>
+        {% else %}
+        <img class="comment-media" src="{{ url_for('static', filename=post.media_path) }}" alt="Comment media">
+        {% endif %}
+    {% endif %}
+</article>

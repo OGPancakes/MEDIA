@@ -1,0 +1,103 @@
+{% from "_avatar.html" import render_avatar with context %}
+{% from "_verified.html" import render_verified with context %}
+<article class="card post-card {% if post.reposted_by %}repost-card{% endif %}">
+    {% if post.reposted_by %}
+    <p class="repost-label">@{{ post.reposted_by.username }} reposted this</p>
+    {% endif %}
+    <div class="post-head">
+        <a href="{{ url_for('profile', username=post.author.username) }}" class="user-row">
+            {{ render_avatar(post.author, "user-avatar") }}
+            <div>
+                <strong class="name-line">{{ post.author.display_name }}{{ render_verified(post.author) }}</strong>
+                <span>@{{ post.author.username }}</span>
+            </div>
+        </a>
+        <div class="post-meta">
+            <span>{{ (post.timeline_created_at if post.timeline_created_at is defined else post.created_at)|timesince }}</span>
+            {% if post.author.is_creator %}<span class="pill creator">Creator</span>{% endif %}
+        </div>
+    </div>
+
+    {% if post.reply_to_id %}
+        {% if post.reply_to and post.reply_to.author %}
+        <p class="reply-line">Comment on <a href="{{ url_for('post_detail', post_id=post.reply_to.id) }}">@{{ post.reply_to.author.username }}'s post</a></p>
+        {% else %}
+        <p class="reply-line">Comment on a deleted post</p>
+        {% endif %}
+    {% endif %}
+
+    {% if post.body %}
+    <p class="post-body">{{ post.body }}</p>
+    {% endif %}
+
+    {% if post.quote_post_id %}
+        {% if post.quote_post and post.quote_post.author %}
+    <div class="quote-card highlighted-quote">
+        <span class="quote-label">Quoted post</span>
+        <strong>@{{ post.quote_post.author.username }}</strong>
+        <p>{{ post.quote_post.body or 'Media post' }}</p>
+    </div>
+        {% else %}
+    <div class="quote-card highlighted-quote deleted-quote">
+        <span class="quote-label">Quoted post</span>
+        <p>This quoted post was deleted.</p>
+    </div>
+        {% endif %}
+    {% endif %}
+
+    {% if post.media_path %}
+        {% if post.media_type == 'video' %}
+        <video controls class="media-frame">
+            <source src="{{ url_for('static', filename=post.media_path) }}">
+        </video>
+        {% else %}
+        <img class="media-frame" src="{{ url_for('static', filename=post.media_path) }}" alt="Post media">
+        {% endif %}
+    {% endif %}
+
+    <div class="post-stats">
+        <span>{{ post.view_count }} views</span>
+        <span>{{ post.like_count }} likes</span>
+        <span>{{ post.comment_count }} comments</span>
+        <span>{{ post.repost_count }} reposts</span>
+        <span>{{ post.bookmark_count }} saves</span>
+    </div>
+
+    <div class="post-actions">
+        {% if current_user %}
+        <form action="{{ url_for('like_post', post_id=post.id) }}" method="post"><button class="icon-action {% if has_liked(current_user, post) %}active like-action{% endif %}" type="submit" title="{% if has_liked(current_user, post) %}Unlike{% else %}Like{% endif %}" aria-label="{% if has_liked(current_user, post) %}Unlike{% else %}Like{% endif %}" data-tooltip="{% if has_liked(current_user, post) %}Unlike{% else %}Like{% endif %}"><img src="{{ url_for('static', filename='images/icon-like.svg') }}" alt=""></button></form>
+        <form action="{{ url_for('repost_post', post_id=post.id) }}" method="post"><button class="icon-action {% if has_reposted(current_user, post) %}active repost-action{% endif %}" type="submit" title="{% if has_reposted(current_user, post) %}Undo repost{% else %}Repost{% endif %}" aria-label="{% if has_reposted(current_user, post) %}Undo repost{% else %}Repost{% endif %}" data-tooltip="{% if has_reposted(current_user, post) %}Undo repost{% else %}Repost{% endif %}"><img src="{{ url_for('static', filename='images/icon-repost.svg') }}" alt=""></button></form>
+        <form action="{{ url_for('bookmark_post', post_id=post.id) }}" method="post"><button class="icon-action {% if has_bookmarked(current_user, post) %}active save-action{% endif %}" type="submit" title="{% if has_bookmarked(current_user, post) %}Unsave{% else %}Save{% endif %}" aria-label="{% if has_bookmarked(current_user, post) %}Unsave{% else %}Save{% endif %}" data-tooltip="{% if has_bookmarked(current_user, post) %}Unsave{% else %}Save{% endif %}"><img src="{{ url_for('static', filename='images/icon-bookmark.svg') }}" alt=""></button></form>
+        <button class="icon-action comment-launch" type="button" title="Comment" aria-label="Comment" data-tooltip="Comment" data-comments-url="{{ url_for('post_comments', post_id=post.id) }}" data-post-id="{{ post.id }}"><img src="{{ url_for('static', filename='images/icon-comment.svg') }}" alt=""></button>
+        <details>
+            <summary class="icon-action quote-action" title="Quote" aria-label="Quote" data-tooltip="Quote"><img src="{{ url_for('static', filename='images/icon-quote.svg') }}" alt=""></summary>
+            <form action="{{ url_for('create_post') }}" method="post" enctype="multipart/form-data" class="inline-form">
+                <textarea name="body" rows="3" placeholder="Add your take"></textarea>
+                <input type="hidden" name="quote_post_id" value="{{ post.id }}">
+                <input class="file-input" type="file" name="media">
+                <button type="submit">Quote</button>
+            </form>
+        </details>
+        {% if current_user.id == post.user_id or current_user.is_admin %}
+        <details>
+            <summary class="icon-action" title="Edit" aria-label="Edit" data-tooltip="Edit">✎</summary>
+            <form action="{{ url_for('edit_post', post_id=post.id) }}" method="post" class="inline-form">
+                <textarea name="body" rows="3">{{ post.body }}</textarea>
+                <button type="submit">Save changes</button>
+            </form>
+        </details>
+        <form action="{{ url_for('delete_post', post_id=post.id) }}" method="post"><button type="submit" class="icon-action danger-icon" title="Delete" aria-label="Delete" data-tooltip="Delete">🗑</button></form>
+        {% endif %}
+        <details>
+            <summary class="icon-action danger-icon" title="Report" aria-label="Report" data-tooltip="Report"><img src="{{ url_for('static', filename='images/icon-report.svg') }}" alt=""></summary>
+            <form action="{{ url_for('report') }}" method="post" class="inline-form">
+                <input type="hidden" name="post_id" value="{{ post.id }}">
+                <input type="text" name="reason" placeholder="Reason">
+                <button type="submit">Send report</button>
+            </form>
+        </details>
+        {% endif %}
+    </div>
+
+    <div class="inline-comments-host" data-comments-host="{{ post.id }}" hidden></div>
+</article>

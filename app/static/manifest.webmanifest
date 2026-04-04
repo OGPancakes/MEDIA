@@ -1,0 +1,22 @@
+{
+  "name": "Politics In Action Social",
+  "short_name": "PIA Social",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f7ff",
+  "theme_color": "#0b3d91",
+  "description": "Politics In Action social app for posts, messages, stories, and profiles.",
+  "icons": [
+    {
+      "src": "/static/images/pia-logo.jpeg",
+      "sizes": "192x192",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "/static/images/pia-logo.jpeg",
+      "sizes": "512x512",
+      "type": "image/jpeg"
+    }
+  ]
+}

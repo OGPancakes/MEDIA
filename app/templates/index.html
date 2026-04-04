@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% from "_avatar.html" import render_avatar with context %}
+{% block content %}
+{% if not current_user %}
+<section class="auth-hero-shell">
+    <div class="auth-brand-stage">
+        <div class="auth-brand-mark">
+            <img src="{{ url_for('static', filename='images/pia-logo.jpeg') }}" alt="Politics In Action logo" class="auth-mark-logo">
+        </div>
+    </div>
+
+    <div class="auth-stack">
+        <div class="auth-copy-block">
+            <p class="eyebrow light">Politics In Action</p>
+            <h1>Happening now.</h1>
+            <h2>Join today.</h2>
+            <p class="auth-subcopy">Share posts, photos, video, stories, hashtags, messages, and trending conversations in one place.</p>
+        </div>
+
+        <div class="auth-cta-group">
+            <a class="auth-pill auth-pill-primary" href="{{ url_for('register') }}">Create account</a>
+            <div class="auth-divider dark"><span>or</span></div>
+            <div class="auth-panel-card dark-card">
+                <h3>Quick sign up</h3>
+                <form action="{{ url_for('register') }}" method="post" class="stack-form">
+                    <input type="text" name="display_name" placeholder="Display name" required>
+                    <input type="text" name="username" placeholder="Username" required>
+                    <input type="email" name="email" placeholder="Email" required>
+                    <input type="password" name="password" placeholder="Password" required>
+                    <button type="submit">Sign up with password</button>
+                </form>
+                <p class="tiny-copy">By signing up, you agree to the platform rules and community standards.</p>
+            </div>
+            <div class="auth-login-block">
+                <p>Already have an account?</p>
+                <a class="auth-pill auth-pill-outline" href="{{ url_for('login') }}">Sign in</a>
+            </div>
+        </div>
+    </div>
+</section>
+{% else %}
+{% set page_mode = page_mode or 'feed' %}
+{% if page_mode == 'feed' %}
+<section class="home-flow">
+    <section class="card feed-control-panel">
+        <section class="feed-tabs">
+            <a class="feed-tab {% if feed_mode == 'home' %}active{% endif %}" href="{{ url_for('index', tab='home') }}">Home</a>
+            <a class="feed-tab {% if feed_mode == 'fyp' %}active{% endif %}" href="{{ url_for('index', tab='fyp') }}">FYP</a>
+            <a class="feed-tab {% if feed_mode == 'breaking' %}active{% endif %}" href="{{ url_for('index', tab='breaking') }}">Breaking</a>
+        </section>
+
+        <section class="feed-story-row">
+            <div class="stories-inline-head">
+                <h3>Stories</h3>
+                <a href="{{ url_for('search') }}">Discover</a>
+            </div>
+            <div class="stories-inline-scroll">
+                <form action="{{ url_for('create_story') }}" method="post" enctype="multipart/form-data" class="story-inline-add">
+                    <label class="story-inline-chip story-inline-add-chip">
+                        <span class="story-ring {% if story_owner_has_active_story(current_user) %}active-story-ring{% endif %}">
+                            {{ render_avatar(current_user, "user-avatar") }}
+                            <span class="story-add-badge">+</span>
+                        </span>
+                        <span>Your Story</span>
+                        <input type="file" name="media" hidden onchange="this.form.requestSubmit()">
+                        <input type="hidden" name="body" value="">
+                    </label>
+                </form>
+                {% for story in active_stories %}
+                <a class="story-inline-chip" href="{{ url_for('story_view', story_id=story.id) }}">
+                    <span class="story-ring active-story-ring">
+                        {{ render_avatar(story.author, "user-avatar") }}
+                    </span>
+                    <span>@{{ story.author.username }}</span>
+                </a>
+                {% else %}
+                <div class="story-inline-empty">
+                    <span>Fresh stories will show here.</span>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="composer">
+            <form action="{{ url_for('create_post') }}" method="post" enctype="multipart/form-data">
+                <textarea name="body" rows="4" placeholder="Post to the timeline, use #hashtags and @mentions"></textarea>
+                <div class="form-row">
+                    <input class="file-input" type="file" name="media">
+                    <button type="submit">Publish post</button>
+                </div>
+            </form>
+        </section>
+    </section>
+</section>
+{% endif %}
+<section class="simple-feed-page {% if page_mode != 'feed' %}content-start-page{% endif %}">
+{% if active_polls and page_mode == 'feed' %}
+    {% for poll in active_polls %}
+        {% include "_poll_card.html" %}
+    {% endfor %}
+{% endif %}
+<section class="feed-header">
+    <h2>{{ title }}</h2>
+    <p class="muted">{{ posts|length }} posts showing</p>
+</section>
+
+<section class="feed-list" id="live-feed" data-feed-mode="{{ feed_mode or 'home' }}" data-latest-post-id="{{ latest_post_id or 0 }}">
+    {% include "_feed_items.html" %}
+</section>
+</section>
+{% if current_user and page_mode == 'feed' %}
+<script>
+    const liveFeed = document.getElementById("live-feed");
+    if (liveFeed) {
+        let latestPostId = Number(liveFeed.dataset.latestPostId || "0");
+        const feedMode = liveFeed.dataset.feedMode || "home";
+        setInterval(async () => {
+            try {
+                const response = await fetch(`/api/feed?tab=${encodeURIComponent(feedMode)}`, {headers: {"X-Requested-With": "fetch"}});
+                if (!response.ok) return;
+                const data = await response.json();
+                if ((data.latest_post_id || 0) !== latestPostId) {
+                    liveFeed.innerHTML = data.html;
+                    latestPostId = data.latest_post_id || 0;
+                    liveFeed.dataset.latestPostId = String(latestPostId);
+                }
+            } catch (error) {
+                console.debug("Feed refresh skipped", error);
+            }
+        }, 12000);
+    }
+</script>
+{% endif %}
+{% endif %}
+{% endblock %}

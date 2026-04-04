@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+    <h2>Admin control panel</h2>
+    <p class="muted">Log in with username `Johnny` and password `admin` to open this dashboard directly.</p>
+</section>
+
+<section class="stats-grid">
+    {% for label, value in stats.items() %}
+    <div class="card stat-card">
+        <span class="muted">{{ label|title }}</span>
+        <strong>{{ value }}</strong>
+    </div>
+    {% endfor %}
+</section>
+
+<section class="card">
+    <h2>Open reports</h2>
+    {% for report in reports %}
+    <div class="admin-row">
+        <div>
+            <strong>{{ report.reason }}</strong>
+            <p>Status: {{ report.status }}</p>
+            {% if report.reported_user %}<p>User: @{{ report.reported_user.username }}</p>{% endif %}
+            {% if report.post %}<p>Post ID: {{ report.post.id }}</p>{% endif %}
+        </div>
+        <form method="post">
+            <input type="hidden" name="action" value="resolve_report">
+            <input type="hidden" name="target_id" value="{{ report.id }}">
+            <button type="submit">Resolve</button>
+        </form>
+    </div>
+    {% else %}
+    <p class="muted">No reports right now.</p>
+    {% endfor %}
+</section>
+
+<section class="card">
+    <h2>User management</h2>
+    {% for user in users %}
+    <div class="admin-row">
+        <div>
+            <strong>{{ user.display_name }}</strong>
+            <p>@{{ user.username }}</p>
+            <p>
+                {% if user.is_admin %}Admin · {% endif %}
+                {% if user.is_verified %}Verified · {% endif %}
+                {% if user.is_creator %}Creator · {% endif %}
+                {% if user.is_banned %}Banned{% elif user.is_timed_out %}Timed out{% else %}Active{% endif %}
+            </p>
+        </div>
+        <div class="actions">
+            <details>
+                <summary class="button ghost">Edit details</summary>
+                <form method="post" class="stack-form admin-edit-form">
+                    <input type="hidden" name="action" value="edit_user">
+                    <input type="hidden" name="target_id" value="{{ user.id }}">
+                    <input type="text" name="display_name" value="{{ user.display_name }}" placeholder="Display name">
+                    <input type="text" name="username" value="{{ user.username }}" placeholder="Username">
+                    <input type="email" name="email" value="{{ user.email }}" placeholder="Email">
+                    <textarea name="bio" rows="3" placeholder="Bio">{{ user.bio }}</textarea>
+                    <label><input type="checkbox" name="is_verified" {% if user.is_verified %}checked{% endif %}> Verified</label>
+                    <label><input type="checkbox" name="is_creator" {% if user.is_creator %}checked{% endif %}> Creator</label>
+                    <label><input type="checkbox" name="is_breaking_news" {% if user.is_breaking_news %}checked{% endif %}> Breaking news</label>
+                    <label><input type="checkbox" name="is_banned" {% if user.is_banned %}checked{% endif %}> Banned</label>
+                    <label><input type="checkbox" name="timeout_user" {% if user.is_timed_out %}checked{% endif %}> 1 day timeout</label>
+                    <button type="submit">Save changes</button>
+                </form>
+            </details>
+            <form method="post">
+                <input type="hidden" name="action" value="impersonate_user">
+                <input type="hidden" name="target_id" value="{{ user.id }}">
+                <button type="submit">Login as</button>
+            </form>
+            <form method="post">
+                <input type="hidden" name="action" value="delete_user">
+                <input type="hidden" name="target_id" value="{{ user.id }}">
+                <button type="submit" class="danger-link">Delete account</button>
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+</section>
+
+<section class="card">
+    <h2>Polls</h2>
+    <form method="post" class="stack-form admin-edit-form">
+        <input type="hidden" name="action" value="create_poll">
+        <input type="text" name="question" placeholder="Poll question">
+        <textarea name="options" rows="4" placeholder="One option per line"></textarea>
+        <label><input type="checkbox" name="is_hidden_results"> Hide results from users</label>
+        <label><input type="checkbox" name="is_closed"> Create as closed</label>
+        <button type="submit">Create poll</button>
+    </form>
+    {% for poll in polls %}
+    <div class="admin-row">
+        <div>
+            <strong>{{ poll.question }}</strong>
+            <p>{% if poll.is_active %}Active{% else %}Closed{% endif %} · {% if poll.is_hidden_results %}Hidden results{% else %}Visible results{% endif %}</p>
+        </div>
+        <div class="actions">
+            <form method="post">
+                <input type="hidden" name="action" value="toggle_poll_visibility">
+                <input type="hidden" name="target_id" value="{{ poll.id }}">
+                <button type="submit">{% if poll.is_hidden_results %}Show results{% else %}Hide results{% endif %}</button>
+            </form>
+            <form method="post">
+                <input type="hidden" name="action" value="toggle_poll_active">
+                <input type="hidden" name="target_id" value="{{ poll.id }}">
+                <button type="submit">{% if poll.is_active %}Close poll{% else %}Reopen poll{% endif %}</button>
+            </form>
+        </div>
+    </div>
+    {% else %}
+    <p class="muted">No polls yet.</p>
+    {% endfor %}
+</section>
+{% endblock %}

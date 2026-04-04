@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "_avatar.html" import render_avatar with context %}
+{% from "_verified.html" import render_verified with context %}
+{% block content %}
+<section class="profile-page">
+    <section class="profile-banner profile-hero-card" style="background-image: {{ banner_background(profile_user) }};">
+        <div class="profile-banner-content">
+            <a class="back-link profile-back-link" href="{{ request.referrer or url_for('index') }}">← Back</a>
+            <div class="profile-header-main">
+                {{ render_avatar(profile_user, "profile-avatar") }}
+                <div class="profile-summary">
+                    <h2 class="name-line">{{ profile_user.display_name }}{{ render_verified(profile_user) }}</h2>
+                    <p>@{{ profile_user.username }}</p>
+                    <p>{{ profile_user.bio or 'No bio yet.' }}</p>
+                    <div class="profile-meta compact-meta">
+                        <a href="{{ url_for('connections', username=profile_user.username, tab='followers') }}">{{ profile_user.follower_count }} followers</a>
+                        <a href="{{ url_for('connections', username=profile_user.username, tab='following') }}">{{ profile_user.following_count }} following</a>
+                        {% if profile_user.location %}<span>{{ profile_user.location }}</span>{% endif %}
+                        {% if profile_user.website %}<span>{{ profile_user.website }}</span>{% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    {% if current_user and current_user.id != profile_user.id %}
+    <section class="card profile-actions-card">
+        <div class="profile-actions-row">
+            <form action="{{ url_for('follow_user', username=profile_user.username) }}" method="post">
+                <button type="submit">{% if is_following(current_user, profile_user) %}Unfollow{% else %}Follow{% endif %}</button>
+            </form>
+            <form action="{{ url_for('mute_user', username=profile_user.username) }}" method="post">
+                <button type="submit" class="button ghost">{% if is_muted(current_user, profile_user) %}Unmute{% else %}Mute{% endif %}</button>
+            </form>
+            <form action="{{ url_for('block_user', username=profile_user.username) }}" method="post">
+                <button type="submit" class="button ghost">{% if is_blocked(current_user, profile_user) %}Unblock{% else %}Block{% endif %}</button>
+            </form>
+            {% if profile_user.allow_messages %}
+            <a class="button ghost profile-message-button" href="{{ url_for('messages', user=profile_user.username) }}">Message</a>
+            {% endif %}
+            <details class="profile-report-details">
+                <summary class="icon-action danger-icon" title="Report user" aria-label="Report user" data-tooltip="Report user">⚑</summary>
+                <form action="{{ url_for('report') }}" method="post" class="profile-report-popover">
+                    <input type="hidden" name="username" value="{{ profile_user.username }}">
+                    <input type="text" name="reason" placeholder="Report reason">
+                    <button type="submit">Send</button>
+                </form>
+            </details>
+        </div>
+    </section>
+    {% endif %}
+
+    <section class="card profile-timeline-card">
+        <div class="feed-header profile-timeline-head">
+            <h2>Posts by {{ profile_user.display_name }}</h2>
+            <p class="muted">{{ posts|length }} posts</p>
+        </div>
+        <section class="feed-list profile-feed-list">
+            {% for post in posts %}
+                {% include "_post_card.html" %}
+            {% else %}
+            <div class="card empty-state-card"><p>No posts yet.</p></div>
+            {% endfor %}
+        </section>
+    </section>
+</section>
+{% endblock %}

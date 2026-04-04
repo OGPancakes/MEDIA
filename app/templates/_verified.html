@@ -1,0 +1,5 @@
+{% macro render_verified(user) -%}
+    {% if user and user.is_verified %}
+    <span class="verified-badge" aria-label="Verified"></span>
+    {% endif %}
+{%- endmacro %}

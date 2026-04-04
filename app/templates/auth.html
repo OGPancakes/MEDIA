@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="auth-hero-shell auth-page-shell">
+    <div class="auth-brand-stage">
+        <div class="auth-brand-mark">
+            <img src="{{ url_for('static', filename='images/pia-logo.jpeg') }}" alt="Politics In Action logo" class="auth-mark-logo">
+        </div>
+    </div>
+
+    <div class="auth-stack">
+        <div class="auth-copy-block">
+            <p class="eyebrow light">Politics In Action</p>
+            <h1>{% if mode == 'register' %}Create your account.{% else %}Welcome back.{% endif %}</h1>
+            <h2>{% if mode == 'register' %}Start posting in minutes.{% else %}Sign in with your password.{% endif %}</h2>
+        </div>
+
+        <div class="auth-tabs dark-tabs">
+            <a class="auth-pill {% if mode != 'register' %}auth-pill-outline{% else %}auth-pill-primary{% endif %}" href="{{ url_for('register') }}">Sign up</a>
+            <a class="auth-pill {% if mode != 'login' %}auth-pill-outline{% else %}auth-pill-primary{% endif %}" href="{{ url_for('login') }}">Login</a>
+        </div>
+
+        <div class="auth-panel-card dark-card">
+            <h3>{% if mode == 'register' %}Create account{% else %}Sign in{% endif %}</h3>
+            <form method="post" class="stack-form">
+                {% if mode == 'register' %}
+                <input type="text" name="display_name" placeholder="Display name" required>
+                <input type="text" name="username" placeholder="Username" required>
+                <input type="email" name="email" placeholder="Email" required>
+                <input type="password" name="password" placeholder="Password" required>
+                <button type="submit">Create account</button>
+                {% else %}
+                <input type="text" name="username" placeholder="Username or email" required>
+                <input type="password" name="password" placeholder="Password" required>
+                <button type="submit">Sign in</button>
+                {% endif %}
+            </form>
+            <p class="tiny-copy">{% if mode == 'register' %}Password only. No Google or Apple login connected here.{% else %}Use your username or email and your password to continue.{% endif %}</p>
+        </div>
+    </div>
+</section>
+{% endblock %}

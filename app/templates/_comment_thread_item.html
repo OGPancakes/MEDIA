@@ -1,0 +1,39 @@
+{% from "_avatar.html" import render_avatar with context %}
+{% from "_verified.html" import render_verified with context %}
+<article class="comment-thread-item{% if nested %} nested-comment{% endif %}">
+    <div class="comment-thread-avatar">
+        {{ render_avatar(comment.author, "user-avatar") }}
+    </div>
+    <div class="comment-thread-main">
+        <div class="comment-thread-head">
+            <strong class="name-line">{{ comment.author.display_name }}{{ render_verified(comment.author) }}</strong>
+            <span>@{{ comment.author.username }}</span>
+            <span class="comment-thread-time">{{ comment.created_at|timesince }}</span>
+        </div>
+        {% if comment.body %}
+        <p class="comment-thread-body">{{ comment.body }}</p>
+        {% endif %}
+        <div class="comment-thread-actions">
+            {% if current_user %}
+            <form action="{{ url_for('like_post', post_id=comment.id) }}" method="post" class="comment-like-form" data-comment-like>
+                <button class="comment-action-button {% if has_liked(current_user, comment) %}active{% endif %}" type="submit">
+                    Like{% if comment.like_count %} {{ comment.like_count }}{% endif %}
+                </button>
+            </form>
+            <button class="comment-action-button" type="button" data-reply-target-id="{{ comment.id }}" data-reply-target-name="{{ comment.author.username }}">Reply</button>
+            {% endif %}
+        </div>
+        {% if comment.child_replies %}
+        <details class="comment-replies">
+            <summary>View replies ({{ comment.child_replies|length }})</summary>
+            <div class="comment-replies-list">
+                {% for reply in comment.child_replies %}
+                    {% set comment = reply %}
+                    {% set nested = true %}
+                    {% include "_comment_thread_item.html" %}
+                {% endfor %}
+            </div>
+        </details>
+        {% endif %}
+    </div>
+</article>

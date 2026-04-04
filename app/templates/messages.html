@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% from "_avatar.html" import render_avatar with context %}
+{% from "_verified.html" import render_verified with context %}
+{% block content %}
+<section class="messages-layout">
+    <div class="card dm-sidebar">
+        <h2>Messages</h2>
+        {% for user in inbox_users %}
+        <a class="user-row dm-user-row {% if target and target.id == user.id %}active{% endif %}" href="{{ url_for('messages', user=user.username) }}">
+            {{ render_avatar(user, "user-avatar") }}
+            <div class="user-copy">
+                <strong class="name-line">{{ user.display_name }}{{ render_verified(user) }}</strong>
+                <span>@{{ user.username }}</span>
+            </div>
+        </a>
+        {% else %}
+        <p class="muted">Your conversations will show here once you send or receive a message.</p>
+        {% endfor %}
+    </div>
+
+    <div class="card conversation dm-panel">
+        <div class="dm-panel-head">
+            <h2>{% if target %}@{{ target.username }}{% else %}Messages{% endif %}</h2>
+            {% if target %}
+            <p class="muted">Private conversation</p>
+            {% else %}
+            <p class="muted">Choose a conversation from the left.</p>
+            {% endif %}
+        </div>
+        <div class="conversation-log" id="conversation-log">
+            {% for message in convo %}
+            <div class="message-bubble {% if message.sender_id == current_user.id %}mine{% endif %}">
+                <strong>{% if message.sender_id == current_user.id %}You{% else %}@{{ message.sender.username }}{% endif %}</strong>
+                <p>{{ message.body }}</p>
+                <span>{{ message.created_at|timesince }}</span>
+            </div>
+            {% else %}
+            <p class="muted">No messages yet in this chat.</p>
+            {% endfor %}
+        </div>
+        {% if target %}
+        <form method="post" class="stack-form dm-compose">
+            <input type="hidden" name="receiver" value="{{ target.username }}">
+            <textarea name="body" rows="3" placeholder="Write a direct message"></textarea>
+            <div class="dm-compose-actions">
+                <button type="submit">Send</button>
+            </div>
+        </form>
+        {% endif %}
+    </div>
+</section>
+<script>
+    const convoLog = document.getElementById("conversation-log");
+    if (convoLog) {
+        convoLog.scrollTop = convoLog.scrollHeight;
+    }
+</script>
+{% endblock %}

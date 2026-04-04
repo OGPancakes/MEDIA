@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+    <h2>Settings and privacy</h2>
+    <form method="post" enctype="multipart/form-data" class="stack-form">
+        <input type="text" name="display_name" value="{{ current_user.display_name }}" placeholder="Display name">
+        <textarea name="bio" rows="4" placeholder="Bio">{{ current_user.bio }}</textarea>
+        <input type="text" name="location" value="{{ current_user.location }}" placeholder="Location">
+        <input type="text" name="website" value="{{ current_user.website }}" placeholder="Website">
+        <label><input type="checkbox" name="profile_public" {% if current_user.profile_public %}checked{% endif %}> Public profile</label>
+        <label><input type="checkbox" name="allow_messages" {% if current_user.allow_messages %}checked{% endif %}> Allow direct messages</label>
+        <label><input type="checkbox" name="push_enabled" {% if current_user.push_enabled %}checked{% endif %}> Push notifications enabled</label>
+        <label><input type="checkbox" name="dark_mode" {% if current_user.dark_mode %}checked{% endif %}> Dark mode</label>
+        <input type="text" name="muted_words" value="{{ current_user.muted_words }}" placeholder="Muted words, comma separated">
+        <label>Avatar <input class="file-input" type="file" name="avatar"></label>
+        <label>Banner <input class="file-input" type="file" name="banner"></label>
+        <button type="submit">Save settings</button>
+    </form>
+</section>
+
+<section class="card">
+    <h3>Push endpoint</h3>
+    <form method="post" action="{{ url_for('register_push') }}" class="stack-form">
+        <input type="text" name="endpoint" placeholder="Paste a push subscription endpoint">
+        <button type="submit">Save endpoint</button>
+    </form>
+</section>
+
+{% if current_user.is_admin %}
+<section class="card notifications-card">
+    <h3>Admin DM lookup</h3>
+    <form method="get" action="{{ url_for('settings') }}" class="profile-report-form">
+        <input type="text" name="audit_user" value="{{ audit_username or '' }}" placeholder="Look up a student by @username">
+        <button type="submit">Open messages</button>
+    </form>
+
+    {% if audit_target %}
+    <div class="admin-audit-head">
+        <strong>{{ audit_target.display_name }}</strong>
+        <span>@{{ audit_target.username }}</span>
+    </div>
+    {% for thread in audit_threads %}
+    <section class="notification-item audit-thread">
+        <div class="notification-copy">
+            <strong>Conversation with @{{ thread.user.username }}</strong>
+            <span>{{ thread.messages|length }} messages</span>
+        </div>
+        <div class="audit-messages">
+            {% for message in thread.messages %}
+            <div class="message-bubble {% if message.sender_id == audit_target.id %}mine{% endif %}">
+                <strong>{% if message.sender_id == audit_target.id %}@{{ audit_target.username }}{% else %}@{{ thread.user.username }}{% endif %}</strong>
+                <p>{{ message.body }}</p>
+                <span>{{ message.created_at|timesince }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% else %}
+    <p class="muted">No direct messages found for this account.</p>
+    {% endfor %}
+    {% endif %}
+</section>
+{% endif %}
+{% endblock %}

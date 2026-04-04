@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% from "_avatar.html" import render_avatar with context %}
+{% block content %}
+<section class="story-view-shell card">
+    <div class="story-view-head">
+        <a class="user-row" href="{{ url_for('profile', username=story.author.username) }}">
+            <span class="story-ring active-story-ring">
+                {{ render_avatar(story.author, "user-avatar") }}
+            </span>
+            <div class="user-copy">
+                <strong>@{{ story.author.username }}</strong>
+                <span>{{ story.created_at|timesince }}</span>
+            </div>
+        </a>
+    </div>
+    <div class="story-frame">
+        {% if story.media_path %}
+            {% if story.media_path.endswith('.mp4') or story.media_path.endswith('.mov') or story.media_path.endswith('.webm') %}
+            <video controls autoplay class="media-frame">
+                <source src="{{ url_for('static', filename=story.media_path) }}">
+            </video>
+            {% else %}
+            <img class="media-frame" src="{{ url_for('static', filename=story.media_path) }}" alt="Story media">
+            {% endif %}
+        {% endif %}
+        {% if story.body %}
+        <div class="story-caption">{{ story.body }}</div>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

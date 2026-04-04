@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+{% from "_avatar.html" import render_avatar with context %}
+{% from "_verified.html" import render_verified with context %}
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0b3d91">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="PIA Social">
+    <title>{{ title or "Politics in Action Social" }}</title>
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/pia-logo.jpeg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body class="{% if current_user %}app-body{% else %}guest-body{% endif %}{% if current_user and current_user.dark_mode %} dark-mode{% endif %}">
+    {% set page_content %}{% block content %}{% endblock %}{% endset %}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if current_user %}
+    <header class="app-topbar">
+        <a class="topbar-home" href="{{ url_for('index') }}">
+            <span class="topbar-home-mark">Home</span>
+        </a>
+        <details class="account-menu">
+            <summary class="account-trigger" aria-label="Open account menu">
+                <span class="account-trigger-copy">
+                    <strong>{{ current_user.display_name }}</strong>
+                    <span>@{{ current_user.username }}</span>
+                </span>
+                {{ render_avatar(current_user, "user-avatar topbar-avatar") }}
+            </summary>
+            <div class="account-dropdown card">
+                <a href="{{ url_for('profile', username=current_user.username) }}">Profile</a>
+                <a href="{{ url_for('notifications') }}">Notifications {% if notifications_count %}<span class="badge">{{ notifications_count }}</span>{% endif %}</a>
+                <a href="{{ url_for('settings') }}">Settings</a>
+                <a href="{{ url_for('bookmarks') }}">Bookmarks</a>
+                {% if current_user.is_admin %}
+                <a href="{{ url_for('admin') }}">Admin</a>
+                {% endif %}
+                <a href="{{ url_for('logout') }}">Logout</a>
+                {% if switch_accounts %}
+                <div class="account-dropdown-group">
+                    <h4>Switch account</h4>
+                    <div class="switcher-list">
+                        {% for account in switch_accounts %}
+                        <form action="{{ url_for('switch_account', username=account.username) }}" method="post">
+                            <button type="submit" class="switch-account-button">
+                                {{ render_avatar(account, "user-avatar") }}
+                                <span>@{{ account.username }}</span>
+                            </button>
+                        </form>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </details>
+    </header>
+
+    <div class="page-shell app-main-shell">
+        <main class="content app-content">
+            {% if messages %}
+            <div class="flash-stack">
+                {% for category, message in messages %}
+                <div class="flash {{ category }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {{ page_content }}
+        </main>
+
+    </div>
+    <nav class="bottom-nav" aria-label="Primary">
+        <a class="bottom-nav-link" href="{{ url_for('messages') }}">
+            <span>DM</span>
+        </a>
+        <a class="bottom-nav-link" href="{{ url_for('index') }}">
+            <span>Feed</span>
+        </a>
+        <a class="bottom-nav-link" href="{{ url_for('search') }}">
+            <span>Search</span>
+        </a>
+        <a class="bottom-nav-link profile-pill" href="{{ url_for('profile', username=current_user.username) }}">
+            {{ render_avatar(current_user, "user-avatar") }}
+            <span>Profile</span>
+        </a>
+    </nav>
+    {% else %}
+    <main class="guest-shell">
+        {% if messages %}
+        <div class="flash-stack guest-flashes">
+            {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {{ page_content }}
+    </main>
+    {% endif %}
+    {% endwith %}
+    <script>
+        if ("serviceWorker" in navigator) {
+            window.addEventListener("load", () => {
+                navigator.serviceWorker.register("{{ url_for('static', filename='service-worker.js') }}").catch(() => {});
+            });
+        }
+
+        async function loadCommentsSheet(button, forceOpen = false) {
+            const url = button?.dataset.commentsUrl;
+            const postId = button?.dataset.postId;
+            const host = postId ? document.querySelector(`[data-comments-host="${postId}"]`) : null;
+            if (!url || !host) return;
+            const alreadyOpen = !host.hidden;
+            document.querySelectorAll("[data-comments-host]").forEach((item) => {
+                item.hidden = true;
+                item.innerHTML = "";
+            });
+            if (alreadyOpen && !forceOpen) return;
+            host.hidden = false;
+            host.innerHTML = '<div class="comments-loading">Loading comments...</div>';
+            try {
+                const response = await fetch(url, {headers: {"X-Requested-With": "fetch"}});
+                if (!response.ok) {
+                    host.innerHTML = '<div class="comments-loading">Could not load comments.</div>';
+                    return;
+                }
+                host.innerHTML = await response.text();
+                wireCommentsPanel(host, url);
+            } catch (error) {
+                host.innerHTML = '<div class="comments-loading">Could not load comments.</div>';
+            }
+        }
+
+        function closeCommentsSheet(host) {
+            if (!host) return;
+            host.hidden = true;
+            host.innerHTML = "";
+        }
+
+        function wireCommentsPanel(root, sourceUrl) {
+            if (!root) return;
+            const composeForm = root.querySelector("[data-comments-compose]");
+            const replyBanner = root.querySelector(".comments-replying");
+            const replyName = root.querySelector("[data-replying-name]");
+            const replyInput = composeForm ? composeForm.querySelector('input[name="reply_to_id"]') : null;
+            const textInput = composeForm ? composeForm.querySelector('input[name="body"]') : null;
+            const baseReplyId = root.querySelector(".comments-sheet-shell")?.dataset.commentsPostId;
+
+            root.querySelectorAll("[data-reply-target-id]").forEach((button) => {
+                button.addEventListener("click", () => {
+                    if (!replyInput || !replyBanner || !replyName || !textInput) return;
+                    replyInput.value = button.dataset.replyTargetId || baseReplyId || "";
+                    replyName.textContent = `@${button.dataset.replyTargetName || ""}`;
+                    replyBanner.hidden = false;
+                    textInput.focus();
+                });
+            });
+
+            root.querySelectorAll("[data-clear-reply]").forEach((button) => {
+                button.addEventListener("click", () => {
+                    if (!replyInput || !replyBanner) return;
+                    replyInput.value = baseReplyId || "";
+                    replyBanner.hidden = true;
+                });
+            });
+
+            root.querySelectorAll("[data-comment-like]").forEach((form) => {
+                form.addEventListener("submit", async (event) => {
+                    event.preventDefault();
+                    const response = await fetch(form.action, {
+                        method: "POST",
+                        headers: {"X-Requested-With": "fetch"}
+                    });
+                    if (response.ok) {
+                        const trigger = document.querySelector(`[data-comments-url="${sourceUrl}"]`);
+                        if (trigger) loadCommentsSheet(trigger, true);
+                    }
+                });
+            });
+
+            if (composeForm) {
+                composeForm.addEventListener("submit", async (event) => {
+                    event.preventDefault();
+                    const formData = new FormData(composeForm);
+                    const response = await fetch(composeForm.action, {
+                        method: "POST",
+                        body: formData,
+                        headers: {"X-Requested-With": "fetch"}
+                    });
+                    if (response.ok) {
+                        const trigger = document.querySelector(`[data-comments-url="${sourceUrl}"]`);
+                        if (trigger) loadCommentsSheet(trigger, true);
+                    }
+                });
+            }
+        }
+
+        document.addEventListener("click", (event) => {
+            const commentButton = event.target.closest("[data-comments-url]");
+            const closeButton = event.target.closest("[data-close-inline-comments]");
+            if (commentButton) {
+                loadCommentsSheet(commentButton);
+            }
+            if (closeButton) {
+                closeCommentsSheet(closeButton.closest("[data-comments-host], .inline-comments-host"));
+            }
+        });
+    </script>
+</body>
+</html>

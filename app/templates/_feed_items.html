@@ -1,0 +1,7 @@
+{% for post in posts %}
+    {% include "_post_card.html" %}
+{% else %}
+<div class="card empty-state-card">
+    <p>No posts yet. Once people start posting, the timeline will fill in here.</p>
+</div>
+{% endfor %}

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% from "_avatar.html" import render_avatar with context %}
+{% from "_verified.html" import render_verified with context %}
+{% block content %}
+<section class="card connections-card">
+    <a class="back-link" href="{{ url_for('profile', username=profile_user.username) }}">← Back</a>
+    <div class="feed-tabs connections-tabs">
+        <a class="feed-tab {% if tab == 'followers' %}active{% endif %}" href="{{ url_for('connections', username=profile_user.username, tab='followers') }}">Followers</a>
+        <a class="feed-tab {% if tab == 'following' %}active{% endif %}" href="{{ url_for('connections', username=profile_user.username, tab='following') }}">Following</a>
+    </div>
+    <div class="connections-head">
+        <h2>{{ profile_user.display_name }}</h2>
+        <p class="muted">{{ people|length }} people</p>
+    </div>
+    {% for user in people %}
+    <a class="notification-item connection-row" href="{{ url_for('profile', username=user.username) }}">
+        {{ render_avatar(user, "user-avatar") }}
+        <div class="notification-copy">
+            <strong class="name-line">{{ user.display_name }} {{ render_verified(user) }}</strong>
+            <span>@{{ user.username }}</span>
+        </div>
+    </a>
+    {% else %}
+    <p class="muted">Nobody here yet.</p>
+    {% endfor %}
+</section>
+{% endblock %}

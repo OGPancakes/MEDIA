@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_avatar.html" import render_avatar with context %}
+{% from "_verified.html" import render_verified with context %}
+{% block content %}
+<section class="search-page">
+<section class="search-topbar">
+    <form method="get" class="search-form">
+        <input type="text" name="q" value="{{ query }}" placeholder="Search users, posts, hashtags">
+        <button type="submit">Search</button>
+    </form>
+</section>
+
+{% if not query %}
+<section class="search-discover-grid">
+    <section class="card compact-list-card">
+        <div class="discover-card-head">
+            <h2>Trending</h2>
+            <a href="{{ url_for('trending') }}">Open</a>
+        </div>
+        {% for trend_post, trend_score in trending_topics %}
+        <a class="search-discover-link" href="{{ url_for('post_detail', post_id=trend_post.id) }}">
+            <strong>{{ trend_post.author.display_name }}</strong>
+            <span>{{ trend_post.body[:80] if trend_post.body else 'Media post' }}</span>
+        </a>
+        {% else %}
+        <p class="muted">Nothing is trending yet.</p>
+        {% endfor %}
+    </section>
+
+    <section class="card compact-list-card">
+        <div class="discover-card-head">
+            <h2>Search people</h2>
+        </div>
+        {% for user in search_suggestions %}
+        <a class="user-row search-row" href="{{ url_for('profile', username=user.username) }}">
+            {{ render_avatar(user, "user-avatar") }}
+            <div>
+                <strong class="name-line">{{ user.display_name }}{{ render_verified(user) }}</strong>
+                <span>@{{ user.username }}</span>
+            </div>
+        </a>
+        {% else %}
+        <p class="muted">No people to suggest yet.</p>
+        {% endfor %}
+    </section>
+ </section>
+{% endif %}
+
+<section class="card compact-list-card">
+    <h2>{% if query %}Users{% else %}Suggested users{% endif %}</h2>
+    {% for user in users %}
+    <a class="user-row search-row" href="{{ url_for('profile', username=user.username) }}">
+        {{ render_avatar(user, "user-avatar") }}
+        <div>
+            <strong class="name-line">{{ user.display_name }}{{ render_verified(user) }}</strong>
+            <span>@{{ user.username }}</span>
+        </div>
+    </a>
+    {% else %}
+    <p class="muted">No matching users.</p>
+    {% endfor %}
+</section>
+
+<section class="feed-list">
+    {% for post in posts %}
+        {% include "_post_card.html" %}
+    {% else %}
+    <div class="card empty-state-card"><p class="muted">No matching posts.</p></div>
+    {% endfor %}
+</section>
+</section>
+{% endblock %}

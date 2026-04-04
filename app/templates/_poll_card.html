@@ -1,0 +1,21 @@
+{% if poll %}
+<section class="card poll-card">
+    <div class="poll-head">
+        <h3>{{ poll.question }}</h3>
+        <span class="pill {% if poll.is_hidden_results %}creator{% endif %}">{% if poll.is_hidden_results and not current_user.is_admin %}Results hidden{% else %}Poll{% endif %}</span>
+    </div>
+    {% set my_vote = poll_vote_for_user(poll, current_user) %}
+    <form action="{{ url_for('vote_poll', poll_id=poll.id) }}" method="post" class="poll-options">
+        {% for option in poll.options %}
+        <label class="poll-option {% if my_vote and my_vote.option_id == option.id %}active{% endif %}">
+            <input type="radio" name="option_id" value="{{ option.id }}" {% if my_vote and my_vote.option_id == option.id %}checked{% endif %}>
+            <span>{{ option.label }}</span>
+            {% if poll_results_visible(poll, current_user) %}
+            <strong>{{ poll_option_votes(option) }}</strong>
+            {% endif %}
+        </label>
+        {% endfor %}
+        <button type="submit">Vote</button>
+    </form>
+</section>
+{% endif %}
