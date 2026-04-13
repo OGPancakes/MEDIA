@@ -2,6 +2,6 @@
     {% if should_use_emoji_avatar(user) %}
     <span class="{{ class_name }} emoji-avatar" aria-label="{{ user.username if user else 'user avatar' }}"><span class="emoji-avatar-glyph">{{ avatar_emoji_for(user) }}</span></span>
     {% else %}
-    <img class="{{ class_name }}" src="{{ url_for('static', filename=user.avatar) }}" alt="{{ user.username }}">
+    <img class="{{ class_name }}" src="{{ media_url(user.avatar) }}" alt="{{ user.username }}">
     {% endif %}
 {%- endmacro %}

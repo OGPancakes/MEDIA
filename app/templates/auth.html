@@ -35,6 +35,7 @@
                 {% endif %}
             </form>
             <p class="tiny-copy">{% if mode == 'register' %}Password only. No Google or Apple login connected here.{% else %}Use your username or email and your password to continue.{% endif %}</p>
+            <p class="tiny-copy"><a href="{{ url_for('privacy') }}">Privacy Policy</a></p>
         </div>
     </div>
 </section>

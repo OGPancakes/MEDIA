@@ -17,10 +17,10 @@
     {% if post.media_path %}
         {% if post.media_type == 'video' %}
         <video controls class="comment-media">
-            <source src="{{ url_for('static', filename=post.media_path) }}">
+            <source src="{{ media_url(post.media_path) }}">
         </video>
         {% else %}
-        <img class="comment-media" src="{{ url_for('static', filename=post.media_path) }}" alt="Comment media">
+        <img class="comment-media" src="{{ media_url(post.media_path) }}" alt="Comment media">
         {% endif %}
     {% endif %}
 </article>

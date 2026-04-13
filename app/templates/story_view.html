@@ -17,10 +17,10 @@
         {% if story.media_path %}
             {% if story.media_path.endswith('.mp4') or story.media_path.endswith('.mov') or story.media_path.endswith('.webm') %}
             <video controls autoplay class="media-frame">
-                <source src="{{ url_for('static', filename=story.media_path) }}">
+                <source src="{{ media_url(story.media_path) }}">
             </video>
             {% else %}
-            <img class="media-frame" src="{{ url_for('static', filename=story.media_path) }}" alt="Story media">
+            <img class="media-frame" src="{{ media_url(story.media_path) }}" alt="Story media">
             {% endif %}
         {% endif %}
         {% if story.body %}

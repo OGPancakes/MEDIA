@@ -48,10 +48,10 @@
     {% if post.media_path %}
         {% if post.media_type == 'video' %}
         <video controls class="media-frame">
-            <source src="{{ url_for('static', filename=post.media_path) }}">
+            <source src="{{ media_url(post.media_path) }}">
         </video>
         {% else %}
-        <img class="media-frame" src="{{ url_for('static', filename=post.media_path) }}" alt="Post media">
+        <img class="media-frame" src="{{ media_url(post.media_path) }}" alt="Post media">
         {% endif %}
     {% endif %}
 

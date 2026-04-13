@@ -8,7 +8,7 @@ from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import and_, or_, text
 from sqlalchemy.exc import OperationalError
@@ -17,8 +17,9 @@ from werkzeug.utils import secure_filename
 
 
 BASE_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = BASE_DIR / "app" / "static" / "uploads"
-DATABASE_PATH = BASE_DIR / "social_app.db"
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR))).resolve()
+UPLOAD_DIR = DATA_DIR / "uploads"
+DATABASE_PATH = DATA_DIR / "social_app.db"
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "mp4", "mov", "webm"}
 DEFAULT_AVATAR_PATH = "images/pia-logo.jpeg"
 DEFAULT_BANNER_PATH = "images/pia-logo.jpeg"
@@ -281,6 +282,7 @@ def create_app():
             "avatar_emoji_for": avatar_emoji_for,
             "should_use_emoji_avatar": should_use_emoji_avatar,
             "banner_background": banner_background,
+            "media_url": media_url,
             "is_following": is_following,
             "is_muted": is_muted,
             "is_blocked": is_blocked,
@@ -380,6 +382,14 @@ def create_app():
             flash("Welcome back.", "success")
             return redirect(url_for("admin" if user.is_admin else "index"))
         return render_template("auth.html", mode="login", title="Sign in")
+
+    @app.route("/privacy")
+    def privacy():
+        return render_template("privacy.html", title="Privacy Policy")
+
+    @app.route("/media/<path:filename>")
+    def media_file(filename):
+        return send_from_directory(UPLOAD_DIR, filename)
 
     @app.route("/logout")
     def logout():
@@ -948,7 +958,23 @@ def create_app():
             flash("Push endpoint saved.", "success")
         return redirect(url_for("settings"))
 
+    @app.route("/account/delete", methods=["POST"])
+    @login_required
+    def delete_account():
+        user = current_user()
+        confirmation = request.form.get("confirmation", "").strip().lower()
+        if confirmation != user.username.lower():
+            flash("Type your username exactly to delete your account.", "error")
+            return redirect(url_for("settings"))
+        username = user.username
+        purge_user_account(user)
+        session.clear()
+        db.session.commit()
+        flash(f"@{username} has been permanently deleted.", "success")
+        return redirect(url_for("index"))
+
     with app.app_context():
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         try:
             db.create_all()
@@ -1067,8 +1093,16 @@ def should_use_emoji_avatar(user):
 def banner_background(user):
     banner_path = getattr(user, "banner", "") or ""
     if banner_path and banner_path != DEFAULT_BANNER_PATH:
-        return f"linear-gradient(120deg, rgba(11,61,145,.88), rgba(191,10,48,.78)), url('{url_for('static', filename=banner_path)}')"
+        return f"linear-gradient(120deg, rgba(11,61,145,.88), rgba(191,10,48,.78)), url('{media_url(banner_path)}')"
     return "linear-gradient(120deg, rgba(11,61,145,.96), rgba(191,10,48,.86))"
+
+
+def media_url(path):
+    if not path:
+        return ""
+    if path.startswith("uploads/"):
+        return url_for("media_file", filename=path.split("/", 1)[1])
+    return url_for("static", filename=path)
 
 
 def is_following(viewer, target_user):
@@ -1552,4 +1586,4 @@ def resolve_run_port():
 if __name__ == "__main__":
     run_port = resolve_run_port()
     print(f"Starting Politics In Action at http://127.0.0.1:{run_port}")
-    app.run(host="127.0.0.1", port=run_port, debug=False)
+    app.run(host="0.0.0.0", port=run_port, debug=False)

@@ -26,6 +26,16 @@
     </form>
 </section>
 
+<section class="card danger-zone-card">
+    <h3>Delete account</h3>
+    <p class="muted">This permanently removes your profile, posts, messages, stories, notifications, and related account data from this app.</p>
+    <form method="post" action="{{ url_for('delete_account') }}" class="stack-form">
+        <label for="delete-confirmation">Type <strong>@{{ current_user.username }}</strong> to confirm permanent deletion.</label>
+        <input id="delete-confirmation" type="text" name="confirmation" placeholder="{{ current_user.username }}" required>
+        <button type="submit" class="danger-button">Delete my account</button>
+    </form>
+</section>
+
 {% if current_user.is_admin %}
 <section class="card notifications-card">
     <h3>Admin DM lookup</h3>

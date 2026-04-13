@@ -2302,6 +2302,7 @@ body.dark-mode .profile-report-popover {
     grid-template-columns: auto 1fr;
     gap: 0.72rem;
     align-items: start;
+    width: 100%;
 }
 
 .comment-thread-avatar {
@@ -2334,6 +2335,8 @@ body.dark-mode .profile-report-popover {
 .comment-thread-body {
     margin: 0;
     line-height: 1.45;
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .comment-thread-actions {
@@ -2362,14 +2365,28 @@ body.dark-mode .profile-report-popover {
 .comment-replies {
     display: grid;
     gap: 0.55rem;
+    margin-top: 0.12rem;
 }
 
 .comment-replies summary {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
     cursor: pointer;
-    color: var(--navy);
-    font-size: 0.82rem;
+    color: rgba(20, 33, 61, 0.66);
+    font-size: 0.8rem;
     font-weight: 700;
     list-style: none;
+}
+
+.comment-replies summary:hover {
+    color: var(--navy);
+    transform: none;
 }
 
 .comment-replies summary::-webkit-details-marker {
@@ -2379,10 +2396,13 @@ body.dark-mode .profile-report-popover {
 .comment-replies-list {
     display: grid;
     gap: 0.7rem;
+    padding-top: 0.15rem;
 }
 
 .nested-comment {
-    margin-left: 1.4rem;
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
 }
 
 .inline-comments-composer {
@@ -2494,6 +2514,53 @@ body.dark-mode .profile-report-popover {
 
 .danger-link {
     color: var(--red);
+}
+
+.danger-button {
+    background: linear-gradient(135deg, #9f1737, #d83a5f);
+}
+
+.danger-zone-card {
+    border-color: rgba(159, 23, 55, 0.18);
+}
+
+.legal-card {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 1.4rem;
+}
+
+.legal-card h1,
+.legal-card h2 {
+    margin-top: 0;
+}
+
+.legal-card h2 {
+    margin-top: 1.6rem;
+}
+
+.site-footer {
+    display: flex;
+    justify-content: center;
+    padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
+    color: rgba(20, 33, 61, 0.62);
+    font-size: 0.92rem;
+}
+
+.site-footer a {
+    padding: 0.45rem 0.8rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(11, 61, 145, 0.08);
+}
+
+body.dark-mode .site-footer {
+    color: rgba(222, 232, 255, 0.7);
+}
+
+body.dark-mode .site-footer a {
+    background: rgba(12, 22, 46, 0.78);
+    border-color: rgba(127, 164, 255, 0.14);
 }
 
 .admin-edit-form {
@@ -2779,7 +2846,8 @@ body.dark-mode .profile-report-popover {
     }
 
     .nested-comment {
-        margin-left: 0.6rem;
+        margin-left: 0;
+        padding-left: 0;
     }
 
     .inline-comments-composer {
