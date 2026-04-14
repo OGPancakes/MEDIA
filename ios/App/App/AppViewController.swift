@@ -26,7 +26,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private let composerScriptMessageName = "nativeComposerState"
 
-    override open func capacitorDidLoad() {
+    public override func capacitorDidLoad() {
         super.capacitorDidLoad()
 
         view.backgroundColor = shellBackground
