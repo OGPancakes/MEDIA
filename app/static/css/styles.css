@@ -194,12 +194,14 @@ textarea {
     max-width: 1540px;
     min-height: calc(100dvh - var(--safe-top));
     margin: 0 auto;
-    padding: 0 1rem 1rem;
+    padding: calc(var(--safe-top) + 4.6rem) 1rem 1rem;
 }
 
 .app-topbar {
-    position: sticky;
+    position: fixed;
     top: 0;
+    left: 0;
+    right: 0;
     z-index: 55;
     display: flex;
     align-items: center;
@@ -2701,6 +2703,10 @@ body.dark-mode .site-footer a {
 
     .app-topbar {
         padding: calc(var(--safe-top) + 0.4rem) 0.7rem 0.65rem;
+    }
+
+    .page-shell {
+        padding-top: calc(var(--safe-top) + 4.1rem);
     }
 
     .topbar-home-mark {

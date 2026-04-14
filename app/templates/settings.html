@@ -2,7 +2,7 @@
 {% block content %}
 <section class="card">
     <h2>Settings and privacy</h2>
-    <form method="post" enctype="multipart/form-data" class="stack-form">
+    <form method="post" enctype="multipart/form-data" class="stack-form" data-app-shell-submit>
         <input type="text" name="display_name" value="{{ current_user.display_name }}" placeholder="Display name">
         <textarea name="bio" rows="4" placeholder="Bio">{{ current_user.bio }}</textarea>
         <input type="text" name="location" value="{{ current_user.location }}" placeholder="Location">

@@ -210,6 +210,30 @@
             }
         }
 
+        async function submitShellForm(form) {
+            try {
+                document.body.classList.add("page-is-transitioning");
+                const response = await fetch(form.action || window.location.href, {
+                    method: form.method || "POST",
+                    body: new FormData(form),
+                    headers: {
+                        "X-Requested-With": "fetch"
+                    }
+                });
+                const html = await response.text();
+                const parser = new DOMParser();
+                const nextDocument = parser.parseFromString(html, "text/html");
+                replaceShellFromDocument(nextDocument);
+                const destinationUrl = response.url || window.location.href;
+                window.history.replaceState({}, "", destinationUrl);
+                window.scrollTo({top: 0, behavior: "instant"});
+            } catch (error) {
+                form.submit();
+            } finally {
+                document.body.classList.remove("page-is-transitioning");
+            }
+        }
+
         async function submitPostAction(form) {
             const response = await fetch(form.action, {
                 method: "POST",
@@ -351,9 +375,16 @@
 
         document.addEventListener("submit", async (event) => {
             const actionForm = event.target.closest("form[data-post-action='replace-card']");
-            if (!actionForm) return;
-            event.preventDefault();
-            await submitPostAction(actionForm);
+            if (actionForm) {
+                event.preventDefault();
+                await submitPostAction(actionForm);
+                return;
+            }
+            const shellForm = event.target.closest("form[data-app-shell-submit]");
+            if (shellForm) {
+                event.preventDefault();
+                await submitShellForm(shellForm);
+            }
         });
 
         window.addEventListener("pageshow", () => {
