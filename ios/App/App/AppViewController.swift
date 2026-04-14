@@ -22,8 +22,8 @@ class AppViewController: CAPBridgeViewController {
 
         guard let webView = webView else { return }
         webView.isOpaque = false
-        webView.backgroundColor = .clear
-        webView.scrollView.backgroundColor = .clear
+        webView.backgroundColor = shellBackground
+        webView.scrollView.backgroundColor = shellBackground
         webView.scrollView.bounces = false
         webView.scrollView.alwaysBounceVertical = false
         webView.scrollView.contentInsetAdjustmentBehavior = .never

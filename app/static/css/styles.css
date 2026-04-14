@@ -18,12 +18,14 @@
 }
 
 html {
+    height: 100%;
     min-height: 100%;
     background: #eef4ff;
 }
 
 body {
     margin: 0;
+    min-width: 0;
     min-height: 100vh;
     font-family: "Avenir Next", "Segoe UI", sans-serif;
     color: var(--ink);
@@ -31,17 +33,18 @@ body {
         radial-gradient(circle at top left, rgba(191, 10, 48, 0.14), transparent 30%),
         radial-gradient(circle at top right, rgba(11, 61, 145, 0.16), transparent 25%),
         linear-gradient(180deg, #f7faff 0%, #eef4ff 55%, #fff7ef 100%);
-    overscroll-behavior-y: none;
     transition: opacity 180ms ease, transform 180ms ease;
 }
 
 body.app-body {
-    padding-bottom: calc(6.5rem + var(--safe-bottom));
+    height: 100dvh;
+    overflow: hidden;
+    padding-bottom: 0;
 }
 
 body.page-is-transitioning {
-    opacity: 0.94;
-    transform: translateY(6px);
+    opacity: 1;
+    transform: none;
 }
 
 .screen-swap-enter {
@@ -193,9 +196,9 @@ textarea {
     grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
     max-width: 1540px;
-    min-height: calc(100dvh - var(--safe-top));
+    min-height: 100dvh;
     margin: 0 auto;
-    padding: var(--app-topbar-height) 1rem 1rem;
+    padding: var(--app-topbar-height) 1rem calc(1rem + var(--safe-bottom));
 }
 
 .app-topbar {
@@ -208,15 +211,15 @@ textarea {
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: calc(var(--safe-top) + 0.55rem) 1rem 0.75rem;
-    backdrop-filter: blur(18px);
-    background: rgba(247, 250, 255, 0.78);
-    border-bottom: 1px solid rgba(11, 61, 145, 0.08);
+    padding: calc(var(--safe-top) + 0.35rem) 1rem 0.35rem;
+    backdrop-filter: blur(8px);
+    background: linear-gradient(180deg, rgba(247, 250, 255, 0.92), rgba(247, 250, 255, 0.38) 72%, rgba(247, 250, 255, 0));
+    border-bottom: 0;
+    box-shadow: none;
 }
 
 body.dark-mode .app-topbar {
-    background: rgba(8, 14, 30, 0.82);
-    border-bottom-color: rgba(127, 164, 255, 0.12);
+    background: linear-gradient(180deg, rgba(8, 14, 30, 0.94), rgba(8, 14, 30, 0.42) 72%, rgba(8, 14, 30, 0));
 }
 
 .topbar-home {
@@ -229,7 +232,7 @@ body.dark-mode .app-topbar {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 42px;
+    min-height: 38px;
     padding: 0.7rem 1rem;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.88);
@@ -253,7 +256,7 @@ body.dark-mode .topbar-home-mark {
     display: inline-flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.45rem 0.55rem 0.45rem 0.85rem;
+    padding: 0.36rem 0.46rem 0.36rem 0.76rem;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.9);
     border: 1px solid rgba(11, 61, 145, 0.1);
@@ -378,6 +381,8 @@ body.dark-mode .switch-account-button:hover {
 .app-main-shell {
     grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
+    height: 100dvh;
+    overflow: hidden;
 }
 
 body.dark-mode .card,
@@ -829,7 +834,8 @@ body.dark-mode .connection-row {
     display: grid;
     gap: 0.9rem;
     padding-bottom: 6.6rem;
-    min-height: calc(100dvh - var(--safe-top) - 7.5rem);
+    min-height: 0;
+    height: 100%;
     min-width: 0;
     align-content: start;
     transition: opacity 180ms ease, transform 180ms ease;
@@ -840,6 +846,11 @@ body.dark-mode .connection-row {
     margin: 0 auto;
     display: grid;
     align-content: start;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(7.4rem + var(--safe-bottom));
+    scrollbar-gutter: stable both-edges;
 }
 
 .right-rail {
@@ -2703,7 +2714,7 @@ body.dark-mode .site-footer a {
     }
 
     .app-topbar {
-        padding: calc(var(--safe-top) + 0.4rem) 0.7rem 0.65rem;
+        padding: calc(var(--safe-top) + 0.28rem) 0.7rem 0.32rem;
     }
 
     .topbar-home-mark {

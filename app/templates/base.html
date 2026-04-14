@@ -58,7 +58,7 @@
         </details>
     </header>
     <div class="page-shell app-main-shell">
-        <main class="content app-content">
+        <main class="content app-content" data-app-scroll-root>
             {% if messages %}
             <div class="flash-stack">
                 {% for category, message in messages %}
@@ -111,6 +111,36 @@
             const topbar = document.querySelector(".app-topbar");
             const topbarHeight = topbar ? `${topbar.offsetHeight}px` : "0px";
             document.documentElement.style.setProperty("--app-topbar-height", topbarHeight);
+        }
+
+        function currentScrollContainer(root = document) {
+            return root.querySelector("[data-app-scroll-root]") || currentMainElement(root);
+        }
+
+        function scrollAppToTop(behavior = "auto") {
+            const scrollRoot = currentScrollContainer();
+            if (!scrollRoot) return;
+            if (typeof scrollRoot.scrollTo === "function") {
+                scrollRoot.scrollTo({top: 0, behavior});
+            } else {
+                scrollRoot.scrollTop = 0;
+            }
+        }
+
+        function showTransientFlash(message, category = "error") {
+            const host = document.querySelector(".flash-stack") || document.querySelector("main.content, main.guest-shell");
+            if (!host || !message) return;
+            let stack = host.classList?.contains("flash-stack") ? host : host.querySelector(".flash-stack");
+            if (!stack) {
+                stack = document.createElement("div");
+                stack.className = "flash-stack";
+                host.prepend(stack);
+            }
+            const flash = document.createElement("div");
+            flash.className = `flash ${category}`;
+            flash.textContent = message;
+            stack.prepend(flash);
+            window.setTimeout(() => flash.remove(), 2600);
         }
 
         if ("serviceWorker" in navigator) {
@@ -221,7 +251,7 @@
                 } else {
                     window.history.pushState({}, "", url);
                 }
-                window.scrollTo({top: 0, behavior: "instant"});
+                scrollAppToTop();
             } catch (error) {
                 window.location.assign(url);
             } finally {
@@ -244,7 +274,7 @@
                 replaceMainFromDocument(nextDocument);
                 const destinationUrl = response.url || window.location.href;
                 window.history.replaceState({}, "", destinationUrl);
-                window.scrollTo({top: 0, behavior: "instant"});
+                scrollAppToTop();
             } catch (error) {
                 form.submit();
             }
@@ -273,6 +303,66 @@
             replacement.classList.add("card-swap-enter");
             card.replaceWith(replacement);
             requestAnimationFrame(() => replacement.classList.remove("card-swap-enter"));
+        }
+
+        async function submitComposeForm(form) {
+            const submitButton = form.querySelector('button[type="submit"]');
+            const originalLabel = submitButton ? submitButton.textContent : "";
+            if (submitButton) {
+                submitButton.disabled = true;
+                submitButton.textContent = "Posting...";
+            }
+            form.classList.add("is-submitting");
+            try {
+                const response = await fetch(form.action, {
+                    method: "POST",
+                    body: new FormData(form),
+                    headers: {
+                        "X-Requested-With": "fetch",
+                        "Accept": "application/json, text/html"
+                    }
+                });
+                const contentType = response.headers.get("content-type") || "";
+
+                if (contentType.includes("application/json")) {
+                    const data = await response.json();
+                    if (!response.ok || !data?.ok) {
+                        showTransientFlash(data?.error || "Couldn't publish post.");
+                        return;
+                    }
+                    if (!data?.html) return;
+                    const liveFeed = document.getElementById("live-feed");
+                    if (liveFeed) {
+                        const wrapper = document.createElement("div");
+                        wrapper.innerHTML = data.html.trim();
+                        const newCard = wrapper.firstElementChild;
+                        if (newCard) {
+                            newCard.classList.add("card-swap-enter");
+                            liveFeed.prepend(newCard);
+                            requestAnimationFrame(() => newCard.classList.remove("card-swap-enter"));
+                        }
+                        liveFeed.dataset.latestPostId = String(data.latest_post_id || data.post_id || 0);
+                    }
+                    form.reset();
+                    scrollAppToTop("smooth");
+                    return;
+                }
+
+                const html = await response.text();
+                const parser = new DOMParser();
+                const nextDocument = parser.parseFromString(html, "text/html");
+                replaceShellFromDocument(nextDocument);
+                window.history.replaceState({}, "", response.url || window.location.href);
+                scrollAppToTop();
+            } catch (error) {
+                showTransientFlash("Couldn't publish post. Check your connection and try again.");
+            } finally {
+                form.classList.remove("is-submitting");
+                if (submitButton) {
+                    submitButton.disabled = false;
+                    submitButton.textContent = originalLabel;
+                }
+            }
         }
 
         async function loadCommentsSheet(button, forceOpen = false) {
@@ -394,6 +484,12 @@
             if (actionForm) {
                 event.preventDefault();
                 await submitPostAction(actionForm);
+                return;
+            }
+            const composeForm = event.target.closest("form[data-compose-post]");
+            if (composeForm) {
+                event.preventDefault();
+                await submitComposeForm(composeForm);
                 return;
             }
             const shellForm = event.target.closest("form[data-app-shell-submit]");
