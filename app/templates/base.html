@@ -107,6 +107,7 @@
         document.documentElement.classList.add("app-ready");
         let feedRefreshTimer = null;
         let touchLockStart = null;
+        let activeComposer = null;
 
         function syncTopbarHeight() {
             const topbar = document.querySelector(".app-topbar");
@@ -148,6 +149,32 @@
             return Boolean(target?.closest?.("[data-horizontal-pan]"));
         }
 
+        function syncKeyboardInset() {
+            if (!window.visualViewport) return;
+            const offset = Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop);
+            document.documentElement.style.setProperty("--keyboard-offset", `${offset}px`);
+            document.body.classList.toggle("keyboard-open", offset > 80);
+        }
+
+        function autoSizeTextareas(root = document) {
+            root.querySelectorAll("textarea").forEach((textarea) => {
+                textarea.style.height = "auto";
+                textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`;
+            });
+        }
+
+        function setActiveComposer(target) {
+            const nextComposer = target?.closest?.(".composer") || null;
+            if (activeComposer && activeComposer !== nextComposer) {
+                activeComposer.classList.remove("is-focused");
+            }
+            activeComposer = nextComposer;
+            if (activeComposer) {
+                activeComposer.classList.add("is-focused");
+                activeComposer.scrollIntoView({block: "nearest", behavior: "smooth"});
+            }
+        }
+
         if ("serviceWorker" in navigator) {
             window.addEventListener("load", () => {
                 navigator.serviceWorker.register("{{ url_for('static', filename='service-worker.js') }}").catch(() => {});
@@ -185,6 +212,8 @@
 
         function bootPageFeatures() {
             startFeedRefresh();
+            autoSizeTextareas();
+            syncKeyboardInset();
         }
 
         function replaceShellFromDocument(nextDocument) {
@@ -353,6 +382,8 @@
                         liveFeed.dataset.latestPostId = String(data.latest_post_id || data.post_id || 0);
                     }
                     form.reset();
+                    autoSizeTextareas(form);
+                    showTransientFlash("Post published.", "success");
                     return;
                 }
 
@@ -529,6 +560,35 @@
             }
         }, {passive: false});
 
+        document.addEventListener("focusin", (event) => {
+            const target = event.target;
+            if (target instanceof HTMLTextAreaElement) {
+                autoSizeTextareas(target.closest("form") || document);
+            }
+            setActiveComposer(target);
+            window.setTimeout(syncKeyboardInset, 10);
+        });
+
+        document.addEventListener("focusout", () => {
+            window.setTimeout(() => {
+                if (!document.activeElement || !(document.activeElement instanceof HTMLElement)) {
+                    if (activeComposer) {
+                        activeComposer.classList.remove("is-focused");
+                        activeComposer = null;
+                    }
+                } else {
+                    setActiveComposer(document.activeElement);
+                }
+                syncKeyboardInset();
+            }, 20);
+        });
+
+        document.addEventListener("input", (event) => {
+            if (event.target instanceof HTMLTextAreaElement) {
+                autoSizeTextareas(event.target.closest("form") || document);
+            }
+        });
+
         window.addEventListener("pageshow", () => {
             document.body.classList.remove("page-is-transitioning");
         });
@@ -538,6 +598,10 @@
         });
 
         window.addEventListener("resize", syncTopbarHeight);
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener("resize", syncKeyboardInset);
+            window.visualViewport.addEventListener("scroll", syncKeyboardInset);
+        }
         syncTopbarHeight();
         bootPageFeatures();
     </script>

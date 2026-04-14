@@ -42,7 +42,7 @@
 {% set page_mode = page_mode or 'feed' %}
 {% if page_mode == 'feed' %}
 <section class="home-flow">
-    <section class="card feed-control-panel">
+    <section class="feed-control-panel">
         <section class="feed-tabs">
             <a class="feed-tab {% if feed_mode == 'home' %}active{% endif %}" href="{{ url_for('index', tab='home') }}">Home</a>
             <a class="feed-tab {% if feed_mode == 'fyp' %}active{% endif %}" href="{{ url_for('index', tab='fyp') }}">FYP</a>
@@ -84,9 +84,9 @@
         <section class="composer">
             <form action="{{ url_for('create_post') }}" method="post" enctype="multipart/form-data" data-compose-post>
                 <textarea name="body" rows="4" placeholder="Post to the timeline, use #hashtags and @mentions"></textarea>
-                <div class="form-row">
-                    <input class="file-input" type="file" name="media">
-                    <button type="submit">Publish post</button>
+                <div class="form-row composer-toolbar">
+                    <input class="file-input composer-file-input" type="file" name="media">
+                    <button type="submit" class="composer-submit">Post</button>
                 </div>
             </form>
         </section>
