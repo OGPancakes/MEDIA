@@ -428,6 +428,8 @@ def create_app():
         reply_to_id = request.form.get("reply_to_id") or None
         media = request.files.get("media")
         if not body and (not media or not media.filename):
+            if wants_partial_response():
+                return jsonify({"ok": False, "error": "Say something or upload media to post."}), 400
             flash("Say something or upload media to post.", "error")
             return redirect(request.referrer or url_for("index"))
         media_path, media_type = save_upload(media)
@@ -456,6 +458,17 @@ def create_app():
                 )
                 db.session.commit()
         notify_mentions(post)
+        reset_post_display_state([post])
+        register_visible_posts([post], current_user())
+        if wants_partial_response():
+            return jsonify(
+                {
+                    "ok": True,
+                    "post_id": post.id,
+                    "html": render_template("_post_card.html", post=post),
+                    "latest_post_id": post.id,
+                }
+            )
         flash("Post published.", "success")
         return redirect(request.referrer or url_for("index"))
 
@@ -503,11 +516,15 @@ def create_app():
     def delete_post(post_id):
         post = Post.query.get_or_404(post_id)
         if post.user_id != current_user().id and not current_user().is_admin:
+            if wants_partial_response():
+                return jsonify({"ok": False, "message": "You cannot delete this post."}), 403
             flash("You cannot delete this post.", "error")
             return redirect(url_for("index"))
         purge_post_records(post.id)
         db.session.delete(post)
         db.session.commit()
+        if wants_partial_response():
+            return jsonify({"ok": True, "deleted": True, "post_id": post_id})
         flash("Post deleted.", "success")
         return redirect(url_for("index"))
 

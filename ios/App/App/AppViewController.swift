@@ -30,6 +30,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var composerPreviewHeightConstraint: NSLayoutConstraint?
     private var keyboardObserversInstalled = false
     private var nativeComposerAvailable = false
+    private var isPostingComposer = false
     private var stateSyncTimer: Timer?
     private var selectedImageData: Data?
     private var selectedImageName: String?
@@ -410,6 +411,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             self.composerSheet.isHidden = true
             self.composerPostButton.isEnabled = true
             self.composerPostButton.alpha = 1
+            if !self.isPostingComposer {
+                self.composerTextView.text = ""
+                self.clearSelectedImage()
+                self.textViewDidChange(self.composerTextView)
+            }
         }
         if animated {
             UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut], animations: reset, completion: completion)
@@ -448,8 +454,18 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         guard !body.isEmpty || selectedImageData != nil else { return }
         guard let targetURL = URL(string: "/post/create", relativeTo: webView?.url)?.absoluteURL else { return }
 
+        isPostingComposer = true
         composerPostButton.isEnabled = false
         composerPostButton.alpha = 0.75
+
+        let imageData = selectedImageData
+        let imageName = selectedImageName
+        let imageMimeType = selectedImageMimeType
+
+        composerTextView.text = ""
+        clearSelectedImage()
+        textViewDidChange(composerTextView)
+        dismissComposerSheet(animated: true)
 
         fetchCookieHeader { [weak self] cookieHeader in
             guard let self else { return }
@@ -465,30 +481,27 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             request.httpBody = self.multipartBody(
                 boundary: boundary,
                 body: body,
-                imageData: self.selectedImageData,
-                imageName: self.selectedImageName,
-                mimeType: self.selectedImageMimeType
+                imageData: imageData,
+                imageName: imageName,
+                mimeType: imageMimeType
             )
 
             let task = URLSession.shared.dataTask(with: request) { data, response, error in
                 DispatchQueue.main.async {
+                    self.isPostingComposer = false
                     guard error == nil,
                           let data,
                           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                           let ok = json["ok"] as? Bool,
                           ok,
                           let html = json["html"] as? String else {
-                        self.composerPostButton.isEnabled = true
-                        self.composerPostButton.alpha = 1
+                        self.showNativeFlash(message: "Post failed. Try again.", category: "error")
                         return
                     }
 
                     let latestPostID = (json["latest_post_id"] as? NSNumber)?.intValue ?? (json["post_id"] as? NSNumber)?.intValue ?? 0
                     self.injectPostedCard(html: html, latestPostID: latestPostID)
-                    self.composerTextView.text = ""
-                    self.clearSelectedImage()
-                    self.textViewDidChange(self.composerTextView)
-                    self.dismissComposerSheet(animated: true)
+                    self.showNativeFlash(message: "Posted.", category: "success")
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
             }
@@ -500,6 +513,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         guard let payloadData = try? JSONSerialization.data(withJSONObject: ["html": html, "latest_post_id": latestPostID], options: []),
               let payloadJSON = String(data: payloadData, encoding: .utf8) else { return }
         let script = "window.nativeInsertPostCard && window.nativeInsertPostCard(\(payloadJSON));"
+        webView?.evaluateJavaScript(script, completionHandler: nil)
+    }
+
+    private func showNativeFlash(message: String, category: String) {
+        guard let payloadData = try? JSONSerialization.data(withJSONObject: ["message": message, "category": category], options: []),
+              let payloadJSON = String(data: payloadData, encoding: .utf8) else { return }
+        let script = "window.showTransientFlash && window.showTransientFlash(\(payloadJSON).message, \(payloadJSON).category);"
         webView?.evaluateJavaScript(script, completionHandler: nil)
     }
 

@@ -329,7 +329,20 @@
             }
             const data = await response.json();
             const card = form.closest("[data-post-card]");
-            if (!card || !data?.html) return;
+            if (!card) return;
+            if (data?.deleted) {
+                card.classList.add("card-swap-enter");
+                card.style.opacity = "0";
+                card.style.transform = "translateY(-8px)";
+                window.setTimeout(() => card.remove(), 160);
+                if (data?.message) {
+                    showTransientFlash(data.message, "success");
+                } else {
+                    showTransientFlash("Post deleted.", "success");
+                }
+                return;
+            }
+            if (!data?.html) return;
             const wrapper = document.createElement("div");
             wrapper.innerHTML = data.html.trim();
             const replacement = wrapper.firstElementChild;

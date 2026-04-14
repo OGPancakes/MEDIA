@@ -86,7 +86,7 @@
                 <button type="submit">Save changes</button>
             </form>
         </details>
-        <form action="{{ url_for('delete_post', post_id=post.id) }}" method="post"><button type="submit" class="icon-action danger-icon" title="Delete" aria-label="Delete" data-tooltip="Delete">🗑</button></form>
+        <form action="{{ url_for('delete_post', post_id=post.id) }}" method="post" data-post-action="delete-card"><button type="submit" class="icon-action danger-icon" title="Delete" aria-label="Delete" data-tooltip="Delete">🗑</button></form>
         {% endif %}
         <details>
             <summary class="icon-action danger-icon" title="Report" aria-label="Report" data-tooltip="Report"><img src="{{ url_for('static', filename='images/icon-report.svg') }}" alt=""></summary>
