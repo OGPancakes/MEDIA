@@ -23,6 +23,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var composerTextViewHeightConstraint: NSLayoutConstraint?
     private var keyboardObserversInstalled = false
     private var nativeComposerAvailable = false
+    private var stateSyncTimer: Timer?
 
     private let composerScriptMessageName = "nativeComposerState"
 
@@ -42,10 +43,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         configureNativeComposer()
         installKeyboardObservers()
         installComposerBridge()
+        startStateSyncTimer()
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        stateSyncTimer?.invalidate()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: composerScriptMessageName)
     }
 
@@ -244,6 +247,37 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         keyboardObserversInstalled = true
         NotificationCenter.default.addObserver(self, selector: #selector(handleKeyboardWillChange(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleKeyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    private func startStateSyncTimer() {
+        stateSyncTimer?.invalidate()
+        stateSyncTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
+            self?.syncComposerAvailabilityFromPage()
+        }
+        stateSyncTimer?.tolerance = 0.2
+        syncComposerAvailabilityFromPage()
+    }
+
+    private func syncComposerAvailabilityFromPage() {
+        let script = """
+        (function() {
+          if (document.body) {
+            document.body.classList.add('native-compose-enabled');
+          }
+          return {
+            loggedIn: !!(document.body && document.body.classList.contains('app-body')),
+            isFeed: !!document.querySelector('.home-flow')
+          };
+        })();
+        """
+        webView?.evaluateJavaScript(script) { [weak self] result, _ in
+            guard let self else { return }
+            if let payload = result as? [String: Any] {
+                let loggedIn = payload["loggedIn"] as? Bool ?? false
+                let isFeed = payload["isFeed"] as? Bool ?? false
+                self.setComposeButtonVisible(loggedIn && isFeed, animated: true)
+            }
+        }
     }
 
     private func setComposeButtonVisible(_ visible: Bool, animated: Bool) {
