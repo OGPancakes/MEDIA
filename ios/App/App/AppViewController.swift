@@ -2,8 +2,9 @@ import UIKit
 import WebKit
 import Capacitor
 import ObjectiveC.runtime
+import PhotosUI
 
-final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, UITextViewDelegate {
+final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, UITextViewDelegate, PHPickerViewControllerDelegate {
     private let shellBackground = UIColor(red: 238.0 / 255.0, green: 244.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
     private let topGradient = UIColor(red: 247.0 / 255.0, green: 250.0 / 255.0, blue: 255.0 / 255.0, alpha: 1).cgColor
     private let bottomGradient = UIColor(red: 255.0 / 255.0, green: 247.0 / 255.0, blue: 239.0 / 255.0, alpha: 1).cgColor
@@ -16,15 +17,23 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let composerCloseButton = UIButton(type: .system)
     private let composerTextView = UITextView()
     private let composerPlaceholder = UILabel()
+    private let composerAttachButton = UIButton(type: .system)
+    private let composerPreviewContainer = UIView()
+    private let composerPreviewImageView = UIImageView()
+    private let composerRemovePhotoButton = UIButton(type: .system)
     private let composerPostButton = UIButton(type: .system)
     private let composeButton = UIButton(type: .system)
 
     private var composerSheetBottomConstraint: NSLayoutConstraint?
     private var composeButtonBottomConstraint: NSLayoutConstraint?
     private var composerTextViewHeightConstraint: NSLayoutConstraint?
+    private var composerPreviewHeightConstraint: NSLayoutConstraint?
     private var keyboardObserversInstalled = false
     private var nativeComposerAvailable = false
     private var stateSyncTimer: Timer?
+    private var selectedImageData: Data?
+    private var selectedImageName: String?
+    private var selectedImageMimeType = "image/jpeg"
 
     private let composerScriptMessageName = "nativeComposerState"
 
@@ -82,14 +91,15 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func configureNativeComposer() {
         composerDimView.translatesAutoresizingMaskIntoConstraints = false
-        composerDimView.backgroundColor = UIColor.black.withAlphaComponent(0.18)
+        composerDimView.backgroundColor = UIColor.black.withAlphaComponent(0.1)
         composerDimView.alpha = 0
         composerDimView.isHidden = true
         composerDimView.addTarget(self, action: #selector(dismissComposer), for: .touchUpInside)
         view.addSubview(composerDimView)
 
         composerSheet.translatesAutoresizingMaskIntoConstraints = false
-        composerSheet.layer.cornerRadius = 28
+        composerSheet.effect = UIBlurEffect(style: .systemUltraThinMaterialDark)
+        composerSheet.layer.cornerRadius = 30
         composerSheet.layer.cornerCurve = .continuous
         composerSheet.clipsToBounds = true
         composerSheet.isHidden = true
@@ -97,47 +107,78 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         view.addSubview(composerSheet)
 
         let sheetContent = composerSheet.contentView
-        sheetContent.backgroundColor = UIColor.white.withAlphaComponent(0.9)
+        sheetContent.backgroundColor = UIColor(red: 16.0 / 255.0, green: 20.0 / 255.0, blue: 28.0 / 255.0, alpha: 0.84)
 
         composerHandle.translatesAutoresizingMaskIntoConstraints = false
-        composerHandle.backgroundColor = UIColor(white: 0.7, alpha: 0.55)
+        composerHandle.backgroundColor = UIColor(white: 1, alpha: 0.28)
         composerHandle.layer.cornerRadius = 2.5
         sheetContent.addSubview(composerHandle)
 
         composerTitle.translatesAutoresizingMaskIntoConstraints = false
         composerTitle.text = "Create post"
         composerTitle.font = .systemFont(ofSize: 18, weight: .semibold)
-        composerTitle.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        composerTitle.textColor = .white
         sheetContent.addSubview(composerTitle)
 
         composerCloseButton.translatesAutoresizingMaskIntoConstraints = false
-        composerCloseButton.setTitle("Cancel", for: .normal)
-        composerCloseButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .medium)
+        composerCloseButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        composerCloseButton.tintColor = UIColor(white: 1, alpha: 0.7)
         composerCloseButton.addTarget(self, action: #selector(dismissComposer), for: .touchUpInside)
         sheetContent.addSubview(composerCloseButton)
 
         composerTextView.translatesAutoresizingMaskIntoConstraints = false
         composerTextView.backgroundColor = .clear
         composerTextView.font = .systemFont(ofSize: 18)
-        composerTextView.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        composerTextView.textColor = .white
         composerTextView.delegate = self
         composerTextView.returnKeyType = .default
         composerTextView.keyboardAppearance = .dark
-        composerTextView.textContainerInset = UIEdgeInsets(top: 14, left: 4, bottom: 14, right: 4)
+        composerTextView.textContainerInset = UIEdgeInsets(top: 14, left: 0, bottom: 14, right: 0)
         composerTextView.textContainer.lineFragmentPadding = 0
         sheetContent.addSubview(composerTextView)
 
         composerPlaceholder.translatesAutoresizingMaskIntoConstraints = false
         composerPlaceholder.text = "What’s happening?"
         composerPlaceholder.font = .systemFont(ofSize: 18)
-        composerPlaceholder.textColor = UIColor(red: 91.0 / 255.0, green: 107.0 / 255.0, blue: 138.0 / 255.0, alpha: 0.78)
+        composerPlaceholder.textColor = UIColor(white: 1, alpha: 0.38)
         sheetContent.addSubview(composerPlaceholder)
+
+        composerPreviewContainer.translatesAutoresizingMaskIntoConstraints = false
+        composerPreviewContainer.layer.cornerRadius = 18
+        composerPreviewContainer.layer.cornerCurve = .continuous
+        composerPreviewContainer.clipsToBounds = true
+        composerPreviewContainer.backgroundColor = UIColor(white: 1, alpha: 0.08)
+        composerPreviewContainer.isHidden = true
+        sheetContent.addSubview(composerPreviewContainer)
+
+        composerPreviewImageView.translatesAutoresizingMaskIntoConstraints = false
+        composerPreviewImageView.contentMode = .scaleAspectFill
+        composerPreviewImageView.clipsToBounds = true
+        composerPreviewContainer.addSubview(composerPreviewImageView)
+
+        composerRemovePhotoButton.translatesAutoresizingMaskIntoConstraints = false
+        composerRemovePhotoButton.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
+        composerRemovePhotoButton.tintColor = UIColor(white: 1, alpha: 0.9)
+        composerRemovePhotoButton.addTarget(self, action: #selector(removeSelectedPhoto), for: .touchUpInside)
+        composerPreviewContainer.addSubview(composerRemovePhotoButton)
+
+        composerAttachButton.translatesAutoresizingMaskIntoConstraints = false
+        composerAttachButton.setImage(UIImage(systemName: "photo.on.rectangle.angled"), for: .normal)
+        composerAttachButton.setTitle(" Add photo", for: .normal)
+        composerAttachButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+        composerAttachButton.tintColor = UIColor(white: 1, alpha: 0.92)
+        composerAttachButton.backgroundColor = UIColor(white: 1, alpha: 0.08)
+        composerAttachButton.layer.cornerRadius = 18
+        composerAttachButton.layer.cornerCurve = .continuous
+        composerAttachButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
+        composerAttachButton.addTarget(self, action: #selector(openPhotoPicker), for: .touchUpInside)
+        sheetContent.addSubview(composerAttachButton)
 
         composerPostButton.translatesAutoresizingMaskIntoConstraints = false
         composerPostButton.setTitle("Post", for: .normal)
         composerPostButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
         composerPostButton.backgroundColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
-        composerPostButton.layer.cornerRadius = 20
+        composerPostButton.layer.cornerRadius = 18
         composerPostButton.layer.cornerCurve = .continuous
         composerPostButton.setTitleColor(.white, for: .normal)
         composerPostButton.addTarget(self, action: #selector(postFromNativeComposer), for: .touchUpInside)
@@ -160,7 +201,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
         composerSheetBottomConstraint = composerSheet.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: 360)
         composeButtonBottomConstraint = composeButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92)
-        composerTextViewHeightConstraint = composerTextView.heightAnchor.constraint(equalToConstant: 120)
+        composerTextViewHeightConstraint = composerTextView.heightAnchor.constraint(equalToConstant: 112)
+        composerPreviewHeightConstraint = composerPreviewContainer.heightAnchor.constraint(equalToConstant: 0)
 
         NSLayoutConstraint.activate([
             composerDimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -178,7 +220,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             composerHandle.heightAnchor.constraint(equalToConstant: 5),
 
             composerCloseButton.topAnchor.constraint(equalTo: sheetContent.topAnchor, constant: 18),
-            composerCloseButton.leadingAnchor.constraint(equalTo: sheetContent.leadingAnchor, constant: 18),
+            composerCloseButton.trailingAnchor.constraint(equalTo: sheetContent.trailingAnchor, constant: -18),
+            composerCloseButton.widthAnchor.constraint(equalToConstant: 28),
+            composerCloseButton.heightAnchor.constraint(equalToConstant: 28),
 
             composerTitle.centerYAnchor.constraint(equalTo: composerCloseButton.centerYAnchor),
             composerTitle.centerXAnchor.constraint(equalTo: sheetContent.centerXAnchor),
@@ -189,12 +233,32 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             composerTextViewHeightConstraint!,
 
             composerPlaceholder.topAnchor.constraint(equalTo: composerTextView.topAnchor, constant: 14),
-            composerPlaceholder.leadingAnchor.constraint(equalTo: composerTextView.leadingAnchor, constant: 4),
+            composerPlaceholder.leadingAnchor.constraint(equalTo: composerTextView.leadingAnchor),
 
-            composerPostButton.topAnchor.constraint(equalTo: composerTextView.bottomAnchor, constant: 12),
+            composerPreviewContainer.topAnchor.constraint(equalTo: composerTextView.bottomAnchor, constant: 6),
+            composerPreviewContainer.leadingAnchor.constraint(equalTo: sheetContent.leadingAnchor, constant: 18),
+            composerPreviewContainer.trailingAnchor.constraint(equalTo: sheetContent.trailingAnchor, constant: -18),
+            composerPreviewHeightConstraint!,
+
+            composerPreviewImageView.leadingAnchor.constraint(equalTo: composerPreviewContainer.leadingAnchor),
+            composerPreviewImageView.trailingAnchor.constraint(equalTo: composerPreviewContainer.trailingAnchor),
+            composerPreviewImageView.topAnchor.constraint(equalTo: composerPreviewContainer.topAnchor),
+            composerPreviewImageView.bottomAnchor.constraint(equalTo: composerPreviewContainer.bottomAnchor),
+
+            composerRemovePhotoButton.topAnchor.constraint(equalTo: composerPreviewContainer.topAnchor, constant: 8),
+            composerRemovePhotoButton.trailingAnchor.constraint(equalTo: composerPreviewContainer.trailingAnchor, constant: -8),
+            composerRemovePhotoButton.widthAnchor.constraint(equalToConstant: 30),
+            composerRemovePhotoButton.heightAnchor.constraint(equalToConstant: 30),
+
+            composerAttachButton.topAnchor.constraint(equalTo: composerPreviewContainer.bottomAnchor, constant: 12),
+            composerAttachButton.leadingAnchor.constraint(equalTo: sheetContent.leadingAnchor, constant: 18),
+            composerAttachButton.heightAnchor.constraint(equalToConstant: 40),
+
+            composerPostButton.centerYAnchor.constraint(equalTo: composerAttachButton.centerYAnchor),
             composerPostButton.trailingAnchor.constraint(equalTo: sheetContent.trailingAnchor, constant: -18),
             composerPostButton.widthAnchor.constraint(equalToConstant: 82),
             composerPostButton.heightAnchor.constraint(equalToConstant: 40),
+            composerPostButton.leadingAnchor.constraint(greaterThanOrEqualTo: composerAttachButton.trailingAnchor, constant: 12),
             composerPostButton.bottomAnchor.constraint(equalTo: sheetContent.bottomAnchor, constant: -16),
 
             composeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
@@ -202,6 +266,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             composeButton.widthAnchor.constraint(equalToConstant: 56),
             composeButton.heightAnchor.constraint(equalToConstant: 56)
         ])
+
+        composerPostButton.isEnabled = false
+        composerPostButton.alpha = 0.55
     }
 
     private func installComposerBridge() {
@@ -375,7 +442,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     @objc private func postFromNativeComposer() {
         let body = composerTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty else { return }
+        guard !body.isEmpty || selectedImageData != nil else { return }
         guard let targetURL = URL(string: "/post/create", relativeTo: webView?.url)?.absoluteURL else { return }
 
         composerPostButton.isEnabled = false
@@ -392,7 +459,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             if let cookieHeader, !cookieHeader.isEmpty {
                 request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
             }
-            request.httpBody = self.multipartBody(boundary: boundary, body: body)
+            request.httpBody = self.multipartBody(
+                boundary: boundary,
+                body: body,
+                imageData: self.selectedImageData,
+                imageName: self.selectedImageName,
+                mimeType: self.selectedImageMimeType
+            )
 
             let task = URLSession.shared.dataTask(with: request) { data, response, error in
                 DispatchQueue.main.async {
@@ -410,6 +483,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     let latestPostID = (json["latest_post_id"] as? NSNumber)?.intValue ?? (json["post_id"] as? NSNumber)?.intValue ?? 0
                     self.injectPostedCard(html: html, latestPostID: latestPostID)
                     self.composerTextView.text = ""
+                    self.clearSelectedImage()
                     self.textViewDidChange(self.composerTextView)
                     self.dismissComposerSheet(animated: true)
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -440,12 +514,20 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
     }
 
-    private func multipartBody(boundary: String, body: String) -> Data {
+    private func multipartBody(boundary: String, body: String, imageData: Data?, imageName: String?, mimeType: String) -> Data {
         var data = Data()
         let lineBreak = "\r\n"
         data.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
         data.append("Content-Disposition: form-data; name=\"body\"\(lineBreak)\(lineBreak)".data(using: .utf8)!)
         data.append("\(body)\(lineBreak)".data(using: .utf8)!)
+        if let imageData {
+            let fileName = imageName ?? "upload.jpg"
+            data.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+            data.append("Content-Disposition: form-data; name=\"media\"; filename=\"\(fileName)\"\(lineBreak)".data(using: .utf8)!)
+            data.append("Content-Type: \(mimeType)\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+            data.append(imageData)
+            data.append(lineBreak.data(using: .utf8)!)
+        }
         data.append("--\(boundary)--\(lineBreak)".data(using: .utf8)!)
         return data
     }
@@ -462,12 +544,55 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     func textViewDidChange(_ textView: UITextView) {
         composerPlaceholder.isHidden = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let targetHeight = min(max(textView.contentSize.height, 120), 220)
+        let targetHeight = min(max(textView.contentSize.height, 92), 180)
         composerTextViewHeightConstraint?.constant = targetHeight
-        composerPostButton.isEnabled = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        composerPostButton.isEnabled = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedImageData != nil
         composerPostButton.alpha = composerPostButton.isEnabled ? 1 : 0.55
         UIView.animate(withDuration: 0.14) {
             self.view.layoutIfNeeded()
+        }
+    }
+
+    @objc private func openPhotoPicker() {
+        var configuration = PHPickerConfiguration(photoLibrary: .shared())
+        configuration.filter = .images
+        configuration.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = self
+        picker.modalPresentationStyle = .pageSheet
+        present(picker, animated: true)
+    }
+
+    @objc private func removeSelectedPhoto() {
+        clearSelectedImage()
+        textViewDidChange(composerTextView)
+    }
+
+    private func clearSelectedImage() {
+        selectedImageData = nil
+        selectedImageName = nil
+        selectedImageMimeType = "image/jpeg"
+        composerPreviewImageView.image = nil
+        composerPreviewContainer.isHidden = true
+        composerPreviewHeightConstraint?.constant = 0
+    }
+
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        guard let provider = results.first?.itemProvider else { return }
+        if provider.canLoadObject(ofClass: UIImage.self) {
+            provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+                guard let self, let image = object as? UIImage else { return }
+                DispatchQueue.main.async {
+                    self.composerPreviewImageView.image = image
+                    self.composerPreviewContainer.isHidden = false
+                    self.composerPreviewHeightConstraint?.constant = 140
+                    self.selectedImageData = image.jpegData(compressionQuality: 0.88)
+                    self.selectedImageName = "photo.jpg"
+                    self.selectedImageMimeType = "image/jpeg"
+                    self.textViewDidChange(self.composerTextView)
+                }
+            }
         }
     }
 }
