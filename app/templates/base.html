@@ -115,6 +115,13 @@
             document.documentElement.style.setProperty("--app-topbar-height", topbarHeight);
         }
 
+        function refreshTopbarLayout() {
+            window.requestAnimationFrame(() => {
+                syncTopbarHeight();
+                window.setTimeout(syncTopbarHeight, 60);
+            });
+        }
+
         function currentScrollContainer(root = document) {
             return root.querySelector("[data-app-scroll-root]") || currentMainElement(root);
         }
@@ -629,14 +636,21 @@
 
         window.addEventListener("pageshow", () => {
             document.body.classList.remove("page-is-transitioning");
+            refreshTopbarLayout();
         });
 
         window.addEventListener("popstate", () => {
             navigateInApp(window.location.href, {replace: true});
         });
 
-        window.addEventListener("resize", syncTopbarHeight);
-        syncTopbarHeight();
+        window.addEventListener("resize", refreshTopbarLayout);
+        window.addEventListener("focus", refreshTopbarLayout);
+        document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") {
+                refreshTopbarLayout();
+            }
+        });
+        refreshTopbarLayout();
         bootPageFeatures();
     </script>
 </body>
