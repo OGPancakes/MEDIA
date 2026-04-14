@@ -94,6 +94,14 @@ img {
     max-width: 100%;
 }
 
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    background: transparent;
+}
+
 button,
 .button {
     display: inline-flex;

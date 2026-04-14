@@ -1,14 +1,17 @@
-const serverUrl = process.env.CAP_SERVER_URL || "http://127.0.0.1:5000";
+const serverUrl = process.env.CAP_SERVER_URL || "https://media-production-0abd.up.railway.app";
 
 module.exports = {
   appId: "com.piasocial.app",
   appName: "PIA Social",
   webDir: "app/static",
+  backgroundColor: "#eef4ff",
   server: {
     url: serverUrl,
     cleartext: serverUrl.startsWith("http://")
   },
   ios: {
-    contentInset: "automatic"
+    contentInset: "automatic",
+    backgroundColor: "#eef4ff",
+    preferredContentMode: "mobile"
   }
 };

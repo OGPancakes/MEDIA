@@ -20,6 +20,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR))).resolve()
 UPLOAD_DIR = DATA_DIR / "uploads"
 DATABASE_PATH = DATA_DIR / "social_app.db"
+SECRET_KEY_PATH = DATA_DIR / ".secret_key"
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "mp4", "mov", "webm"}
 DEFAULT_AVATAR_PATH = "images/pia-logo.jpeg"
 DEFAULT_BANNER_PATH = "images/pia-logo.jpeg"
@@ -28,6 +29,20 @@ HASHTAG_RE = re.compile(r"#(\w+)")
 MENTION_RE = re.compile(r"@(\w+)")
 
 db = SQLAlchemy()
+
+
+def get_secret_key():
+    configured_key = os.environ.get("SECRET_KEY", "").strip()
+    if configured_key:
+        return configured_key
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if SECRET_KEY_PATH.exists():
+        saved_key = SECRET_KEY_PATH.read_text(encoding="utf-8").strip()
+        if saved_key:
+            return saved_key
+    generated_key = secrets.token_hex(32)
+    SECRET_KEY_PATH.write_text(generated_key, encoding="utf-8")
+    return generated_key
 
 
 class TimestampMixin:
@@ -251,12 +266,20 @@ class PollVote(db.Model, TimestampMixin):
 
 def create_app():
     app = Flask(__name__, template_folder="app/templates", static_folder="app/static")
-    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", secrets.token_hex(16))
+    app.config["SECRET_KEY"] = get_secret_key()
     app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DATABASE_PATH}"
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["UPLOAD_FOLDER"] = str(UPLOAD_DIR)
     app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=180)
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     db.init_app(app)
+
+    @app.before_request
+    def refresh_session():
+        if session.get("user_id"):
+            session.permanent = True
 
     @app.context_processor
     def inject_globals():
