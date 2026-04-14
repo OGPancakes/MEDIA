@@ -31,6 +31,13 @@ MENTION_RE = re.compile(r"@(\w+)")
 db = SQLAlchemy()
 
 
+def ensure_persistent_storage_config():
+    on_railway = bool(os.environ.get("RAILWAY_ENVIRONMENT_ID") or os.environ.get("RAILWAY_PROJECT_ID"))
+    configured_data_dir = os.environ.get("DATA_DIR", "").strip()
+    if on_railway and not configured_data_dir:
+        raise RuntimeError("DATA_DIR must be set on Railway to your persistent volume mount (for example /data).")
+
+
 def get_secret_key():
     configured_key = os.environ.get("SECRET_KEY", "").strip()
     if configured_key:
@@ -265,6 +272,7 @@ class PollVote(db.Model, TimestampMixin):
 
 
 def create_app():
+    ensure_persistent_storage_config()
     app = Flask(__name__, template_folder="app/templates", static_folder="app/static")
     app.config["SECRET_KEY"] = get_secret_key()
     app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DATABASE_PATH}"
