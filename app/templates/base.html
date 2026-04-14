@@ -18,47 +18,46 @@
     {% set page_content %}{% block content %}{% endblock %}{% endset %}
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if current_user %}
-    <header class="app-topbar">
-        <a class="topbar-home" href="{{ url_for('index') }}">
-            <span class="topbar-home-mark">Home</span>
-        </a>
-        <details class="account-menu">
-            <summary class="account-trigger" aria-label="Open account menu">
-                <span class="account-trigger-copy">
-                    <strong>{{ current_user.display_name }}</strong>
-                    <span>@{{ current_user.username }}</span>
-                </span>
-                {{ render_avatar(current_user, "user-avatar topbar-avatar") }}
-            </summary>
-            <div class="account-dropdown card">
-                <a href="{{ url_for('profile', username=current_user.username) }}">Profile</a>
-                <a href="{{ url_for('notifications') }}">Notifications {% if notifications_count %}<span class="badge">{{ notifications_count }}</span>{% endif %}</a>
-                <a href="{{ url_for('settings') }}">Settings</a>
-                <a href="{{ url_for('bookmarks') }}">Bookmarks</a>
-                {% if current_user.is_admin %}
-                <a href="{{ url_for('admin') }}">Admin</a>
-                {% endif %}
-                <a href="{{ url_for('logout') }}">Logout</a>
-                {% if switch_accounts %}
-                <div class="account-dropdown-group">
-                    <h4>Switch account</h4>
-                    <div class="switcher-list">
-                        {% for account in switch_accounts %}
-                        <form action="{{ url_for('switch_account', username=account.username) }}" method="post">
-                            <button type="submit" class="switch-account-button">
-                                {{ render_avatar(account, "user-avatar") }}
-                                <span>@{{ account.username }}</span>
-                            </button>
-                        </form>
-                        {% endfor %}
-                    </div>
-                </div>
-                {% endif %}
-            </div>
-        </details>
-    </header>
-
     <div class="page-shell app-main-shell">
+        <header class="app-topbar">
+            <a class="topbar-home" href="{{ url_for('index') }}">
+                <span class="topbar-home-mark">Home</span>
+            </a>
+            <details class="account-menu">
+                <summary class="account-trigger" aria-label="Open account menu">
+                    <span class="account-trigger-copy">
+                        <strong>{{ current_user.display_name }}</strong>
+                        <span>@{{ current_user.username }}</span>
+                    </span>
+                    {{ render_avatar(current_user, "user-avatar topbar-avatar") }}
+                </summary>
+                <div class="account-dropdown card">
+                    <a href="{{ url_for('profile', username=current_user.username) }}">Profile</a>
+                    <a href="{{ url_for('notifications') }}">Notifications {% if notifications_count %}<span class="badge">{{ notifications_count }}</span>{% endif %}</a>
+                    <a href="{{ url_for('settings') }}">Settings</a>
+                    <a href="{{ url_for('bookmarks') }}">Bookmarks</a>
+                    {% if current_user.is_admin %}
+                    <a href="{{ url_for('admin') }}">Admin</a>
+                    {% endif %}
+                    <a href="{{ url_for('logout') }}">Logout</a>
+                    {% if switch_accounts %}
+                    <div class="account-dropdown-group">
+                        <h4>Switch account</h4>
+                        <div class="switcher-list">
+                            {% for account in switch_accounts %}
+                            <form action="{{ url_for('switch_account', username=account.username) }}" method="post">
+                                <button type="submit" class="switch-account-button">
+                                    {{ render_avatar(account, "user-avatar") }}
+                                    <span>@{{ account.username }}</span>
+                                </button>
+                            </form>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </details>
+        </header>
         <main class="content app-content">
             {% if messages %}
             <div class="flash-stack">
