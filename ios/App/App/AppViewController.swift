@@ -267,7 +267,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             }
         }
         if !visible {
-            dismissComposer(animated: false)
+            dismissComposerSheet(animated: false)
         }
     }
 
@@ -287,10 +287,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     @objc private func dismissComposer() {
-        dismissComposer(animated: true)
+        dismissComposerSheet(animated: true)
     }
 
-    private func dismissComposer(animated: Bool) {
+    private func dismissComposerSheet(animated: Bool) {
         composerTextView.resignFirstResponder()
         let reset = {
             self.composerDimView.alpha = 0
@@ -374,7 +374,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.injectPostedCard(html: html, latestPostID: latestPostID)
                     self.composerTextView.text = ""
                     self.textViewDidChange(self.composerTextView)
-                    self.dismissComposer(animated: true)
+                    self.dismissComposerSheet(animated: true)
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
             }
