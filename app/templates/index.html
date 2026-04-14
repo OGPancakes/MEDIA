@@ -54,7 +54,7 @@
                 <h3>Stories</h3>
                 <a href="{{ url_for('search') }}">Discover</a>
             </div>
-            <div class="stories-inline-scroll">
+            <div class="stories-inline-scroll" data-horizontal-pan>
                 <form action="{{ url_for('create_story') }}" method="post" enctype="multipart/form-data" class="story-inline-add">
                     <label class="story-inline-chip story-inline-add-chip">
                         <span class="story-ring {% if story_owner_has_active_story(current_user) %}active-story-ring{% endif %}">
@@ -82,7 +82,7 @@
         </section>
 
         <section class="composer">
-            <form action="{{ url_for('create_post') }}" method="post" enctype="multipart/form-data">
+            <form action="{{ url_for('create_post') }}" method="post" enctype="multipart/form-data" data-compose-post>
                 <textarea name="body" rows="4" placeholder="Post to the timeline, use #hashtags and @mentions"></textarea>
                 <div class="form-row">
                     <input class="file-input" type="file" name="media">

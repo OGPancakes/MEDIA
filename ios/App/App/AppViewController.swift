@@ -21,8 +21,11 @@ class AppViewController: CAPBridgeViewController {
         }
 
         guard let webView = webView else { return }
-        webView.isOpaque = false
+        webView.isOpaque = true
         webView.backgroundColor = shellBackground
+        if #available(iOS 15.0, *) {
+            webView.underPageBackgroundColor = shellBackground
+        }
         webView.scrollView.backgroundColor = shellBackground
         webView.scrollView.bounces = false
         webView.scrollView.alwaysBounceVertical = false
@@ -32,7 +35,7 @@ class AppViewController: CAPBridgeViewController {
         webView.scrollView.verticalScrollIndicatorInsets = .zero
         webView.scrollView.showsVerticalScrollIndicator = false
         webView.scrollView.showsHorizontalScrollIndicator = false
-        webView.scrollView.keyboardDismissMode = .interactive
+        webView.scrollView.keyboardDismissMode = .onDrag
     }
 
     override func viewDidLayoutSubviews() {
