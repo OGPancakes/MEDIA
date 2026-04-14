@@ -99,9 +99,11 @@
     </main>
     {% endif %}
     {% endwith %}
+    {% if not current_user %}
     <footer class="site-footer">
         <a href="{{ url_for('privacy') }}">Privacy Policy</a>
     </footer>
+    {% endif %}
     <script>
         document.documentElement.classList.add("app-ready");
 

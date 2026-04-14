@@ -175,6 +175,7 @@ textarea {
     grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
     max-width: 1540px;
+    min-height: calc(100dvh - var(--safe-top));
     margin: 0 auto;
     padding: 0 1rem 1rem;
 }
@@ -808,12 +809,16 @@ body.dark-mode .connection-row {
     display: grid;
     gap: 0.9rem;
     padding-bottom: 6.6rem;
+    min-height: calc(100dvh - var(--safe-top) - 7.5rem);
     min-width: 0;
+    align-content: start;
 }
 
 .app-content {
     width: min(100%, 860px);
     margin: 0 auto;
+    display: grid;
+    align-content: start;
 }
 
 .right-rail {
@@ -1425,7 +1430,9 @@ body.dark-mode .bottom-nav-link {
 .profile-page {
     display: grid;
     gap: 0.42rem;
+    min-height: calc(100dvh - var(--safe-top) - 8.5rem);
     align-content: start;
+    grid-template-rows: auto auto 1fr;
 }
 
 .back-link {
