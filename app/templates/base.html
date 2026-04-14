@@ -180,6 +180,19 @@
             bootPageFeatures();
         }
 
+        function replaceMainFromDocument(nextDocument) {
+            const incomingMain = currentMainElement(nextDocument);
+            const existingMain = currentMainElement(document);
+            if (incomingMain && existingMain) {
+                incomingMain.classList.add("screen-swap-enter");
+                existingMain.replaceWith(incomingMain);
+                requestAnimationFrame(() => incomingMain.classList.remove("screen-swap-enter"));
+            }
+            document.body.className = nextDocument.body.className;
+            document.title = nextDocument.title;
+            bootPageFeatures();
+        }
+
         async function navigateInApp(url, options = {}) {
             try {
                 document.body.classList.add("page-is-transitioning");
@@ -211,7 +224,6 @@
 
         async function submitShellForm(form) {
             try {
-                document.body.classList.add("page-is-transitioning");
                 const response = await fetch(form.action || window.location.href, {
                     method: form.method || "POST",
                     body: new FormData(form),
@@ -222,14 +234,12 @@
                 const html = await response.text();
                 const parser = new DOMParser();
                 const nextDocument = parser.parseFromString(html, "text/html");
-                replaceShellFromDocument(nextDocument);
+                replaceMainFromDocument(nextDocument);
                 const destinationUrl = response.url || window.location.href;
                 window.history.replaceState({}, "", destinationUrl);
                 window.scrollTo({top: 0, behavior: "instant"});
             } catch (error) {
                 form.submit();
-            } finally {
-                document.body.classList.remove("page-is-transitioning");
             }
         }
 
