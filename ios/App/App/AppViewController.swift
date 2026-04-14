@@ -1,6 +1,7 @@
 import UIKit
 import WebKit
 import Capacitor
+import ObjectiveC.runtime
 
 final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, UITextViewDelegate {
     private let shellBackground = UIColor(red: 238.0 / 255.0, green: 244.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
@@ -66,6 +67,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         webView.inputAssistantItem.leadingBarButtonGroups = []
         webView.inputAssistantItem.trailingBarButtonGroups = []
+        webView.hideInputAccessoryView()
         webView.scrollView.backgroundColor = shellBackground
         webView.scrollView.bounces = false
         webView.scrollView.alwaysBounceVertical = false
@@ -120,6 +122,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         composerTextView.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
         composerTextView.delegate = self
         composerTextView.returnKeyType = .default
+        composerTextView.keyboardAppearance = .dark
         composerTextView.textContainerInset = UIEdgeInsets(top: 14, left: 4, bottom: 14, right: 4)
         composerTextView.textContainer.lineFragmentPadding = 0
         sheetContent.addSubview(composerTextView)
@@ -466,5 +469,43 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         UIView.animate(withDuration: 0.14) {
             self.view.layoutIfNeeded()
         }
+    }
+}
+
+private extension UIView {
+    func hideInputAccessoryView() {
+        guard let targetView = scrollViewContentView() else { return }
+        let originalClass: AnyClass = object_getClass(targetView)!
+        let className = String(cString: class_getName(originalClass)).appending("_NoInputAccessory")
+
+        if let existingClass = NSClassFromString(className) {
+            object_setClass(targetView, existingClass)
+            return
+        }
+
+        guard let subclass = objc_allocateClassPair(originalClass, className, 0) else { return }
+        if let method = class_getInstanceMethod(UIView.self, #selector(getter: UIView.inputAccessoryView)) {
+            let block: @convention(block) (AnyObject) -> Any? = { _ in nil }
+            class_addMethod(
+                subclass,
+                #selector(getter: UIView.inputAccessoryView),
+                imp_implementationWithBlock(block),
+                method_getTypeEncoding(method)
+            )
+        }
+        objc_registerClassPair(subclass)
+        object_setClass(targetView, subclass)
+    }
+
+    func scrollViewContentView() -> UIView? {
+        if String(describing: type(of: self)).hasPrefix("WKContent") {
+            return self
+        }
+        for subview in subviews {
+            if let found = subview.scrollViewContentView() {
+                return found
+            }
+        }
+        return nil
     }
 }
