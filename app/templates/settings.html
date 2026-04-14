@@ -19,6 +19,16 @@
 </section>
 
 <section class="card">
+    <h3>Change password</h3>
+    <form method="post" class="stack-form">
+        <input type="password" name="current_password" placeholder="Current password">
+        <input type="password" name="new_password" placeholder="New password">
+        <input type="password" name="confirm_password" placeholder="Confirm new password">
+        <button type="submit">Update password</button>
+    </form>
+</section>
+
+<section class="card">
     <h3>Push endpoint</h3>
     <form method="post" action="{{ url_for('register_push') }}" class="stack-form">
         <input type="text" name="endpoint" placeholder="Paste a push subscription endpoint">

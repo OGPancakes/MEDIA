@@ -25,6 +25,8 @@ ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "mp4", "mov", "webm"}
 DEFAULT_AVATAR_PATH = "images/pia-logo.jpeg"
 DEFAULT_BANNER_PATH = "images/pia-logo.jpeg"
 DEFAULT_AVATAR_EMOJIS = ["🦅", "⭐", "🔥", "🎤", "📣", "🎯", "🗽", "🧢", "🌟", "🚀", "🎬", "💬"]
+SEEDED_ACCOUNTS_PATH = BASE_DIR / "data" / "firebase_seed_accounts.txt"
+IMPORTED_USER_PASSWORD = os.environ.get("IMPORTED_USER_PASSWORD", "WelcomePIA2026!")
 HASHTAG_RE = re.compile(r"#(\w+)")
 MENTION_RE = re.compile(r"@(\w+)")
 
@@ -802,6 +804,23 @@ def create_app():
                 user.avatar = avatar_path
             if banner_path:
                 user.banner = banner_path
+            current_password = request.form.get("current_password", "")
+            new_password = request.form.get("new_password", "")
+            confirm_password = request.form.get("confirm_password", "")
+            if current_password or new_password or confirm_password:
+                if not current_password or not new_password or not confirm_password:
+                    flash("Fill out all password fields to change your password.", "error")
+                    return redirect(url_for("settings"))
+                if not user.check_password(current_password):
+                    flash("Your current password is incorrect.", "error")
+                    return redirect(url_for("settings"))
+                if new_password != confirm_password:
+                    flash("New password and confirmation must match.", "error")
+                    return redirect(url_for("settings"))
+                if len(new_password) < 8:
+                    flash("New password must be at least 8 characters.", "error")
+                    return redirect(url_for("settings"))
+                user.set_password(new_password)
             db.session.commit()
             flash("Settings updated.", "success")
             return redirect(url_for("settings"))
@@ -1042,6 +1061,7 @@ def create_app():
         cleanup_self_interactions()
         cleanup_invalid_notifications()
         ensure_admin_account()
+        import_seed_accounts()
 
     return app
 
@@ -1601,6 +1621,70 @@ def ensure_admin_account():
         admin_user.is_breaking_news = True
         admin_user.set_password("admin")
     db.session.commit()
+
+
+def load_seed_account_emails():
+    if not SEEDED_ACCOUNTS_PATH.exists():
+        return []
+    raw_text = SEEDED_ACCOUNTS_PATH.read_text(encoding="utf-8")
+    seen = set()
+    emails = []
+    for email in re.findall(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", raw_text):
+        normalized = email.strip().lower()
+        if normalized not in seen:
+            seen.add(normalized)
+            emails.append(normalized)
+    return emails
+
+
+def username_from_email(email):
+    local_part = email.split("@", 1)[0].lower()
+    if local_part.endswith(".pia"):
+        local_part = local_part[:-4]
+    candidate = re.sub(r"[^a-z0-9]+", ".", local_part).strip(".")
+    candidate = re.sub(r"\.+", ".", candidate) or "user"
+    candidate = candidate[:30].rstrip(".") or "user"
+    base = candidate
+    suffix = 2
+    while User.query.filter_by(username=candidate).first():
+        trimmed = base[: max(1, 30 - len(str(suffix)) - 1)].rstrip(".") or "user"
+        candidate = f"{trimmed}{suffix}"
+        suffix += 1
+    return candidate
+
+
+def display_name_from_email(email):
+    local_part = email.split("@", 1)[0]
+    if local_part.endswith(".pia"):
+        local_part = local_part[:-4]
+    parts = [part for part in re.split(r"[.\-_]+", local_part) if part]
+    if not parts:
+        return "PIA User"
+    display_parts = []
+    for part in parts:
+        if len(part) == 1:
+            display_parts.append(part.upper())
+        else:
+            display_parts.append(part[:1].upper() + part[1:].lower())
+    return " ".join(display_parts)[:80]
+
+
+def import_seed_accounts():
+    emails = load_seed_account_emails()
+    created = 0
+    for email in emails:
+        if User.query.filter_by(email=email).first():
+            continue
+        user = User(
+            username=username_from_email(email),
+            display_name=display_name_from_email(email),
+            email=email,
+        )
+        user.set_password(IMPORTED_USER_PASSWORD)
+        db.session.add(user)
+        created += 1
+    if created:
+        db.session.commit()
 
 
 def ensure_schema_updates():
