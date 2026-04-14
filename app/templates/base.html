@@ -149,13 +149,6 @@
             return Boolean(target?.closest?.("[data-horizontal-pan]"));
         }
 
-        function syncKeyboardInset() {
-            if (!window.visualViewport) return;
-            const offset = Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop);
-            document.documentElement.style.setProperty("--keyboard-offset", `${offset}px`);
-            document.body.classList.toggle("keyboard-open", offset > 80);
-        }
-
         function autoSizeTextareas(root = document) {
             root.querySelectorAll("textarea").forEach((textarea) => {
                 textarea.style.height = "auto";
@@ -171,7 +164,6 @@
             activeComposer = nextComposer;
             if (activeComposer) {
                 activeComposer.classList.add("is-focused");
-                activeComposer.scrollIntoView({block: "nearest", behavior: "smooth"});
             }
         }
 
@@ -213,7 +205,6 @@
         function bootPageFeatures() {
             startFeedRefresh();
             autoSizeTextareas();
-            syncKeyboardInset();
         }
 
         function replaceShellFromDocument(nextDocument) {
@@ -566,7 +557,6 @@
                 autoSizeTextareas(target.closest("form") || document);
             }
             setActiveComposer(target);
-            window.setTimeout(syncKeyboardInset, 10);
         });
 
         document.addEventListener("focusout", () => {
@@ -579,7 +569,6 @@
                 } else {
                     setActiveComposer(document.activeElement);
                 }
-                syncKeyboardInset();
             }, 20);
         });
 
@@ -598,10 +587,6 @@
         });
 
         window.addEventListener("resize", syncTopbarHeight);
-        if (window.visualViewport) {
-            window.visualViewport.addEventListener("resize", syncKeyboardInset);
-            window.visualViewport.addEventListener("scroll", syncKeyboardInset);
-        }
         syncTopbarHeight();
         bootPageFeatures();
     </script>

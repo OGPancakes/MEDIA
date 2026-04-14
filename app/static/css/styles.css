@@ -11,7 +11,6 @@
     --safe-top: env(safe-area-inset-top, 0px);
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     --app-topbar-height: calc(var(--safe-top) + 3.7rem);
-    --keyboard-offset: 0px;
 }
 
 * {
@@ -921,7 +920,6 @@ body.dark-mode .connection-row {
     scrollbar-gutter: stable both-edges;
     background: transparent;
     contain: layout style;
-    scroll-padding-bottom: calc(1rem + var(--keyboard-offset) + var(--safe-bottom));
 }
 
 .right-rail {
@@ -1407,23 +1405,13 @@ body.dark-mode .bottom-nav-link {
 }
 
 .composer.is-focused form,
-body.keyboard-open .composer form {
+.composer:focus-within form {
     border-color: rgba(11, 61, 145, 0.1);
     box-shadow: 0 20px 38px rgba(20, 33, 61, 0.12);
 }
 
 .composer.is-submitting form {
     opacity: 0.9;
-}
-
-body.keyboard-open .composer.is-focused {
-    position: sticky;
-    bottom: calc(0.65rem + var(--safe-bottom));
-    z-index: 18;
-}
-
-body.keyboard-open .app-content {
-    padding-bottom: calc(1rem + var(--keyboard-offset) + var(--safe-bottom));
 }
 
 .user-row {
