@@ -927,6 +927,9 @@ def create_app():
     @app.route("/admin", methods=["GET", "POST"])
     @admin_required
     def admin():
+        tab = request.args.get("tab", "overview").strip().lower()
+        if tab not in {"overview", "users"}:
+            tab = "overview"
         if request.method == "POST":
             action = request.form.get("action")
             target_id = int(request.form.get("target_id", 0))
@@ -971,7 +974,7 @@ def create_app():
                 user = User.query.get_or_404(target_id)
                 if user.is_admin:
                     flash("Admin accounts cannot be deleted here.", "error")
-                    return redirect(url_for("admin"))
+                    return redirect(url_for("admin", tab=tab))
                 purge_user_account(user)
                 flash("Account deleted.", "success")
             elif action == "edit_user":
@@ -981,10 +984,10 @@ def create_app():
                 email = request.form.get("email", user.email).strip().lower()
                 if username != user.username and User.query.filter(User.username == username, User.id != user.id).first():
                     flash("That username is already in use.", "error")
-                    return redirect(url_for("admin"))
+                    return redirect(url_for("admin", tab=tab))
                 if email != user.email and User.query.filter(User.email == email, User.id != user.id).first():
                     flash("That email is already in use.", "error")
-                    return redirect(url_for("admin"))
+                    return redirect(url_for("admin", tab=tab))
                 user.username = username or user.username
                 user.email = email or user.email
                 user.bio = request.form.get("bio", "").strip()
@@ -1000,7 +1003,7 @@ def create_app():
                     user.timeout_until = None
                 flash("User details updated.", "success")
             db.session.commit()
-            return redirect(url_for("admin"))
+            return redirect(url_for("admin", tab=tab))
         stats = {
             "users": User.query.count(),
             "posts": Post.query.count(),
@@ -1011,9 +1014,32 @@ def create_app():
             "timeouts": len([user for user in User.query.all() if user.is_timed_out]),
         }
         reports = Report.query.filter_by(status="open").order_by(Report.created_at.desc()).all()
-        users = User.query.order_by(User.created_at.desc()).limit(25).all()
+        user_query = request.args.get("user_query", "").strip()
+        page = max(int(request.args.get("page", 1) or 1), 1)
+        users_query = User.query
+        if user_query:
+            like = f"%{user_query.lower()}%"
+            users_query = users_query.filter(
+                or_(
+                    db.func.lower(User.display_name).like(like),
+                    db.func.lower(User.username).like(like),
+                    db.func.lower(User.email).like(like),
+                )
+            )
+        users_pagination = users_query.order_by(User.created_at.desc()).paginate(page=page, per_page=40, error_out=False)
+        users = users_pagination.items
         polls = Poll.query.order_by(Poll.created_at.desc()).limit(10).all()
-        return render_template("admin.html", stats=stats, reports=reports, users=users, polls=polls, title="Admin")
+        return render_template(
+            "admin.html",
+            stats=stats,
+            reports=reports,
+            users=users,
+            users_pagination=users_pagination,
+            user_query=user_query,
+            polls=polls,
+            tab=tab,
+            title="Admin",
+        )
 
     @app.route("/push/register", methods=["POST"])
     @login_required

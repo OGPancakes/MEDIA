@@ -1748,6 +1748,46 @@ body.native-compose-enabled .home-flow .composer {
     background: rgba(191, 10, 48, 0.12);
 }
 
+.admin-tabs {
+    display: flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.7rem;
+}
+
+.admin-tab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 42px;
+    padding: 0.7rem 1rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.82);
+    border: 1px solid rgba(11, 61, 145, 0.08);
+    color: var(--navy);
+    font-weight: 800;
+    box-shadow: var(--shadow-soft);
+}
+
+.admin-tab.is-active {
+    background: linear-gradient(135deg, var(--navy), #1e5cc8);
+    color: var(--white);
+    border-color: transparent;
+}
+
+.admin-search-form {
+    margin: 0 0 0.85rem;
+}
+
+.admin-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+}
+
 .profile-report-popover {
     position: absolute;
     top: calc(100% + 0.55rem);
