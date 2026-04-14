@@ -1712,6 +1712,7 @@ body.native-compose-enabled .home-flow .composer {
     gap: 0.55rem;
     flex-wrap: wrap;
     align-items: center;
+    min-width: 0;
 }
 
 .profile-actions-row .button,
@@ -1735,6 +1736,7 @@ body.native-compose-enabled .home-flow .composer {
 .profile-actions-row form,
 .profile-report-form {
     margin: 0;
+    flex: 0 0 auto;
 }
 
 .profile-report-details {
@@ -3134,12 +3136,65 @@ body.dark-mode .site-footer a {
 }
 
 @media (min-width: 1101px) {
+    .page-shell {
+        padding-bottom: calc(8.25rem + var(--safe-bottom));
+    }
+
     .app-main-shell {
         grid-template-columns: minmax(0, 1fr);
         align-items: start;
     }
 
     .bottom-nav {
-        width: min(700px, calc(100vw - 5rem));
+        width: min(430px, calc(100vw - 2.5rem));
+        bottom: max(1rem, calc(var(--safe-bottom) + 0.55rem));
+        padding: 0.42rem;
+        gap: 0.32rem;
+        border-radius: 26px;
+        box-shadow: 0 18px 42px rgba(11, 61, 145, 0.16);
+    }
+
+    .bottom-nav-link {
+        min-height: 46px;
+        padding: 0.62rem 0.45rem;
+        border-radius: 18px;
+        font-size: 0.92rem;
+    }
+
+    .profile-page {
+        gap: 0.75rem;
+    }
+
+    .profile-banner-content {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .profile-actions-card {
+        padding: 0.72rem 0.9rem;
+    }
+
+    .profile-actions-row {
+        display: grid;
+        grid-template-columns: repeat(4, max-content) minmax(0, 1fr);
+        align-items: center;
+        column-gap: 0.6rem;
+        row-gap: 0.55rem;
+    }
+
+    .profile-actions-row .button,
+    .profile-actions-row button,
+    .profile-actions-row a.button {
+        min-height: 40px;
+        padding: 0.6rem 0.92rem;
+    }
+
+    .profile-report-details {
+        justify-self: end;
+        margin-left: 0;
+    }
+
+    .profile-timeline-card {
+        padding-bottom: 1rem;
     }
 }
