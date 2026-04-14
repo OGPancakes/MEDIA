@@ -23,13 +23,19 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let composerRemovePhotoButton = UIButton(type: .system)
     private let composerPostButton = UIButton(type: .system)
     private let composeButton = UIButton(type: .system)
+    private let uploadBanner = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
+    private let uploadSpinner = UIActivityIndicatorView(style: .medium)
+    private let uploadLabel = UILabel()
+    private let uploadProgress = UIProgressView(progressViewStyle: .default)
 
     private var composerSheetBottomConstraint: NSLayoutConstraint?
     private var composeButtonBottomConstraint: NSLayoutConstraint?
     private var composerTextViewHeightConstraint: NSLayoutConstraint?
     private var composerPreviewHeightConstraint: NSLayoutConstraint?
+    private var uploadBannerTopConstraint: NSLayoutConstraint?
     private var keyboardObserversInstalled = false
     private var nativeComposerAvailable = false
+    private var isPostingInProgress = false
     private var stateSyncTimer: Timer?
     private var selectedImageData: Data?
     private var selectedImageName: String?
@@ -272,6 +278,55 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
         composerPostButton.isEnabled = false
         composerPostButton.alpha = 0.55
+
+        uploadBanner.translatesAutoresizingMaskIntoConstraints = false
+        uploadBanner.effect = UIBlurEffect(style: .systemUltraThinMaterial)
+        uploadBanner.layer.cornerRadius = 18
+        uploadBanner.layer.cornerCurve = .continuous
+        uploadBanner.clipsToBounds = true
+        uploadBanner.alpha = 0
+        uploadBanner.isHidden = true
+        view.addSubview(uploadBanner)
+
+        let uploadContent = uploadBanner.contentView
+        uploadContent.backgroundColor = UIColor.white.withAlphaComponent(0.8)
+
+        uploadSpinner.translatesAutoresizingMaskIntoConstraints = false
+        uploadSpinner.color = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        uploadContent.addSubview(uploadSpinner)
+
+        uploadLabel.translatesAutoresizingMaskIntoConstraints = false
+        uploadLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        uploadLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        uploadLabel.text = "Posting..."
+        uploadContent.addSubview(uploadLabel)
+
+        uploadProgress.translatesAutoresizingMaskIntoConstraints = false
+        uploadProgress.progressTintColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        uploadProgress.trackTintColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.12)
+        uploadProgress.progress = 0
+        uploadContent.addSubview(uploadProgress)
+
+        uploadBannerTopConstraint = uploadBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: -76)
+
+        NSLayoutConstraint.activate([
+            uploadBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            uploadBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            uploadBannerTopConstraint!,
+
+            uploadSpinner.leadingAnchor.constraint(equalTo: uploadContent.leadingAnchor, constant: 16),
+            uploadSpinner.centerYAnchor.constraint(equalTo: uploadLabel.centerYAnchor),
+
+            uploadLabel.leadingAnchor.constraint(equalTo: uploadSpinner.trailingAnchor, constant: 10),
+            uploadLabel.trailingAnchor.constraint(equalTo: uploadContent.trailingAnchor, constant: -16),
+            uploadLabel.topAnchor.constraint(equalTo: uploadContent.topAnchor, constant: 14),
+
+            uploadProgress.leadingAnchor.constraint(equalTo: uploadContent.leadingAnchor, constant: 16),
+            uploadProgress.trailingAnchor.constraint(equalTo: uploadContent.trailingAnchor, constant: -16),
+            uploadProgress.topAnchor.constraint(equalTo: uploadLabel.bottomAnchor, constant: 10),
+            uploadProgress.bottomAnchor.constraint(equalTo: uploadContent.bottomAnchor, constant: -14),
+            uploadProgress.heightAnchor.constraint(equalToConstant: 4)
+        ])
     }
 
     private func installComposerBridge() {
@@ -355,21 +410,22 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func setComposeButtonVisible(_ visible: Bool, animated: Bool) {
         nativeComposerAvailable = visible
+        let shouldDisplayButton = visible && !isPostingInProgress && composerSheet.isHidden
         if visible {
             composeButton.isHidden = false
         }
         let changes = {
-            self.composeButton.alpha = visible ? 1 : 0
+            self.composeButton.alpha = shouldDisplayButton ? 1 : 0
         }
         if animated {
             UIView.animate(withDuration: 0.22, animations: changes) { _ in
-                if !visible {
+                if !shouldDisplayButton {
                     self.composeButton.isHidden = true
                 }
             }
         } else {
             changes()
-            if !visible {
+            if !shouldDisplayButton {
                 composeButton.isHidden = true
             }
         }
@@ -381,12 +437,15 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     @objc private func showComposer() {
         composerDimView.isHidden = false
         composerSheet.isHidden = false
+        composeButton.isHidden = true
         composerPlaceholder.isHidden = !composerTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        setPageComposerState(open: true)
         view.layoutIfNeeded()
         composerSheetBottomConstraint?.constant = 0
         UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseOut]) {
             self.composerDimView.alpha = 1
             self.composerSheet.alpha = 1
+            self.composeButton.alpha = 0
             self.view.layoutIfNeeded()
         } completion: { _ in
             self.composerTextView.becomeFirstResponder()
@@ -410,6 +469,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             self.composerSheet.isHidden = true
             self.composerPostButton.isEnabled = true
             self.composerPostButton.alpha = 1
+            self.setPageComposerState(open: false)
+            self.setComposeButtonVisible(self.nativeComposerAvailable, animated: true)
         }
         if animated {
             UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut], animations: reset, completion: completion)
@@ -444,12 +505,21 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     @objc private func postFromNativeComposer() {
+        guard !isPostingInProgress else { return }
         let body = composerTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty || selectedImageData != nil else { return }
         guard let targetURL = URL(string: "/post/create", relativeTo: webView?.url)?.absoluteURL else { return }
 
+        isPostingInProgress = true
         composerPostButton.isEnabled = false
         composerPostButton.alpha = 0.75
+        composeButton.isHidden = true
+        presentUploadBanner(status: "Posting...", progress: 0.18, animated: true)
+        dismissComposerSheet(animated: true)
+
+        let imageData = selectedImageData
+        let imageName = selectedImageName
+        let imageMimeType = selectedImageMimeType
 
         fetchCookieHeader { [weak self] cookieHeader in
             guard let self else { return }
@@ -465,9 +535,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             request.httpBody = self.multipartBody(
                 boundary: boundary,
                 body: body,
-                imageData: self.selectedImageData,
-                imageName: self.selectedImageName,
-                mimeType: self.selectedImageMimeType
+                imageData: imageData,
+                imageName: imageName,
+                mimeType: imageMimeType
             )
 
             let task = URLSession.shared.dataTask(with: request) { data, response, error in
@@ -478,17 +548,31 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                           let ok = json["ok"] as? Bool,
                           ok,
                           let html = json["html"] as? String else {
+                        self.isPostingInProgress = false
                         self.composerPostButton.isEnabled = true
                         self.composerPostButton.alpha = 1
+                        self.setComposeButtonVisible(self.nativeComposerAvailable, animated: true)
+                        self.presentUploadBanner(status: "Post failed. Try again.", progress: 1, animated: true)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            self.hideUploadBanner(animated: true)
+                        }
                         return
                     }
 
+                    self.uploadProgress.setProgress(1, animated: true)
                     let latestPostID = (json["latest_post_id"] as? NSNumber)?.intValue ?? (json["post_id"] as? NSNumber)?.intValue ?? 0
                     self.injectPostedCard(html: html, latestPostID: latestPostID)
                     self.composerTextView.text = ""
                     self.clearSelectedImage()
                     self.textViewDidChange(self.composerTextView)
-                    self.dismissComposerSheet(animated: true)
+                    self.isPostingInProgress = false
+                    self.composerPostButton.isEnabled = true
+                    self.composerPostButton.alpha = 1
+                    self.presentUploadBanner(status: "Posted", progress: 1, animated: true)
+                    self.setComposeButtonVisible(self.nativeComposerAvailable, animated: true)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                        self.hideUploadBanner(animated: true)
+                    }
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
             }
@@ -596,6 +680,48 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.textViewDidChange(self.composerTextView)
                 }
             }
+        }
+    }
+
+    private func setPageComposerState(open: Bool) {
+        let script = "document.body && document.body.classList.toggle('native-composer-open', \(open ? "true" : "false"));"
+        webView?.evaluateJavaScript(script, completionHandler: nil)
+    }
+
+    private func presentUploadBanner(status: String, progress: Float, animated: Bool) {
+        uploadLabel.text = status
+        uploadProgress.setProgress(progress, animated: animated)
+        uploadBanner.isHidden = false
+        uploadSpinner.startAnimating()
+        view.layoutIfNeeded()
+        uploadBannerTopConstraint?.constant = 10
+        let updates = {
+            self.uploadBanner.alpha = 1
+            self.view.layoutIfNeeded()
+        }
+        if animated {
+            UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut], animations: updates)
+        } else {
+            updates()
+        }
+    }
+
+    private func hideUploadBanner(animated: Bool) {
+        let updates = {
+            self.uploadBanner.alpha = 0
+            self.uploadBannerTopConstraint?.constant = -76
+            self.view.layoutIfNeeded()
+        }
+        let completion: (Bool) -> Void = { _ in
+            self.uploadSpinner.stopAnimating()
+            self.uploadBanner.isHidden = true
+            self.uploadProgress.progress = 0
+        }
+        if animated {
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut], animations: updates, completion: completion)
+        } else {
+            updates()
+            completion(true)
         }
     }
 }
