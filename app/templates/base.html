@@ -106,11 +106,108 @@
     {% endif %}
     <script>
         document.documentElement.classList.add("app-ready");
+        let feedRefreshTimer = null;
 
         if ("serviceWorker" in navigator) {
             window.addEventListener("load", () => {
                 navigator.serviceWorker.register("{{ url_for('static', filename='service-worker.js') }}").catch(() => {});
             });
+        }
+
+        function currentMainElement(root = document) {
+            return root.querySelector("main.content, main.guest-shell");
+        }
+
+        function startFeedRefresh() {
+            if (feedRefreshTimer) {
+                clearInterval(feedRefreshTimer);
+                feedRefreshTimer = null;
+            }
+            const liveFeed = document.getElementById("live-feed");
+            if (!liveFeed) return;
+            let latestPostId = Number(liveFeed.dataset.latestPostId || "0");
+            const feedMode = liveFeed.dataset.feedMode || "home";
+            feedRefreshTimer = window.setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/feed?tab=${encodeURIComponent(feedMode)}`, {headers: {"X-Requested-With": "fetch"}});
+                    if (!response.ok) return;
+                    const data = await response.json();
+                    if ((data.latest_post_id || 0) !== latestPostId) {
+                        liveFeed.innerHTML = data.html;
+                        latestPostId = data.latest_post_id || 0;
+                        liveFeed.dataset.latestPostId = String(latestPostId);
+                    }
+                } catch (error) {
+                    console.debug("Feed refresh skipped", error);
+                }
+            }, 12000);
+        }
+
+        function bootPageFeatures() {
+            startFeedRefresh();
+        }
+
+        function replaceShellFromDocument(nextDocument) {
+            const incomingHeader = nextDocument.querySelector(".app-topbar");
+            const currentHeader = document.querySelector(".app-topbar");
+            if (incomingHeader && currentHeader) {
+                currentHeader.replaceWith(incomingHeader);
+            }
+
+            const incomingNav = nextDocument.querySelector(".bottom-nav");
+            const currentNav = document.querySelector(".bottom-nav");
+            if (incomingNav && currentNav) {
+                currentNav.replaceWith(incomingNav);
+            }
+
+            const incomingFooter = nextDocument.querySelector(".site-footer");
+            const currentFooter = document.querySelector(".site-footer");
+            if (incomingFooter && currentFooter) {
+                currentFooter.replaceWith(incomingFooter);
+            } else if (!incomingFooter && currentFooter) {
+                currentFooter.remove();
+            }
+
+            const incomingMain = currentMainElement(nextDocument);
+            const existingMain = currentMainElement(document);
+            if (incomingMain && existingMain) {
+                incomingMain.classList.add("screen-swap-enter");
+                existingMain.replaceWith(incomingMain);
+                requestAnimationFrame(() => incomingMain.classList.remove("screen-swap-enter"));
+            }
+
+            document.body.className = nextDocument.body.className;
+            document.title = nextDocument.title;
+            bootPageFeatures();
+        }
+
+        async function navigateInApp(url, options = {}) {
+            try {
+                document.body.classList.add("page-is-transitioning");
+                const response = await fetch(url, {
+                    headers: {
+                        "X-Requested-With": "fetch"
+                    }
+                });
+                if (!response.ok) {
+                    window.location.assign(url);
+                    return;
+                }
+                const html = await response.text();
+                const parser = new DOMParser();
+                const nextDocument = parser.parseFromString(html, "text/html");
+                replaceShellFromDocument(nextDocument);
+                if (options.replace) {
+                    window.history.replaceState({}, "", url);
+                } else {
+                    window.history.pushState({}, "", url);
+                }
+                window.scrollTo({top: 0, behavior: "instant"});
+            } catch (error) {
+                window.location.assign(url);
+            } finally {
+                document.body.classList.remove("page-is-transitioning");
+            }
         }
 
         async function submitPostAction(form) {
@@ -232,12 +329,16 @@
             const commentButton = event.target.closest("[data-comments-url]");
             const closeButton = event.target.closest("[data-close-inline-comments]");
             const internalLink = event.target.closest('a[href]');
-            if (internalLink) {
+            if (internalLink && !commentButton) {
                 const href = internalLink.getAttribute("href") || "";
-                const isSamePageAnchor = href.startsWith("#");
-                const isExternal = internalLink.target === "_blank" || internalLink.hasAttribute("download") || /^https?:\/\//.test(href) && !href.startsWith(window.location.origin);
-                if (!isSamePageAnchor && !isExternal) {
-                    document.body.classList.add("page-is-transitioning");
+                const resolvedUrl = new URL(href, window.location.href);
+                const isSamePageAnchor = resolvedUrl.hash && resolvedUrl.pathname === window.location.pathname && resolvedUrl.search === window.location.search;
+                const isExternal = internalLink.target === "_blank" || internalLink.hasAttribute("download") || resolvedUrl.origin !== window.location.origin;
+                const isLogout = resolvedUrl.pathname === "{{ url_for('logout') }}";
+                if (!isSamePageAnchor && !isExternal && !isLogout) {
+                    event.preventDefault();
+                    navigateInApp(resolvedUrl.toString());
+                    return;
                 }
             }
             if (commentButton) {
@@ -258,6 +359,12 @@
         window.addEventListener("pageshow", () => {
             document.body.classList.remove("page-is-transitioning");
         });
+
+        window.addEventListener("popstate", () => {
+            navigateInApp(window.location.href, {replace: true});
+        });
+
+        bootPageFeatures();
     </script>
 </body>
 </html>

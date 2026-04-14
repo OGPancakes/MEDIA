@@ -43,6 +43,11 @@ body.page-is-transitioning {
     transform: translateY(6px);
 }
 
+.screen-swap-enter {
+    opacity: 0;
+    transform: translateY(10px);
+}
+
 @keyframes floatIn {
     from {
         opacity: 0;
@@ -100,6 +105,18 @@ body::-webkit-scrollbar,
     width: 0;
     height: 0;
     background: transparent;
+}
+
+html,
+body,
+main,
+.content,
+.app-content,
+.feed-list,
+.profile-feed-list,
+.messages-layout,
+.conversation-log {
+    scrollbar-width: none;
 }
 
 button,
@@ -812,6 +829,7 @@ body.dark-mode .connection-row {
     min-height: calc(100dvh - var(--safe-top) - 7.5rem);
     min-width: 0;
     align-content: start;
+    transition: opacity 180ms ease, transform 180ms ease;
 }
 
 .app-content {

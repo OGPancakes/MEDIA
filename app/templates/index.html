@@ -108,28 +108,5 @@
     {% include "_feed_items.html" %}
 </section>
 </section>
-{% if current_user and page_mode == 'feed' %}
-<script>
-    const liveFeed = document.getElementById("live-feed");
-    if (liveFeed) {
-        let latestPostId = Number(liveFeed.dataset.latestPostId || "0");
-        const feedMode = liveFeed.dataset.feedMode || "home";
-        setInterval(async () => {
-            try {
-                const response = await fetch(`/api/feed?tab=${encodeURIComponent(feedMode)}`, {headers: {"X-Requested-With": "fetch"}});
-                if (!response.ok) return;
-                const data = await response.json();
-                if ((data.latest_post_id || 0) !== latestPostId) {
-                    liveFeed.innerHTML = data.html;
-                    latestPostId = data.latest_post_id || 0;
-                    liveFeed.dataset.latestPostId = String(latestPostId);
-                }
-            } catch (error) {
-                console.debug("Feed refresh skipped", error);
-            }
-        }, 12000);
-    }
-</script>
-{% endif %}
 {% endif %}
 {% endblock %}
