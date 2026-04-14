@@ -919,12 +919,8 @@ body.dark-mode .connection-row {
     -webkit-overflow-scrolling: touch;
     padding-bottom: calc(7.4rem + var(--safe-bottom));
     scrollbar-gutter: stable both-edges;
-    background:
-        radial-gradient(circle at top left, rgba(191, 10, 48, 0.12), transparent 28%),
-        radial-gradient(circle at top right, rgba(11, 61, 145, 0.12), transparent 24%),
-        linear-gradient(180deg, #f7faff 0%, #eef4ff 55%, #fff7ef 100%);
-    background-attachment: local;
-    contain: layout paint style;
+    background: transparent;
+    contain: layout style;
     scroll-padding-bottom: calc(1rem + var(--keyboard-offset) + var(--safe-bottom));
 }
 
