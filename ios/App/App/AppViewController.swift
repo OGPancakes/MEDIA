@@ -2,11 +2,29 @@ import UIKit
 import WebKit
 import Capacitor
 
-class AppViewController: CAPBridgeViewController {
+final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, UITextViewDelegate {
     private let shellBackground = UIColor(red: 238.0 / 255.0, green: 244.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
     private let topGradient = UIColor(red: 247.0 / 255.0, green: 250.0 / 255.0, blue: 255.0 / 255.0, alpha: 1).cgColor
     private let bottomGradient = UIColor(red: 255.0 / 255.0, green: 247.0 / 255.0, blue: 239.0 / 255.0, alpha: 1).cgColor
     private let gradientLayer = CAGradientLayer()
+
+    private let composerDimView = UIControl()
+    private let composerSheet = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
+    private let composerHandle = UIView()
+    private let composerTitle = UILabel()
+    private let composerCloseButton = UIButton(type: .system)
+    private let composerTextView = UITextView()
+    private let composerPlaceholder = UILabel()
+    private let composerPostButton = UIButton(type: .system)
+    private let composeButton = UIButton(type: .system)
+
+    private var composerSheetBottomConstraint: NSLayoutConstraint?
+    private var composeButtonBottomConstraint: NSLayoutConstraint?
+    private var composerTextViewHeightConstraint: NSLayoutConstraint?
+    private var keyboardObserversInstalled = false
+    private var nativeComposerAvailable = false
+
+    private let composerScriptMessageName = "nativeComposerState"
 
     override open func capacitorDidLoad() {
         super.capacitorDidLoad()
@@ -20,6 +38,23 @@ class AppViewController: CAPBridgeViewController {
             view.layer.insertSublayer(gradientLayer, at: 0)
         }
 
+        configureWebView()
+        configureNativeComposer()
+        installKeyboardObservers()
+        installComposerBridge()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: composerScriptMessageName)
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        gradientLayer.frame = view.bounds
+    }
+
+    private func configureWebView() {
         guard let webView = webView else { return }
         webView.isOpaque = true
         webView.backgroundColor = shellBackground
@@ -40,8 +75,362 @@ class AppViewController: CAPBridgeViewController {
         webView.scrollView.keyboardDismissMode = .interactive
     }
 
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        gradientLayer.frame = view.bounds
+    private func configureNativeComposer() {
+        composerDimView.translatesAutoresizingMaskIntoConstraints = false
+        composerDimView.backgroundColor = UIColor.black.withAlphaComponent(0.18)
+        composerDimView.alpha = 0
+        composerDimView.isHidden = true
+        composerDimView.addTarget(self, action: #selector(dismissComposer), for: .touchUpInside)
+        view.addSubview(composerDimView)
+
+        composerSheet.translatesAutoresizingMaskIntoConstraints = false
+        composerSheet.layer.cornerRadius = 28
+        composerSheet.layer.cornerCurve = .continuous
+        composerSheet.clipsToBounds = true
+        composerSheet.isHidden = true
+        composerSheet.alpha = 0
+        view.addSubview(composerSheet)
+
+        let sheetContent = composerSheet.contentView
+        sheetContent.backgroundColor = UIColor.white.withAlphaComponent(0.9)
+
+        composerHandle.translatesAutoresizingMaskIntoConstraints = false
+        composerHandle.backgroundColor = UIColor(white: 0.7, alpha: 0.55)
+        composerHandle.layer.cornerRadius = 2.5
+        sheetContent.addSubview(composerHandle)
+
+        composerTitle.translatesAutoresizingMaskIntoConstraints = false
+        composerTitle.text = "Create post"
+        composerTitle.font = .systemFont(ofSize: 18, weight: .semibold)
+        composerTitle.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        sheetContent.addSubview(composerTitle)
+
+        composerCloseButton.translatesAutoresizingMaskIntoConstraints = false
+        composerCloseButton.setTitle("Cancel", for: .normal)
+        composerCloseButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .medium)
+        composerCloseButton.addTarget(self, action: #selector(dismissComposer), for: .touchUpInside)
+        sheetContent.addSubview(composerCloseButton)
+
+        composerTextView.translatesAutoresizingMaskIntoConstraints = false
+        composerTextView.backgroundColor = .clear
+        composerTextView.font = .systemFont(ofSize: 18)
+        composerTextView.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        composerTextView.delegate = self
+        composerTextView.returnKeyType = .default
+        composerTextView.textContainerInset = UIEdgeInsets(top: 14, left: 4, bottom: 14, right: 4)
+        composerTextView.textContainer.lineFragmentPadding = 0
+        sheetContent.addSubview(composerTextView)
+
+        composerPlaceholder.translatesAutoresizingMaskIntoConstraints = false
+        composerPlaceholder.text = "What’s happening?"
+        composerPlaceholder.font = .systemFont(ofSize: 18)
+        composerPlaceholder.textColor = UIColor(red: 91.0 / 255.0, green: 107.0 / 255.0, blue: 138.0 / 255.0, alpha: 0.78)
+        sheetContent.addSubview(composerPlaceholder)
+
+        composerPostButton.translatesAutoresizingMaskIntoConstraints = false
+        composerPostButton.setTitle("Post", for: .normal)
+        composerPostButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+        composerPostButton.backgroundColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        composerPostButton.layer.cornerRadius = 20
+        composerPostButton.layer.cornerCurve = .continuous
+        composerPostButton.setTitleColor(.white, for: .normal)
+        composerPostButton.addTarget(self, action: #selector(postFromNativeComposer), for: .touchUpInside)
+        sheetContent.addSubview(composerPostButton)
+
+        composeButton.translatesAutoresizingMaskIntoConstraints = false
+        composeButton.backgroundColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        composeButton.layer.cornerRadius = 28
+        composeButton.layer.cornerCurve = .continuous
+        composeButton.tintColor = .white
+        composeButton.setImage(UIImage(systemName: "square.and.pencil"), for: .normal)
+        composeButton.addTarget(self, action: #selector(showComposer), for: .touchUpInside)
+        composeButton.alpha = 0
+        composeButton.isHidden = true
+        composeButton.layer.shadowColor = UIColor.black.withAlphaComponent(0.22).cgColor
+        composeButton.layer.shadowOpacity = 1
+        composeButton.layer.shadowRadius = 18
+        composeButton.layer.shadowOffset = CGSize(width: 0, height: 10)
+        view.addSubview(composeButton)
+
+        composerSheetBottomConstraint = composerSheet.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: 360)
+        composeButtonBottomConstraint = composeButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92)
+        composerTextViewHeightConstraint = composerTextView.heightAnchor.constraint(equalToConstant: 120)
+
+        NSLayoutConstraint.activate([
+            composerDimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            composerDimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            composerDimView.topAnchor.constraint(equalTo: view.topAnchor),
+            composerDimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            composerSheet.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+            composerSheet.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            composerSheetBottomConstraint!,
+
+            composerHandle.topAnchor.constraint(equalTo: sheetContent.topAnchor, constant: 10),
+            composerHandle.centerXAnchor.constraint(equalTo: sheetContent.centerXAnchor),
+            composerHandle.widthAnchor.constraint(equalToConstant: 42),
+            composerHandle.heightAnchor.constraint(equalToConstant: 5),
+
+            composerCloseButton.topAnchor.constraint(equalTo: sheetContent.topAnchor, constant: 18),
+            composerCloseButton.leadingAnchor.constraint(equalTo: sheetContent.leadingAnchor, constant: 18),
+
+            composerTitle.centerYAnchor.constraint(equalTo: composerCloseButton.centerYAnchor),
+            composerTitle.centerXAnchor.constraint(equalTo: sheetContent.centerXAnchor),
+
+            composerTextView.topAnchor.constraint(equalTo: composerTitle.bottomAnchor, constant: 16),
+            composerTextView.leadingAnchor.constraint(equalTo: sheetContent.leadingAnchor, constant: 18),
+            composerTextView.trailingAnchor.constraint(equalTo: sheetContent.trailingAnchor, constant: -18),
+            composerTextViewHeightConstraint!,
+
+            composerPlaceholder.topAnchor.constraint(equalTo: composerTextView.topAnchor, constant: 14),
+            composerPlaceholder.leadingAnchor.constraint(equalTo: composerTextView.leadingAnchor, constant: 4),
+
+            composerPostButton.topAnchor.constraint(equalTo: composerTextView.bottomAnchor, constant: 12),
+            composerPostButton.trailingAnchor.constraint(equalTo: sheetContent.trailingAnchor, constant: -18),
+            composerPostButton.widthAnchor.constraint(equalToConstant: 82),
+            composerPostButton.heightAnchor.constraint(equalToConstant: 40),
+            composerPostButton.bottomAnchor.constraint(equalTo: sheetContent.bottomAnchor, constant: -16),
+
+            composeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            composeButtonBottomConstraint!,
+            composeButton.widthAnchor.constraint(equalToConstant: 56),
+            composeButton.heightAnchor.constraint(equalToConstant: 56)
+        ])
+    }
+
+    private func installComposerBridge() {
+        guard let webView = webView else { return }
+        let source = """
+        (function() {
+          if (window.__nativeComposerBridgeInstalled) return;
+          window.__nativeComposerBridgeInstalled = true;
+          function notify() {
+            try {
+              document.body && document.body.classList.add('native-compose-enabled');
+              window.webkit.messageHandlers.\(composerScriptMessageName).postMessage({
+                loggedIn: document.body ? document.body.classList.contains('app-body') : false,
+                isFeed: !!document.querySelector('.home-flow')
+              });
+            } catch (e) {}
+          }
+          const wrapHistory = function(method) {
+            const original = history[method];
+            history[method] = function() {
+              const result = original.apply(this, arguments);
+              requestAnimationFrame(notify);
+              return result;
+            };
+          };
+          wrapHistory('pushState');
+          wrapHistory('replaceState');
+          window.addEventListener('load', notify);
+          window.addEventListener('pageshow', notify);
+          window.addEventListener('popstate', notify);
+          new MutationObserver(function() {
+            requestAnimationFrame(notify);
+          }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+          notify();
+        })();
+        """
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: composerScriptMessageName)
+        webView.configuration.userContentController.add(self, name: composerScriptMessageName)
+        let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        webView.configuration.userContentController.addUserScript(script)
+        webView.evaluateJavaScript(source, completionHandler: nil)
+    }
+
+    private func installKeyboardObservers() {
+        guard !keyboardObserversInstalled else { return }
+        keyboardObserversInstalled = true
+        NotificationCenter.default.addObserver(self, selector: #selector(handleKeyboardWillChange(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleKeyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    private func setComposeButtonVisible(_ visible: Bool, animated: Bool) {
+        nativeComposerAvailable = visible
+        if visible {
+            composeButton.isHidden = false
+        }
+        let changes = {
+            self.composeButton.alpha = visible ? 1 : 0
+        }
+        if animated {
+            UIView.animate(withDuration: 0.22, animations: changes) { _ in
+                if !visible {
+                    self.composeButton.isHidden = true
+                }
+            }
+        } else {
+            changes()
+            if !visible {
+                composeButton.isHidden = true
+            }
+        }
+        if !visible {
+            dismissComposer(animated: false)
+        }
+    }
+
+    @objc private func showComposer() {
+        composerDimView.isHidden = false
+        composerSheet.isHidden = false
+        composerPlaceholder.isHidden = !composerTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        view.layoutIfNeeded()
+        composerSheetBottomConstraint?.constant = 0
+        UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseOut]) {
+            self.composerDimView.alpha = 1
+            self.composerSheet.alpha = 1
+            self.view.layoutIfNeeded()
+        } completion: { _ in
+            self.composerTextView.becomeFirstResponder()
+        }
+    }
+
+    @objc private func dismissComposer() {
+        dismissComposer(animated: true)
+    }
+
+    private func dismissComposer(animated: Bool) {
+        composerTextView.resignFirstResponder()
+        let reset = {
+            self.composerDimView.alpha = 0
+            self.composerSheet.alpha = 0
+            self.composerSheetBottomConstraint?.constant = 360
+            self.view.layoutIfNeeded()
+        }
+        let completion: (Bool) -> Void = { _ in
+            self.composerDimView.isHidden = true
+            self.composerSheet.isHidden = true
+            self.composerPostButton.isEnabled = true
+            self.composerPostButton.alpha = 1
+        }
+        if animated {
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut], animations: reset, completion: completion)
+        } else {
+            reset()
+            completion(true)
+        }
+    }
+
+    @objc private func handleKeyboardWillChange(_ note: Notification) {
+        guard !composerSheet.isHidden,
+              let frameValue = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+        let keyboardFrame = view.convert(frameValue.cgRectValue, from: nil)
+        let overlap = max(0, view.bounds.maxY - keyboardFrame.minY)
+        composerSheetBottomConstraint?.constant = max(0, -view.safeAreaInsets.bottom) - overlap + view.safeAreaInsets.bottom
+        animateWithKeyboard(note)
+    }
+
+    @objc private func handleKeyboardWillHide(_ note: Notification) {
+        guard !composerSheet.isHidden else { return }
+        composerSheetBottomConstraint?.constant = 0
+        animateWithKeyboard(note)
+    }
+
+    private func animateWithKeyboard(_ note: Notification) {
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 7
+        let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
+        UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState]) {
+            self.view.layoutIfNeeded()
+        }
+    }
+
+    @objc private func postFromNativeComposer() {
+        let body = composerTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return }
+        guard let targetURL = URL(string: "/post/create", relativeTo: webView?.url)?.absoluteURL else { return }
+
+        composerPostButton.isEnabled = false
+        composerPostButton.alpha = 0.75
+
+        fetchCookieHeader { [weak self] cookieHeader in
+            guard let self else { return }
+            let boundary = "Boundary-\(UUID().uuidString)"
+            var request = URLRequest(url: targetURL)
+            request.httpMethod = "POST"
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("fetch", forHTTPHeaderField: "X-Requested-With")
+            if let cookieHeader, !cookieHeader.isEmpty {
+                request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+            }
+            request.httpBody = self.multipartBody(boundary: boundary, body: body)
+
+            let task = URLSession.shared.dataTask(with: request) { data, response, error in
+                DispatchQueue.main.async {
+                    guard error == nil,
+                          let data,
+                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          let ok = json["ok"] as? Bool,
+                          ok,
+                          let html = json["html"] as? String else {
+                        self.composerPostButton.isEnabled = true
+                        self.composerPostButton.alpha = 1
+                        return
+                    }
+
+                    let latestPostID = (json["latest_post_id"] as? NSNumber)?.intValue ?? (json["post_id"] as? NSNumber)?.intValue ?? 0
+                    self.injectPostedCard(html: html, latestPostID: latestPostID)
+                    self.composerTextView.text = ""
+                    self.textViewDidChange(self.composerTextView)
+                    self.dismissComposer(animated: true)
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+            }
+            task.resume()
+        }
+    }
+
+    private func injectPostedCard(html: String, latestPostID: Int) {
+        guard let payloadData = try? JSONSerialization.data(withJSONObject: ["html": html, "latest_post_id": latestPostID], options: []),
+              let payloadJSON = String(data: payloadData, encoding: .utf8) else { return }
+        let script = "window.nativeInsertPostCard && window.nativeInsertPostCard(\(payloadJSON));"
+        webView?.evaluateJavaScript(script, completionHandler: nil)
+    }
+
+    private func fetchCookieHeader(completion: @escaping (String?) -> Void) {
+        guard let cookieStore = webView?.configuration.websiteDataStore.httpCookieStore else {
+            completion(nil)
+            return
+        }
+        cookieStore.getAllCookies { cookies in
+            let header = cookies
+                .filter { $0.domain.contains("railway.app") || $0.domain.contains("media-production-0abd.up.railway.app") || $0.domain.isEmpty }
+                .map { "\($0.name)=\($0.value)" }
+                .joined(separator: "; ")
+            completion(header.isEmpty ? nil : header)
+        }
+    }
+
+    private func multipartBody(boundary: String, body: String) -> Data {
+        var data = Data()
+        let lineBreak = "\r\n"
+        data.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+        data.append("Content-Disposition: form-data; name=\"body\"\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+        data.append("\(body)\(lineBreak)".data(using: .utf8)!)
+        data.append("--\(boundary)--\(lineBreak)".data(using: .utf8)!)
+        return data
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == composerScriptMessageName,
+              let payload = message.body as? [String: Any] else { return }
+        let loggedIn = payload["loggedIn"] as? Bool ?? false
+        let isFeed = payload["isFeed"] as? Bool ?? false
+        DispatchQueue.main.async {
+            self.setComposeButtonVisible(loggedIn && isFeed, animated: true)
+        }
+    }
+
+    func textViewDidChange(_ textView: UITextView) {
+        composerPlaceholder.isHidden = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let targetHeight = min(max(textView.contentSize.height, 120), 220)
+        composerTextViewHeightConstraint?.constant = targetHeight
+        composerPostButton.isEnabled = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        composerPostButton.alpha = composerPostButton.isEnabled ? 1 : 0.55
+        UIView.animate(withDuration: 0.14) {
+            self.view.layoutIfNeeded()
+        }
     }
 }

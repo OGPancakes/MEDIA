@@ -149,6 +149,14 @@
             return Boolean(target?.closest?.("[data-horizontal-pan]"));
         }
 
+        function hasNativeComposerBridge() {
+            return Boolean(window.webkit?.messageHandlers?.nativeComposerState);
+        }
+
+        function syncNativeShellClass() {
+            document.body.classList.toggle("native-compose-enabled", hasNativeComposerBridge());
+        }
+
         function autoSizeTextareas(root = document) {
             root.querySelectorAll("textarea").forEach((textarea) => {
                 textarea.style.height = "auto";
@@ -203,6 +211,7 @@
         }
 
         function bootPageFeatures() {
+            syncNativeShellClass();
             startFeedRefresh();
             autoSizeTextareas();
         }
@@ -394,6 +403,33 @@
                 }
             }
         }
+
+        function insertPostCardIntoFeed(html, latestPostId = 0) {
+            if (!html) return false;
+            const liveFeed = document.getElementById("live-feed");
+            if (!liveFeed) return false;
+            const wrapper = document.createElement("div");
+            wrapper.innerHTML = html.trim();
+            const newCard = wrapper.firstElementChild;
+            if (!newCard) return false;
+            newCard.classList.add("card-swap-enter");
+            liveFeed.prepend(newCard);
+            requestAnimationFrame(() => newCard.classList.remove("card-swap-enter"));
+            if (latestPostId) {
+                liveFeed.dataset.latestPostId = String(latestPostId);
+            }
+            return true;
+        }
+
+        window.nativeInsertPostCard = function nativeInsertPostCard(payload) {
+            try {
+                if (!payload) return false;
+                const parsed = typeof payload === "string" ? JSON.parse(payload) : payload;
+                return insertPostCardIntoFeed(parsed.html || "", parsed.latest_post_id || parsed.post_id || 0);
+            } catch (error) {
+                return false;
+            }
+        };
 
         async function loadCommentsSheet(button, forceOpen = false) {
             const url = button?.dataset.commentsUrl;

@@ -1348,6 +1348,10 @@ body.dark-mode .bottom-nav-link {
     margin-top: 0.12rem;
 }
 
+body.native-compose-enabled .home-flow .composer {
+    display: none;
+}
+
 .composer form {
     display: grid;
     gap: 0.55rem;
