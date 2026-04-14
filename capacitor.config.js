@@ -10,7 +10,7 @@ module.exports = {
     cleartext: serverUrl.startsWith("http://")
   },
   ios: {
-    contentInset: "automatic",
+    contentInset: "never",
     backgroundColor: "#eef4ff",
     preferredContentMode: "mobile"
   }
