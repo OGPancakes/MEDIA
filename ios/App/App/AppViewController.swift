@@ -98,7 +98,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         view.addSubview(composerDimView)
 
         composerSheet.translatesAutoresizingMaskIntoConstraints = false
-        composerSheet.effect = UIBlurEffect(style: .systemUltraThinMaterialDark)
+        composerSheet.effect = UIBlurEffect(style: .systemThinMaterial)
         composerSheet.layer.cornerRadius = 30
         composerSheet.layer.cornerCurve = .continuous
         composerSheet.clipsToBounds = true
@@ -107,32 +107,35 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         view.addSubview(composerSheet)
 
         let sheetContent = composerSheet.contentView
-        sheetContent.backgroundColor = UIColor(red: 16.0 / 255.0, green: 20.0 / 255.0, blue: 28.0 / 255.0, alpha: 0.84)
+        sheetContent.backgroundColor = UIColor.white.withAlphaComponent(0.72)
 
         composerHandle.translatesAutoresizingMaskIntoConstraints = false
-        composerHandle.backgroundColor = UIColor(white: 1, alpha: 0.28)
+        composerHandle.backgroundColor = UIColor(white: 0.45, alpha: 0.25)
         composerHandle.layer.cornerRadius = 2.5
         sheetContent.addSubview(composerHandle)
 
         composerTitle.translatesAutoresizingMaskIntoConstraints = false
         composerTitle.text = "Create post"
         composerTitle.font = .systemFont(ofSize: 18, weight: .semibold)
-        composerTitle.textColor = .white
+        composerTitle.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
         sheetContent.addSubview(composerTitle)
 
         composerCloseButton.translatesAutoresizingMaskIntoConstraints = false
         composerCloseButton.setImage(UIImage(systemName: "xmark"), for: .normal)
-        composerCloseButton.tintColor = UIColor(white: 1, alpha: 0.7)
+        composerCloseButton.tintColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.68)
         composerCloseButton.addTarget(self, action: #selector(dismissComposer), for: .touchUpInside)
         sheetContent.addSubview(composerCloseButton)
 
         composerTextView.translatesAutoresizingMaskIntoConstraints = false
         composerTextView.backgroundColor = .clear
         composerTextView.font = .systemFont(ofSize: 18)
-        composerTextView.textColor = .white
+        composerTextView.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
         composerTextView.delegate = self
         composerTextView.returnKeyType = .default
-        composerTextView.keyboardAppearance = .dark
+        composerTextView.keyboardAppearance = .default
+        composerTextView.autocorrectionType = .yes
+        composerTextView.spellCheckingType = .yes
+        composerTextView.autocapitalizationType = .sentences
         composerTextView.textContainerInset = UIEdgeInsets(top: 14, left: 0, bottom: 14, right: 0)
         composerTextView.textContainer.lineFragmentPadding = 0
         sheetContent.addSubview(composerTextView)
@@ -140,14 +143,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         composerPlaceholder.translatesAutoresizingMaskIntoConstraints = false
         composerPlaceholder.text = "What’s happening?"
         composerPlaceholder.font = .systemFont(ofSize: 18)
-        composerPlaceholder.textColor = UIColor(white: 1, alpha: 0.38)
+        composerPlaceholder.textColor = UIColor(red: 91.0 / 255.0, green: 107.0 / 255.0, blue: 138.0 / 255.0, alpha: 0.72)
         sheetContent.addSubview(composerPlaceholder)
 
         composerPreviewContainer.translatesAutoresizingMaskIntoConstraints = false
         composerPreviewContainer.layer.cornerRadius = 18
         composerPreviewContainer.layer.cornerCurve = .continuous
         composerPreviewContainer.clipsToBounds = true
-        composerPreviewContainer.backgroundColor = UIColor(white: 1, alpha: 0.08)
+        composerPreviewContainer.backgroundColor = UIColor(red: 245.0 / 255.0, green: 248.0 / 255.0, blue: 255.0 / 255.0, alpha: 0.88)
         composerPreviewContainer.isHidden = true
         sheetContent.addSubview(composerPreviewContainer)
 
@@ -158,7 +161,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
         composerRemovePhotoButton.translatesAutoresizingMaskIntoConstraints = false
         composerRemovePhotoButton.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
-        composerRemovePhotoButton.tintColor = UIColor(white: 1, alpha: 0.9)
+        composerRemovePhotoButton.tintColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.9)
         composerRemovePhotoButton.addTarget(self, action: #selector(removeSelectedPhoto), for: .touchUpInside)
         composerPreviewContainer.addSubview(composerRemovePhotoButton)
 
@@ -166,8 +169,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         composerAttachButton.setImage(UIImage(systemName: "photo.on.rectangle.angled"), for: .normal)
         composerAttachButton.setTitle(" Add photo", for: .normal)
         composerAttachButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
-        composerAttachButton.tintColor = UIColor(white: 1, alpha: 0.92)
-        composerAttachButton.backgroundColor = UIColor(white: 1, alpha: 0.08)
+        composerAttachButton.tintColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.92)
+        composerAttachButton.backgroundColor = UIColor(red: 245.0 / 255.0, green: 248.0 / 255.0, blue: 255.0 / 255.0, alpha: 0.9)
         composerAttachButton.layer.cornerRadius = 18
         composerAttachButton.layer.cornerCurve = .continuous
         composerAttachButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
