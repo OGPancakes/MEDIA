@@ -495,7 +495,7 @@ def create_app():
         if post.user_id == current_user().id:
             Like.query.filter_by(user_id=current_user().id, post_id=post.id).delete(synchronize_session=False)
             db.session.commit()
-            return redirect(request.referrer or url_for("index"))
+            return post_action_response(post)
         like = Like.query.filter_by(user_id=current_user().id, post_id=post.id).first()
         if not like:
             db.session.add(Like(user_id=current_user().id, post_id=post.id))
@@ -503,7 +503,7 @@ def create_app():
         else:
             db.session.delete(like)
         db.session.commit()
-        return redirect(request.referrer or url_for("index"))
+        return post_action_response(post)
 
     @app.route("/post/<int:post_id>/bookmark", methods=["POST"])
     @login_required
@@ -512,14 +512,14 @@ def create_app():
         if post.user_id == current_user().id:
             Bookmark.query.filter_by(user_id=current_user().id, post_id=post_id).delete(synchronize_session=False)
             db.session.commit()
-            return redirect(request.referrer or url_for("index"))
+            return post_action_response(post)
         bookmark = Bookmark.query.filter_by(user_id=current_user().id, post_id=post_id).first()
         if not bookmark:
             db.session.add(Bookmark(user_id=current_user().id, post_id=post_id))
         else:
             db.session.delete(bookmark)
         db.session.commit()
-        return redirect(request.referrer or url_for("index"))
+        return post_action_response(post)
 
     @app.route("/post/<int:post_id>/repost", methods=["POST"])
     @login_required
@@ -528,7 +528,7 @@ def create_app():
         if post.user_id == current_user().id:
             Repost.query.filter_by(user_id=current_user().id, post_id=post_id).delete(synchronize_session=False)
             db.session.commit()
-            return redirect(request.referrer or url_for("index"))
+            return post_action_response(post)
         repost = Repost.query.filter_by(user_id=current_user().id, post_id=post_id).first()
         if not repost:
             db.session.add(Repost(user_id=current_user().id, post_id=post_id))
@@ -536,7 +536,7 @@ def create_app():
         else:
             db.session.delete(repost)
         db.session.commit()
-        return redirect(request.referrer or url_for("index"))
+        return post_action_response(post)
 
     @app.route("/users/<username>")
     def profile(username):
@@ -1103,6 +1103,26 @@ def media_url(path):
     if path.startswith("uploads/"):
         return url_for("media_file", filename=path.split("/", 1)[1])
     return url_for("static", filename=path)
+
+
+def wants_partial_response():
+    requested_with = request.headers.get("X-Requested-With", "")
+    accept_header = request.headers.get("Accept", "")
+    return requested_with == "fetch" or "application/json" in accept_header
+
+
+def post_action_response(post):
+    if wants_partial_response():
+        reset_post_display_state([post])
+        html = render_template("_post_card.html", post=post)
+        return jsonify(
+            {
+                "ok": True,
+                "post_id": post.id,
+                "html": html,
+            }
+        )
+    return redirect(request.referrer or url_for("index"))
 
 
 def is_following(viewer, target_user):

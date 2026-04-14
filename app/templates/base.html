@@ -103,10 +103,37 @@
         <a href="{{ url_for('privacy') }}">Privacy Policy</a>
     </footer>
     <script>
+        document.documentElement.classList.add("app-ready");
+
         if ("serviceWorker" in navigator) {
             window.addEventListener("load", () => {
                 navigator.serviceWorker.register("{{ url_for('static', filename='service-worker.js') }}").catch(() => {});
             });
+        }
+
+        async function submitPostAction(form) {
+            const response = await fetch(form.action, {
+                method: "POST",
+                headers: {
+                    "X-Requested-With": "fetch",
+                    "Accept": "application/json"
+                }
+            });
+            if (!response.ok) {
+                form.removeAttribute("data-post-action");
+                form.requestSubmit();
+                return;
+            }
+            const data = await response.json();
+            const card = form.closest("[data-post-card]");
+            if (!card || !data?.html) return;
+            const wrapper = document.createElement("div");
+            wrapper.innerHTML = data.html.trim();
+            const replacement = wrapper.firstElementChild;
+            if (!replacement) return;
+            replacement.classList.add("card-swap-enter");
+            card.replaceWith(replacement);
+            requestAnimationFrame(() => replacement.classList.remove("card-swap-enter"));
         }
 
         async function loadCommentsSheet(button, forceOpen = false) {
@@ -202,12 +229,32 @@
         document.addEventListener("click", (event) => {
             const commentButton = event.target.closest("[data-comments-url]");
             const closeButton = event.target.closest("[data-close-inline-comments]");
+            const internalLink = event.target.closest('a[href]');
+            if (internalLink) {
+                const href = internalLink.getAttribute("href") || "";
+                const isSamePageAnchor = href.startsWith("#");
+                const isExternal = internalLink.target === "_blank" || internalLink.hasAttribute("download") || /^https?:\/\//.test(href) && !href.startsWith(window.location.origin);
+                if (!isSamePageAnchor && !isExternal) {
+                    document.body.classList.add("page-is-transitioning");
+                }
+            }
             if (commentButton) {
                 loadCommentsSheet(commentButton);
             }
             if (closeButton) {
                 closeCommentsSheet(closeButton.closest("[data-comments-host], .inline-comments-host"));
             }
+        });
+
+        document.addEventListener("submit", async (event) => {
+            const actionForm = event.target.closest("form[data-post-action='replace-card']");
+            if (!actionForm) return;
+            event.preventDefault();
+            await submitPostAction(actionForm);
+        });
+
+        window.addEventListener("pageshow", () => {
+            document.body.classList.remove("page-is-transitioning");
         });
     </script>
 </body>
