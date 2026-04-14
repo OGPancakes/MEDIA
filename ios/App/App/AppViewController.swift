@@ -3,6 +3,7 @@ import WebKit
 import Capacitor
 import ObjectiveC.runtime
 import PhotosUI
+import UserNotifications
 
 final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, UITextViewDelegate, PHPickerViewControllerDelegate {
     private let shellBackground = UIColor(red: 238.0 / 255.0, green: 244.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
@@ -31,6 +32,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var keyboardObserversInstalled = false
     private var nativeComposerAvailable = false
     private var isPostingComposer = false
+    private var isLoggedIntoWebApp = false
+    private var lastRegisteredPushToken: String?
     private var stateSyncTimer: Timer?
     private var selectedImageData: Data?
     private var selectedImageName: String?
@@ -53,6 +56,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         configureWebView()
         configureNativeComposer()
         installKeyboardObservers()
+        observePushToken()
         installComposerBridge()
         startStateSyncTimer()
     }
@@ -340,6 +344,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
           }
           return {
             loggedIn: !!(document.body && document.body.classList.contains('app-body')),
+            username: document.querySelector('.account-trigger-copy span') ? document.querySelector('.account-trigger-copy span').textContent.replace(/^@/, '').trim() : '',
             isFeed: !!document.querySelector('.home-flow')
           };
         })();
@@ -349,8 +354,85 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             if let payload = result as? [String: Any] {
                 let loggedIn = payload["loggedIn"] as? Bool ?? false
                 let isFeed = payload["isFeed"] as? Bool ?? false
+                let username = payload["username"] as? String ?? ""
+                self.handleLoginState(loggedIn: loggedIn, username: username)
                 self.setComposeButtonVisible(loggedIn && isFeed, animated: true)
             }
+        }
+    }
+
+    private func handleLoginState(loggedIn: Bool, username: String) {
+        let wasLoggedIn = isLoggedIntoWebApp
+        isLoggedIntoWebApp = loggedIn
+        guard loggedIn else {
+            lastRegisteredPushToken = nil
+            return
+        }
+        if !wasLoggedIn {
+            maybeRequestNotificationPermission(for: username)
+        }
+    }
+
+    private func observePushToken() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePushTokenNotification(_:)),
+            name: .piaDidRegisterPushToken,
+            object: nil
+        )
+    }
+
+    private func maybeRequestNotificationPermission(for username: String) {
+        let promptKey = "pia.notifications.prompted.\(username.isEmpty ? "default" : username)"
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                DispatchQueue.main.async {
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+            case .notDetermined:
+                if UserDefaults.standard.bool(forKey: promptKey) {
+                    return
+                }
+                UserDefaults.standard.set(true, forKey: promptKey)
+                center.requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
+                    guard granted else { return }
+                    DispatchQueue.main.async {
+                        UIApplication.shared.registerForRemoteNotifications()
+                    }
+                }
+            case .denied:
+                break
+            @unknown default:
+                break
+            }
+        }
+    }
+
+    @objc private func handlePushTokenNotification(_ note: Notification) {
+        guard isLoggedIntoWebApp,
+              let token = note.userInfo?["token"] as? String,
+              !token.isEmpty,
+              token != lastRegisteredPushToken else { return }
+        lastRegisteredPushToken = token
+        registerPushToken(token)
+    }
+
+    private func registerPushToken(_ token: String) {
+        guard let targetURL = URL(string: "/push/register", relativeTo: webView?.url)?.absoluteURL else { return }
+        fetchCookieHeader { [weak self] cookieHeader in
+            guard let self else { return }
+            var request = URLRequest(url: targetURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("fetch", forHTTPHeaderField: "X-Requested-With")
+            if let cookieHeader, !cookieHeader.isEmpty {
+                request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+            }
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["endpoint": "apns:\(token)"], options: [])
+            URLSession.shared.dataTask(with: request).resume()
         }
     }
 
@@ -560,7 +642,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
               let payload = message.body as? [String: Any] else { return }
         let loggedIn = payload["loggedIn"] as? Bool ?? false
         let isFeed = payload["isFeed"] as? Bool ?? false
+        let username = payload["username"] as? String ?? ""
         DispatchQueue.main.async {
+            self.handleLoginState(loggedIn: loggedIn, username: username)
             self.setComposeButtonVisible(loggedIn && isFeed, animated: true)
         }
     }

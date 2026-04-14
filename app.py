@@ -991,11 +991,19 @@ def create_app():
     @app.route("/push/register", methods=["POST"])
     @login_required
     def register_push():
-        endpoint = request.form.get("endpoint", "").strip()
+        payload = request.get_json(silent=True) or {}
+        endpoint = (payload.get("endpoint") or request.form.get("endpoint") or "").strip()
         if endpoint:
-            db.session.add(PushSubscription(user_id=current_user().id, endpoint=endpoint))
-            db.session.commit()
+            existing = PushSubscription.query.filter_by(user_id=current_user().id, endpoint=endpoint).first()
+            if not existing:
+                db.session.add(PushSubscription(user_id=current_user().id, endpoint=endpoint))
+                db.session.commit()
+            if wants_partial_response():
+                return jsonify({"ok": True, "saved": True})
             flash("Push endpoint saved.", "success")
+            return redirect(url_for("settings"))
+        if wants_partial_response():
+            return jsonify({"ok": False, "saved": False}), 400
         return redirect(url_for("settings"))
 
     @app.route("/account/delete", methods=["POST"])
