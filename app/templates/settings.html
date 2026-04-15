@@ -12,8 +12,8 @@
         <label><input type="checkbox" name="push_enabled" {% if current_user.push_enabled %}checked{% endif %}> Push notifications enabled</label>
         <label><input type="checkbox" name="dark_mode" {% if current_user.dark_mode %}checked{% endif %}> Dark mode</label>
         <input type="text" name="muted_words" value="{{ current_user.muted_words }}" placeholder="Muted words, comma separated">
-        <label>Avatar <input class="file-input" type="file" name="avatar"></label>
-        <label>Banner <input class="file-input" type="file" name="banner"></label>
+        <label>Avatar <input class="file-input" type="file" name="avatar" accept="image/*"></label>
+        <label>Banner <input class="file-input" type="file" name="banner" accept="image/*"></label>
         <button type="submit">Save settings</button>
     </form>
 </section>

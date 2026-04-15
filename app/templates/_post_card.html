@@ -75,7 +75,7 @@
                 <input type="hidden" name="feed_tab" value="{{ post.feed_tab or 'home' }}">
                 <textarea name="body" rows="3" placeholder="Add your take" data-mentions-enabled></textarea>
                 <input type="hidden" name="quote_post_id" value="{{ post.id }}">
-                <input class="file-input" type="file" name="media">
+                <input class="file-input" type="file" name="media" accept="image/*,video/mp4,video/quicktime" data-validate-media-upload>
                 <button type="submit">Quote</button>
             </form>
         </details>

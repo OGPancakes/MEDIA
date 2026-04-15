@@ -3,6 +3,7 @@ import re
 import secrets
 import hashlib
 import socket
+import struct
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
@@ -460,7 +461,11 @@ def create_app():
                 return jsonify({"ok": False, "error": "Say something or upload media to post."}), 400
             flash("Say something or upload media to post.", "error")
             return redirect(request.referrer or url_for("index"))
-        media_path, media_type = save_upload(media)
+        media_path, media_type = save_upload(media, user=current_user(), max_video_seconds=15)
+        if media and media.filename and not media_path:
+            if wants_partial_response():
+                return jsonify({"ok": False, "error": "That media upload was rejected."}), 400
+            return redirect(request.referrer or url_for("index"))
         post = Post(
             user_id=current_user().id,
             body=body,
@@ -848,8 +853,8 @@ def create_app():
             user.muted_words = request.form.get("muted_words", "").strip()
             avatar = request.files.get("avatar")
             banner = request.files.get("banner")
-            avatar_path, _ = save_upload(avatar)
-            banner_path, _ = save_upload(banner)
+            avatar_path, _ = save_upload(avatar, allow_video=False)
+            banner_path, _ = save_upload(banner, allow_video=False)
             if avatar_path:
                 user.avatar = avatar_path
             if banner_path:
@@ -896,7 +901,9 @@ def create_app():
     def create_story():
         body = request.form.get("body", "").strip()
         media = request.files.get("media")
-        media_path, _ = save_upload(media)
+        media_path, _ = save_upload(media, user=current_user(), max_video_seconds=15)
+        if media and media.filename and not media_path:
+            return redirect(url_for("index"))
         if not body and not media_path:
             flash("Your story needs text or media.", "error")
             return redirect(url_for("index"))
@@ -1202,7 +1209,66 @@ def admin_required(view):
     return wrapped
 
 
-def save_upload(upload):
+def read_mp4_duration_seconds(path):
+    def walk_atoms(handle, limit):
+        start = handle.tell()
+        while handle.tell() - start < limit:
+            header = handle.read(8)
+            if len(header) < 8:
+                return None
+            size, atom_type = struct.unpack(">I4s", header)
+            if size == 1:
+                extended = handle.read(8)
+                if len(extended) < 8:
+                    return None
+                size = struct.unpack(">Q", extended)[0]
+                header_size = 16
+            else:
+                header_size = 8
+            if size < header_size:
+                return None
+            payload_size = size - header_size
+            atom_name = atom_type.decode("latin-1")
+            if atom_name in {"moov", "trak", "mdia"}:
+                found = walk_atoms(handle, payload_size)
+                if found is not None:
+                    return found
+            elif atom_name == "mvhd":
+                version_flags = handle.read(4)
+                if len(version_flags) < 4:
+                    return None
+                version = version_flags[0]
+                if version == 1:
+                    handle.seek(16, os.SEEK_CUR)
+                    timescale_bytes = handle.read(4)
+                    duration_bytes = handle.read(8)
+                    if len(timescale_bytes) < 4 or len(duration_bytes) < 8:
+                        return None
+                    timescale = struct.unpack(">I", timescale_bytes)[0]
+                    duration = struct.unpack(">Q", duration_bytes)[0]
+                else:
+                    handle.seek(8, os.SEEK_CUR)
+                    timescale_bytes = handle.read(4)
+                    duration_bytes = handle.read(4)
+                    if len(timescale_bytes) < 4 or len(duration_bytes) < 4:
+                        return None
+                    timescale = struct.unpack(">I", timescale_bytes)[0]
+                    duration = struct.unpack(">I", duration_bytes)[0]
+                if timescale:
+                    return duration / timescale
+                return None
+            else:
+                handle.seek(payload_size, os.SEEK_CUR)
+        return None
+
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        total_size = handle.tell()
+        handle.seek(0)
+        return walk_atoms(handle, total_size)
+
+
+def save_upload(upload, *, user=None, allow_video=True, max_video_seconds=None):
     if not upload or not upload.filename:
         return None, "text"
     filename = secure_filename(upload.filename)
@@ -1210,10 +1276,26 @@ def save_upload(upload):
     if extension not in ALLOWED_EXTENSIONS:
         flash("That file type is not supported.", "error")
         return None, "text"
+    media_type = "video" if extension in {"mp4", "mov", "webm"} else "image"
+    if media_type == "video":
+        if not allow_video:
+            flash("Only photos are allowed here.", "error")
+            return None, "text"
+        if not user or not user.is_creator:
+            flash("Only creator accounts can upload videos.", "error")
+            return None, "text"
+        if extension not in {"mp4", "mov"}:
+            flash("Video uploads must be MP4 or MOV.", "error")
+            return None, "text"
     final_name = f"{uuid4().hex}_{filename}"
     destination = UPLOAD_DIR / final_name
     upload.save(destination)
-    media_type = "video" if extension in {"mp4", "mov", "webm"} else "image"
+    if media_type == "video" and max_video_seconds:
+        duration = read_mp4_duration_seconds(destination)
+        if duration is None or duration > max_video_seconds:
+            destination.unlink(missing_ok=True)
+            flash(f"Videos must be {max_video_seconds} seconds or less.", "error")
+            return None, "text"
     return f"uploads/{final_name}", media_type
 
 

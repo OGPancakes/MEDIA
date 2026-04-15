@@ -54,7 +54,7 @@
                             <span class="story-add-badge">+</span>
                         </span>
                         <span>Your Story</span>
-                        <input type="file" name="media" hidden onchange="this.form.requestSubmit()">
+                        <input type="file" name="media" hidden accept="image/*,video/mp4,video/quicktime" data-validate-media-upload onchange="window.handleStorySelection(this)">
                         <input type="hidden" name="body" value="">
                     </label>
                 </form>
@@ -79,7 +79,7 @@
                 <input type="hidden" name="feed_tab" value="{{ 'breaking' if feed_mode == 'breaking' else 'home' }}">
                 <textarea name="body" rows="4" placeholder="Post to the timeline, use #hashtags and @mentions" data-mentions-enabled></textarea>
                 <div class="form-row composer-toolbar">
-                    <input class="file-input composer-file-input" type="file" name="media">
+                    <input class="file-input composer-file-input" type="file" name="media" accept="image/*,video/mp4,video/quicktime" data-validate-media-upload>
                     <button type="submit" class="composer-submit">Post</button>
                 </div>
             </form>

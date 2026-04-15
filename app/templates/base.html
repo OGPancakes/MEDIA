@@ -14,7 +14,7 @@
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/pia-logo.jpeg') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
-<body class="{% if current_user %}app-body{% else %}guest-body{% endif %}{% if current_user and current_user.dark_mode %} dark-mode{% endif %}">
+<body class="{% if current_user %}app-body{% else %}guest-body{% endif %}{% if current_user and current_user.dark_mode %} dark-mode{% endif %}" data-is-creator="{% if current_user and current_user.is_creator %}true{% else %}false{% endif %}">
     {% set page_content %}{% block content %}{% endblock %}{% endset %}
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if current_user %}
@@ -245,6 +245,46 @@
             closeMentionDropdown();
             field.focus();
         }
+
+        async function validateMediaUploadInput(input) {
+            const file = input?.files?.[0];
+            if (!file) return true;
+            const isCreator = document.body.dataset.isCreator === "true";
+            const isVideo = file.type.startsWith("video/") || /\.(mp4|mov)$/i.test(file.name || "");
+            if (!isVideo) return true;
+            if (!isCreator) {
+                input.value = "";
+                showTransientFlash("Only creator accounts can upload videos.");
+                return false;
+            }
+            const duration = await new Promise((resolve) => {
+                const video = document.createElement("video");
+                video.preload = "metadata";
+                video.onloadedmetadata = () => {
+                    const seconds = Number(video.duration || 0);
+                    URL.revokeObjectURL(video.src);
+                    resolve(seconds);
+                };
+                video.onerror = () => {
+                    URL.revokeObjectURL(video.src);
+                    resolve(null);
+                };
+                video.src = URL.createObjectURL(file);
+            });
+            if (!duration || duration > 15) {
+                input.value = "";
+                showTransientFlash("Videos must be 15 seconds or less.");
+                return false;
+            }
+            return true;
+        }
+
+        window.handleStorySelection = async function handleStorySelection(input) {
+            const isValid = await validateMediaUploadInput(input);
+            if (isValid && input?.form) {
+                input.form.requestSubmit();
+            }
+        };
 
         function setActiveComposer(target) {
             const nextComposer = target?.closest?.(".composer") || null;
@@ -731,6 +771,15 @@
         document.addEventListener("keydown", (event) => {
             if (event.key === "Escape") {
                 closeMentionDropdown();
+            }
+        });
+
+        document.addEventListener("change", (event) => {
+            const mediaInput = event.target.closest("[data-validate-media-upload]");
+            if (mediaInput instanceof HTMLInputElement) {
+                validateMediaUploadInput(mediaInput).catch(() => {
+                    mediaInput.value = "";
+                });
             }
         });
 
