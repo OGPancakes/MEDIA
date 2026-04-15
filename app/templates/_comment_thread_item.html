@@ -11,7 +11,7 @@
             <span class="comment-thread-time">{{ comment.created_at|timesince }}</span>
         </div>
         {% if comment.body %}
-        <p class="comment-thread-body">{{ comment.body }}</p>
+        <p class="comment-thread-body">{{ comment.body|render_post_text }}</p>
         {% endif %}
         <div class="comment-thread-actions">
             {% if current_user %}

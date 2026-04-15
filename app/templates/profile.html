@@ -39,7 +39,7 @@
             <a class="button ghost profile-message-button" href="{{ url_for('messages', user=profile_user.username) }}">Message</a>
             {% endif %}
             <details class="profile-report-details">
-                <summary class="icon-action danger-icon" title="Report user" aria-label="Report user" data-tooltip="Report user">⚑</summary>
+                <summary class="icon-action report-action" title="Report user" aria-label="Report user" data-tooltip="Report user">⚑</summary>
                 <form action="{{ url_for('report') }}" method="post" class="profile-report-popover">
                     <input type="hidden" name="username" value="{{ profile_user.username }}">
                     <input type="text" name="reason" placeholder="Report reason">

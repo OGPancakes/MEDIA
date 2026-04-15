@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from flask_sqlalchemy import SQLAlchemy
+from markupsafe import Markup, escape
 from sqlalchemy import and_, or_, text
 from sqlalchemy.exc import OperationalError
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -207,6 +208,7 @@ class Post(db.Model, TimestampMixin):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     body = db.Column(db.Text, default="")
+    feed_tab = db.Column(db.String(20), default="home", nullable=False)
     media_path = db.Column(db.String(255))
     media_type = db.Column(db.String(20), default="text")
     reply_to_id = db.Column(db.Integer, db.ForeignKey("post.id"))
@@ -346,6 +348,10 @@ def create_app():
             return f"{minutes}m"
         return "now"
 
+    @app.template_filter("render_post_text")
+    def render_post_text_filter(value):
+        return render_post_text(value)
+
     @app.route("/")
     def index():
         user = current_user()
@@ -363,10 +369,15 @@ def create_app():
             feed_mode=feed_mode,
             page_mode="feed",
             latest_post_id=latest_post_id,
+            show_topbar_home=feed_mode != "home",
         )
 
     @app.route("/register", methods=["GET", "POST"])
     def register():
+        admin_user = current_user()
+        if not admin_user or not admin_user.is_admin:
+            flash("Accounts are created by camp admins. Sign in with the login you were given.", "error")
+            return redirect(url_for("login"))
         if request.method == "POST":
             username = request.form.get("username", "").strip().lower()
             display_name = request.form.get("display_name", "").strip()
@@ -436,7 +447,14 @@ def create_app():
         body = request.form.get("body", "").strip()
         quote_post_id = request.form.get("quote_post_id") or None
         reply_to_id = request.form.get("reply_to_id") or None
+        requested_feed_tab = (request.form.get("feed_tab") or "home").strip().lower()
         media = request.files.get("media")
+        feed_tab = "breaking" if requested_feed_tab == "breaking" else "home"
+        if feed_tab == "breaking" and not current_user().is_breaking_news:
+            if wants_partial_response():
+                return jsonify({"ok": False, "error": "Only breaking news accounts can post in Breaking."}), 403
+            flash("Only breaking news accounts can post in Breaking.", "error")
+            return redirect(request.referrer or url_for("index"))
         if not body and (not media or not media.filename):
             if wants_partial_response():
                 return jsonify({"ok": False, "error": "Say something or upload media to post."}), 400
@@ -446,6 +464,7 @@ def create_app():
         post = Post(
             user_id=current_user().id,
             body=body,
+            feed_tab=feed_tab,
             media_path=media_path,
             media_type=media_type,
             quote_post_id=int(quote_post_id) if quote_post_id else None,
@@ -699,6 +718,37 @@ def create_app():
         else:
             users = get_suggested_users(current_user())
         return render_template("search.html", query=query, users=users, posts=posts, title="Search")
+
+    @app.route("/api/users/mentions")
+    @login_required
+    def mention_suggestions():
+        query = request.args.get("q", "").strip().lower()
+        users_query = User.query
+        if query:
+            like = f"{query}%"
+            users_query = users_query.filter(
+                or_(
+                    db.func.lower(User.username).like(like),
+                    db.func.lower(User.display_name).like(f"%{query}%"),
+                    db.func.lower(User.email).like(f"%{query}%"),
+                )
+            )
+        users = users_query.order_by(User.display_name.asc()).limit(8).all()
+        return jsonify(
+            {
+                "users": [
+                    {
+                        "username": user.username,
+                        "display_name": user.display_name,
+                        "avatar_url": media_url(user.avatar) if not should_use_emoji_avatar(user) else "",
+                        "avatar_emoji": avatar_emoji_for(user),
+                        "use_emoji": should_use_emoji_avatar(user),
+                        "profile_url": url_for("profile", username=user.username),
+                    }
+                    for user in users
+                ]
+            }
+        )
 
     @app.route("/notifications")
     @login_required
@@ -1002,6 +1052,28 @@ def create_app():
                 else:
                     user.timeout_until = None
                 flash("User details updated.", "success")
+            elif action == "create_user":
+                display_name = request.form.get("display_name", "").strip()
+                email = request.form.get("email", "").strip().lower()
+                username = request.form.get("username", "").strip().lower()
+                password = request.form.get("password", "").strip()
+                if not display_name or not email or not username or len(password) < 8:
+                    flash("Add a display name, username, email, and a password with at least 8 characters.", "error")
+                    return redirect(url_for("admin", tab="users"))
+                if User.query.filter((User.username == username) | (User.email == email)).first():
+                    flash("That username or email is already in use.", "error")
+                    return redirect(url_for("admin", tab="users"))
+                user = User(
+                    username=username,
+                    display_name=display_name,
+                    email=email,
+                    is_verified=bool(request.form.get("is_verified")),
+                    is_creator=bool(request.form.get("is_creator")),
+                    is_breaking_news=bool(request.form.get("is_breaking_news")),
+                )
+                user.set_password(password)
+                db.session.add(user)
+                flash("Account created.", "success")
             db.session.commit()
             return redirect(url_for("admin", tab=tab))
         stats = {
@@ -1326,6 +1398,31 @@ def unread_notifications_count(user):
     return Notification.query.filter_by(user_id=user.id, is_read=False).count()
 
 
+def render_post_text(value):
+    text_value = (value or "").strip()
+    if not text_value:
+        return Markup("")
+
+    def replace_mention(match):
+        username = match.group(1)
+        user = User.query.filter_by(username=username.lower()).first()
+        if not user:
+            return escape(match.group(0))
+        profile_url = url_for("profile", username=user.username)
+        return Markup(
+            f'<a class="mention-chip" href="{escape(profile_url)}" data-mention-link="true">@{escape(user.username)}</a>'
+        )
+
+    parts = []
+    last_index = 0
+    for match in MENTION_RE.finditer(text_value):
+        parts.append(escape(text_value[last_index:match.start()]))
+        parts.append(replace_mention(match))
+        last_index = match.end()
+    parts.append(escape(text_value[last_index:]))
+    return Markup("").join(parts)
+
+
 def create_notification(user_id, actor_id, note_type, message, link):
     if user_id == actor_id:
         return
@@ -1376,12 +1473,15 @@ def get_feed_posts(user, feed_mode="home"):
     muted_ids = [mute.muted_id for mute in Mute.query.filter_by(muter_id=user.id).all()]
     blocked_by_ids = [block.blocker_id for block in Block.query.filter_by(blocked_id=user.id).all()]
     if feed_mode == "breaking":
-        posts = query.filter(User.is_breaking_news.is_(True)).all()
+        posts = query.filter(Post.feed_tab == "breaking").all()
     elif feed_mode == "fyp":
-        posts = query.filter(Post.user_id.in_(followed_ids)).all()
+        posts = query.filter(Post.feed_tab != "breaking", Post.user_id.in_(followed_ids)).all()
     else:
         allowed_ids = [user.id] + followed_ids
-        posts = query.filter(or_(Post.user_id.in_(allowed_ids), User.profile_public.is_(True))).all()
+        posts = query.filter(
+            Post.feed_tab != "breaking",
+            or_(Post.user_id.in_(allowed_ids), User.profile_public.is_(True)),
+        ).all()
     muted_words = [word.strip().lower() for word in user.muted_words.split(",") if word.strip()]
     timeline_map = {}
 
@@ -1726,6 +1826,12 @@ def ensure_schema_updates():
         db.session.execute(text("ALTER TABLE user ADD COLUMN dark_mode BOOLEAN NOT NULL DEFAULT 0"))
     if "is_breaking_news" not in columns:
         db.session.execute(text("ALTER TABLE user ADD COLUMN is_breaking_news BOOLEAN NOT NULL DEFAULT 0"))
+    post_columns = {
+        row[1]
+        for row in db.session.execute(text("PRAGMA table_info(post)")).fetchall()
+    }
+    if "feed_tab" not in post_columns:
+        db.session.execute(text("ALTER TABLE post ADD COLUMN feed_tab VARCHAR(20) NOT NULL DEFAULT 'home'"))
     tables = {
         row[0]
         for row in db.session.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()

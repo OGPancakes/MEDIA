@@ -124,6 +124,31 @@
 {% elif tab == 'users' %}
 <section class="card">
     <div class="feed-header">
+        <h2>Create account</h2>
+        <p class="muted">Admins create logins for campers here.</p>
+    </div>
+    <form method="post" class="stack-form admin-create-user-form">
+        <input type="hidden" name="tab" value="users">
+        <input type="hidden" name="action" value="create_user">
+        <div class="form-row">
+            <input type="text" name="display_name" placeholder="Display name" required>
+            <input type="text" name="username" placeholder="Username" required>
+        </div>
+        <div class="form-row">
+            <input type="email" name="email" placeholder="Email" required>
+            <input type="password" name="password" placeholder="Temporary password" required>
+        </div>
+        <div class="actions">
+            <label><input type="checkbox" name="is_verified"> Verified</label>
+            <label><input type="checkbox" name="is_creator"> Creator</label>
+            <label><input type="checkbox" name="is_breaking_news"> Breaking news</label>
+        </div>
+        <button type="submit">Create account</button>
+    </form>
+</section>
+
+<section class="card">
+    <div class="feed-header">
         <h2>All users</h2>
         <p class="muted">{{ users_pagination.total }} accounts</p>
     </div>

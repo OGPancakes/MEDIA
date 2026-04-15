@@ -18,22 +18,14 @@
         </div>
 
         <div class="auth-cta-group">
-            <a class="auth-pill auth-pill-primary" href="{{ url_for('register') }}">Create account</a>
-            <div class="auth-divider dark"><span>or</span></div>
             <div class="auth-panel-card dark-card">
-                <h3>Quick sign up</h3>
-                <form action="{{ url_for('register') }}" method="post" class="stack-form">
-                    <input type="text" name="display_name" placeholder="Display name" required>
-                    <input type="text" name="username" placeholder="Username" required>
-                    <input type="email" name="email" placeholder="Email" required>
+                <h3>Sign in</h3>
+                <form action="{{ url_for('login') }}" method="post" class="stack-form">
+                    <input type="text" name="username" placeholder="Username or email" required>
                     <input type="password" name="password" placeholder="Password" required>
-                    <button type="submit">Sign up with password</button>
+                    <button type="submit">Sign in</button>
                 </form>
-                <p class="tiny-copy">By signing up, you agree to the platform rules and community standards.</p>
-            </div>
-            <div class="auth-login-block">
-                <p>Already have an account?</p>
-                <a class="auth-pill auth-pill-outline" href="{{ url_for('login') }}">Sign in</a>
+                <p class="tiny-copy">Camp accounts are created for you by an admin. Use the login you were given.</p>
             </div>
         </div>
     </div>
@@ -81,15 +73,18 @@
             </div>
         </section>
 
+        {% if feed_mode != 'breaking' or current_user.is_breaking_news %}
         <section class="composer">
             <form action="{{ url_for('create_post') }}" method="post" enctype="multipart/form-data" data-compose-post>
-                <textarea name="body" rows="4" placeholder="Post to the timeline, use #hashtags and @mentions"></textarea>
+                <input type="hidden" name="feed_tab" value="{{ 'breaking' if feed_mode == 'breaking' else 'home' }}">
+                <textarea name="body" rows="4" placeholder="Post to the timeline, use #hashtags and @mentions" data-mentions-enabled></textarea>
                 <div class="form-row composer-toolbar">
                     <input class="file-input composer-file-input" type="file" name="media">
                     <button type="submit" class="composer-submit">Post</button>
                 </div>
             </form>
         </section>
+        {% endif %}
     </section>
 </section>
 {% endif %}

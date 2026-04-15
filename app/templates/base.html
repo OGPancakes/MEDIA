@@ -19,9 +19,13 @@
     {% with messages = get_flashed_messages(with_categories=true) %}
     {% if current_user %}
     <header class="app-topbar">
+        {% if show_topbar_home is not defined or show_topbar_home %}
         <a class="topbar-home" href="{{ url_for('index') }}">
             <span class="topbar-home-mark">Home</span>
         </a>
+        {% else %}
+        <span class="topbar-home topbar-home-placeholder" aria-hidden="true"></span>
+        {% endif %}
         <details class="account-menu">
             <summary class="account-trigger" aria-label="Open account menu">
                 <span class="account-trigger-copy">
@@ -72,17 +76,17 @@
     </div>
     <nav class="bottom-nav" aria-label="Primary">
         <a class="bottom-nav-link" href="{{ url_for('messages') }}">
-            <span>DM</span>
+            <span class="bottom-nav-label">DM</span>
         </a>
         <a class="bottom-nav-link" href="{{ url_for('index') }}">
-            <span>Feed</span>
+            <span class="bottom-nav-label">Feed</span>
         </a>
         <a class="bottom-nav-link" href="{{ url_for('search') }}">
-            <span>Search</span>
+            <span class="bottom-nav-label">Search</span>
         </a>
         <a class="bottom-nav-link profile-pill" href="{{ url_for('profile', username=current_user.username) }}">
             {{ render_avatar(current_user, "user-avatar") }}
-            <span>Profile</span>
+            <span class="bottom-nav-label">Profile</span>
         </a>
     </nav>
     {% else %}
@@ -108,6 +112,7 @@
         let feedRefreshTimer = null;
         let touchLockStart = null;
         let activeComposer = null;
+        let activeMentionSession = null;
 
         function syncTopbarHeight() {
             const topbar = document.querySelector(".app-topbar");
@@ -171,6 +176,76 @@
             });
         }
 
+        function currentMentionQuery(target) {
+            const value = target.value || "";
+            const start = target.selectionStart ?? value.length;
+            const prefix = value.slice(0, start);
+            const match = prefix.match(/(?:^|\s)@([a-zA-Z0-9_.]{0,30})$/);
+            return match ? match[1] : null;
+        }
+
+        function closeMentionDropdown() {
+            if (!activeMentionSession) return;
+            activeMentionSession.dropdown.remove();
+            activeMentionSession = null;
+        }
+
+        function positionMentionDropdown() {
+            if (!activeMentionSession) return;
+            const rect = activeMentionSession.field.getBoundingClientRect();
+            Object.assign(activeMentionSession.dropdown.style, {
+                top: `${window.scrollY + rect.bottom + 8}px`,
+                left: `${window.scrollX + rect.left}px`,
+                width: `${rect.width}px`
+            });
+        }
+
+        async function openMentionDropdown(field, query) {
+            if (!field) return;
+            if (!activeMentionSession || activeMentionSession.field !== field) {
+                closeMentionDropdown();
+                const dropdown = document.createElement("div");
+                dropdown.className = "mentions-dropdown";
+                document.body.appendChild(dropdown);
+                activeMentionSession = {field, dropdown};
+            }
+            positionMentionDropdown();
+            activeMentionSession.dropdown.innerHTML = '<div class="mentions-loading">Searching…</div>';
+            const response = await fetch(`/api/users/mentions?q=${encodeURIComponent(query || "")}`, {
+                headers: {"X-Requested-With": "fetch", "Accept": "application/json"}
+            });
+            if (!response.ok || !activeMentionSession || activeMentionSession.field !== field) return;
+            const data = await response.json();
+            const users = data.users || [];
+            if (!users.length) {
+                activeMentionSession.dropdown.innerHTML = '<div class="mentions-empty">No users found.</div>';
+                return;
+            }
+            activeMentionSession.dropdown.innerHTML = users.map((user) => `
+                <button type="button" class="mention-option" data-mention-username="${user.username}">
+                    ${user.use_emoji ? `<span class="mention-option-avatar emoji-avatar"><span class="emoji-avatar-glyph">${user.avatar_emoji}</span></span>` : `<img class="mention-option-avatar" src="${user.avatar_url}" alt="${user.username}">`}
+                    <span class="mention-option-copy">
+                        <strong>${user.display_name}</strong>
+                        <span>@${user.username}</span>
+                    </span>
+                </button>
+            `).join("");
+        }
+
+        function applyMention(field, username) {
+            const value = field.value || "";
+            const start = field.selectionStart ?? value.length;
+            const prefix = value.slice(0, start);
+            const suffix = value.slice(field.selectionEnd ?? start);
+            const updatedPrefix = prefix.replace(/(^|\s)@([a-zA-Z0-9_.]{0,30})$/, `$1@${username} `);
+            field.value = `${updatedPrefix}${suffix}`;
+            const cursor = updatedPrefix.length;
+            field.setSelectionRange(cursor, cursor);
+            field.dispatchEvent(new Event("input", {bubbles: true}));
+            closeMentionDropdown();
+            field.focus();
+        }
+
         function setActiveComposer(target) {
             const nextComposer = target?.closest?.(".composer") || null;
             if (activeComposer && activeComposer !== nextComposer) {
@@ -221,6 +296,7 @@
             syncNativeShellClass();
             startFeedRefresh();
             autoSizeTextareas();
+            closeMentionDropdown();
         }
 
         function replaceShellFromDocument(nextDocument) {
@@ -563,6 +639,15 @@
             if (closeButton) {
                 closeCommentsSheet(closeButton.closest("[data-comments-host], .inline-comments-host"));
             }
+            const mentionChoice = event.target.closest("[data-mention-username]");
+            if (mentionChoice && activeMentionSession) {
+                event.preventDefault();
+                applyMention(activeMentionSession.field, mentionChoice.dataset.mentionUsername || "");
+                return;
+            }
+            if (!event.target.closest(".mentions-dropdown")) {
+                closeMentionDropdown();
+            }
         });
 
         document.addEventListener("submit", async (event) => {
@@ -632,7 +717,25 @@
             if (event.target instanceof HTMLTextAreaElement) {
                 autoSizeTextareas(event.target.closest("form") || document);
             }
+            const field = event.target.closest("[data-mentions-enabled]");
+            if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) {
+                const query = currentMentionQuery(field);
+                if (query === null) {
+                    closeMentionDropdown();
+                } else {
+                    openMentionDropdown(field, query).catch(() => closeMentionDropdown());
+                }
+            }
         });
+
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                closeMentionDropdown();
+            }
+        });
+
+        window.addEventListener("resize", positionMentionDropdown);
+        window.addEventListener("scroll", positionMentionDropdown, true);
 
         window.addEventListener("pageshow", () => {
             document.body.classList.remove("page-is-transitioning");

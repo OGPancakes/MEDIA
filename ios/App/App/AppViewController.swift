@@ -38,6 +38,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var selectedImageData: Data?
     private var selectedImageName: String?
     private var selectedImageMimeType = "image/jpeg"
+    private var currentFeedTab = "home"
 
     private let composerScriptMessageName = "nativeComposerState"
 
@@ -290,7 +291,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
               document.body && document.body.classList.add('native-compose-enabled');
               window.webkit.messageHandlers.\(composerScriptMessageName).postMessage({
                 loggedIn: document.body ? document.body.classList.contains('app-body') : false,
-                isFeed: !!document.querySelector('.home-flow')
+                isFeed: !!document.querySelector('.home-flow'),
+                canCompose: !!document.querySelector('.home-flow .composer form'),
+                feedMode: (document.querySelector('#live-feed') && document.querySelector('#live-feed').dataset.feedMode) || 'home'
               });
             } catch (e) {}
           }
@@ -342,11 +345,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
           if (document.body) {
             document.body.classList.add('native-compose-enabled');
           }
-          return {
-            loggedIn: !!(document.body && document.body.classList.contains('app-body')),
-            username: document.querySelector('.account-trigger-copy span') ? document.querySelector('.account-trigger-copy span').textContent.replace(/^@/, '').trim() : '',
-            isFeed: !!document.querySelector('.home-flow')
-          };
+            return {
+              loggedIn: !!(document.body && document.body.classList.contains('app-body')),
+              username: document.querySelector('.account-trigger-copy span') ? document.querySelector('.account-trigger-copy span').textContent.replace(/^@/, '').trim() : '',
+              isFeed: !!document.querySelector('.home-flow'),
+              canCompose: !!document.querySelector('.home-flow .composer form'),
+              feedMode: (document.querySelector('#live-feed') && document.querySelector('#live-feed').dataset.feedMode) || 'home'
+            };
         })();
         """
         webView?.evaluateJavaScript(script) { [weak self] result, _ in
@@ -354,9 +359,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             if let payload = result as? [String: Any] {
                 let loggedIn = payload["loggedIn"] as? Bool ?? false
                 let isFeed = payload["isFeed"] as? Bool ?? false
+                let canCompose = payload["canCompose"] as? Bool ?? false
                 let username = payload["username"] as? String ?? ""
+                self.currentFeedTab = payload["feedMode"] as? String ?? "home"
                 self.handleLoginState(loggedIn: loggedIn, username: username)
-                self.setComposeButtonVisible(loggedIn && isFeed, animated: true)
+                self.setComposeButtonVisible(loggedIn && isFeed && canCompose, animated: true)
             }
         }
     }
@@ -563,6 +570,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             request.httpBody = self.multipartBody(
                 boundary: boundary,
                 body: body,
+                feedTab: self.currentFeedTab == "breaking" ? "breaking" : "home",
                 imageData: imageData,
                 imageName: imageName,
                 mimeType: imageMimeType
@@ -619,12 +627,15 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
     }
 
-    private func multipartBody(boundary: String, body: String, imageData: Data?, imageName: String?, mimeType: String) -> Data {
+    private func multipartBody(boundary: String, body: String, feedTab: String, imageData: Data?, imageName: String?, mimeType: String) -> Data {
         var data = Data()
         let lineBreak = "\r\n"
         data.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
         data.append("Content-Disposition: form-data; name=\"body\"\(lineBreak)\(lineBreak)".data(using: .utf8)!)
         data.append("\(body)\(lineBreak)".data(using: .utf8)!)
+        data.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+        data.append("Content-Disposition: form-data; name=\"feed_tab\"\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+        data.append("\(feedTab)\(lineBreak)".data(using: .utf8)!)
         if let imageData {
             let fileName = imageName ?? "upload.jpg"
             data.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
@@ -642,10 +653,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
               let payload = message.body as? [String: Any] else { return }
         let loggedIn = payload["loggedIn"] as? Bool ?? false
         let isFeed = payload["isFeed"] as? Bool ?? false
+        let canCompose = payload["canCompose"] as? Bool ?? false
         let username = payload["username"] as? String ?? ""
+        currentFeedTab = payload["feedMode"] as? String ?? "home"
         DispatchQueue.main.async {
             self.handleLoginState(loggedIn: loggedIn, username: username)
-            self.setComposeButtonVisible(loggedIn && isFeed, animated: true)
+            self.setComposeButtonVisible(loggedIn && isFeed && canCompose, animated: true)
         }
     }
 

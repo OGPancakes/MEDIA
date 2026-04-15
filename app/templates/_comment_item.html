@@ -12,7 +12,7 @@
         <span class="comment-time">{{ post.created_at|timesince }}</span>
     </div>
     {% if post.body %}
-    <p class="comment-body">{{ post.body }}</p>
+    <p class="comment-body">{{ post.body|render_post_text }}</p>
     {% endif %}
     {% if post.media_path %}
         {% if post.media_type == 'video' %}
