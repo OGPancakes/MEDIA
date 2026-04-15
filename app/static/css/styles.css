@@ -1811,6 +1811,32 @@ body.native-compose-enabled .home-flow .composer {
     align-items: center;
     color: var(--navy);
     font-weight: 700;
+    text-decoration: none;
+    border-radius: 999px;
+    padding: 0 0.08rem;
+    transition: color 140ms ease, background-color 140ms ease;
+}
+
+.mention-chip:hover,
+.mention-chip:focus-visible {
+    color: #1e5cc8;
+    background: rgba(11, 61, 145, 0.08);
+}
+
+.post-body .mention-chip,
+.comment-body .mention-chip,
+.comment-thread-body .mention-chip,
+.story-caption .mention-chip,
+.quote-card .mention-chip {
+    color: #1e5cc8;
+}
+
+.post-body .mention-chip:active,
+.comment-body .mention-chip:active,
+.comment-thread-body .mention-chip:active,
+.story-caption .mention-chip:active,
+.quote-card .mention-chip:active {
+    background: rgba(11, 61, 145, 0.14);
 }
 
 .mentions-dropdown {
