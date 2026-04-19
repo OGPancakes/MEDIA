@@ -713,6 +713,23 @@ body.dark-mode .connection-row {
     color: rgba(255, 255, 255, 0.5);
 }
 
+.terms-gate-card {
+    max-width: 420px;
+    background: rgba(255, 255, 255, 0.94);
+    border-color: rgba(11, 61, 145, 0.1);
+    box-shadow: var(--shadow-soft);
+}
+
+.terms-gate-card .tiny-copy,
+.terms-gate-card label {
+    color: var(--slate);
+}
+
+.terms-gate-card .tiny-copy a {
+    color: var(--navy);
+    font-weight: 700;
+}
+
 .auth-divider {
     display: grid;
     place-items: center;
