@@ -986,8 +986,6 @@ body.dark-mode .connection-row {
     height: 100%;
     line-height: 1;
     font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
-    transform: translateY(0.08em);
-    transform-origin: center;
     font-size: inherit;
 }
 
