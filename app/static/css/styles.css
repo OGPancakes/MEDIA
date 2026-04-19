@@ -1356,9 +1356,13 @@ body.dark-mode .connection-row {
 }
 
 .story-ring .emoji-avatar-glyph {
-    position: relative;
-    top: 2px;
-    transform: none;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: auto;
+    height: auto;
+    transform: translate(-50%, -50%);
+    font-size: 1.14em;
 }
 
 .story-create-inline {
@@ -2232,9 +2236,13 @@ body.dark-mode .profile-report-popover {
 }
 
 .post-head .emoji-avatar-glyph {
-    position: relative;
-    top: 2px;
-    transform: none;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: auto;
+    height: auto;
+    transform: translate(-50%, -50%);
+    font-size: 1.12em;
 }
 
 .suggested-user-row {
