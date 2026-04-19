@@ -1720,7 +1720,7 @@ body.native-compose-enabled .home-flow .composer {
 .profile-banner {
     position: relative;
     display: flex;
-    align-items: flex-end;
+    align-items: center;
     color: var(--white);
     height: auto;
     min-height: 188px;
@@ -3541,8 +3541,8 @@ body.dark-mode .site-footer a {
     }
 
     .profile-banner {
-        min-height: 214px;
-        padding: 0.95rem 1rem 1.12rem;
+        min-height: 196px;
+        padding: 0.78rem 1rem 0.9rem;
     }
 
     .profile-actions-card {
