@@ -42,53 +42,6 @@
 </section>
 
 <section class="card">
-    <h2>User management</h2>
-    {% for user in users %}
-    <div class="admin-row">
-        <div>
-            <strong>{{ user.display_name }}</strong>
-            <p>@{{ user.username }}</p>
-            <p>
-                {% if user.is_admin %}Admin · {% endif %}
-                {% if user.is_verified %}Verified · {% endif %}
-                {% if user.is_creator %}Creator · {% endif %}
-                {% if user.is_banned %}Banned{% elif user.is_timed_out %}Timed out{% else %}Active{% endif %}
-            </p>
-        </div>
-        <div class="actions">
-            <details>
-                <summary class="button ghost">Edit details</summary>
-                <form method="post" class="stack-form admin-edit-form">
-                    <input type="hidden" name="action" value="edit_user">
-                    <input type="hidden" name="target_id" value="{{ user.id }}">
-                    <input type="text" name="display_name" value="{{ user.display_name }}" placeholder="Display name">
-                    <input type="text" name="username" value="{{ user.username }}" placeholder="Username">
-                    <input type="email" name="email" value="{{ user.email }}" placeholder="Email">
-                    <textarea name="bio" rows="3" placeholder="Bio">{{ user.bio }}</textarea>
-                    <label><input type="checkbox" name="is_verified" {% if user.is_verified %}checked{% endif %}> Verified</label>
-                    <label><input type="checkbox" name="is_creator" {% if user.is_creator %}checked{% endif %}> Creator</label>
-                    <label><input type="checkbox" name="is_breaking_news" {% if user.is_breaking_news %}checked{% endif %}> Breaking news</label>
-                    <label><input type="checkbox" name="is_banned" {% if user.is_banned %}checked{% endif %}> Banned</label>
-                    <label><input type="checkbox" name="timeout_user" {% if user.is_timed_out %}checked{% endif %}> 1 day timeout</label>
-                    <button type="submit">Save changes</button>
-                </form>
-            </details>
-            <form method="post">
-                <input type="hidden" name="action" value="impersonate_user">
-                <input type="hidden" name="target_id" value="{{ user.id }}">
-                <button type="submit">Login as</button>
-            </form>
-            <form method="post">
-                <input type="hidden" name="action" value="delete_user">
-                <input type="hidden" name="target_id" value="{{ user.id }}">
-                <button type="submit" class="danger-link">Delete account</button>
-            </form>
-        </div>
-    </div>
-    {% endfor %}
-</section>
-
-<section class="card">
     <h2>Polls</h2>
     <form method="post" class="stack-form admin-edit-form">
         <input type="hidden" name="action" value="create_poll">
