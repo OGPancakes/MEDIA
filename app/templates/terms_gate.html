@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="auth-hero-shell auth-page-shell">
+    <div class="auth-stack">
+        <div class="auth-copy-block">
+            <p class="eyebrow light">Community Rules</p>
+            <h1>Agree before continuing.</h1>
+            <h2>All users must agree that objectionable content and abusive behavior are not allowed.</h2>
+        </div>
+
+        <div class="auth-panel-card dark-card">
+            <h3>Terms of Use</h3>
+            <p class="tiny-copy">This community has zero tolerance for hate speech, harassment, threats, bullying, or abusive users.</p>
+            <p class="tiny-copy"><a href="{{ url_for('terms_of_use') }}">Read the full Terms of Use</a></p>
+            <form method="post" class="stack-form">
+                <label><input type="checkbox" name="agree_terms" required> I agree to the Terms of Use and understand there is no tolerance for objectionable content or abusive users.</label>
+                <button type="submit">Agree and continue</button>
+            </form>
+        </div>
+    </div>
+</section>
+{% endblock %}

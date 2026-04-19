@@ -28,11 +28,40 @@ DEFAULT_AVATAR_PATH = "images/pia-logo.jpeg"
 DEFAULT_BANNER_PATH = "images/pia-logo.jpeg"
 DEFAULT_AVATAR_EMOJIS = ["🦅", "⭐", "🔥", "🎤", "📣", "🎯", "🗽", "🧢", "🌟", "🚀", "🎬", "💬"]
 SEEDED_ACCOUNTS_PATH = BASE_DIR / "data" / "firebase_seed_accounts.txt"
+PROHIBITED_TERMS_PATH = BASE_DIR / "data" / "prohibited_terms.txt"
 IMPORTED_USER_PASSWORD = os.environ.get("IMPORTED_USER_PASSWORD", "WelcomePIA2026!")
 HASHTAG_RE = re.compile(r"#(\w+)")
 MENTION_RE = re.compile(r"@(\w+)")
 
 db = SQLAlchemy()
+
+DEFAULT_PROHIBITED_TERMS = [
+    "nigger",
+    "nigga",
+    "faggot",
+    "kike",
+    "spic",
+    "chink",
+    "retard",
+    "whore",
+    "slut",
+]
+
+
+def load_prohibited_terms():
+    configured_terms = os.environ.get("PROHIBITED_TERMS", "").strip()
+    if configured_terms:
+        return [term.strip().lower() for term in configured_terms.split(",") if term.strip()]
+    if PROHIBITED_TERMS_PATH.exists():
+        return [
+            line.strip().lower()
+            for line in PROHIBITED_TERMS_PATH.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+    return DEFAULT_PROHIBITED_TERMS
+
+
+PROHIBITED_TERMS = load_prohibited_terms()
 
 
 def ensure_persistent_storage_config():
@@ -177,6 +206,7 @@ class User(db.Model, TimestampMixin):
     is_breaking_news = db.Column(db.Boolean, default=False, nullable=False)
     is_banned = db.Column(db.Boolean, default=False, nullable=False)
     timeout_until = db.Column(db.DateTime)
+    accepted_terms_at = db.Column(db.DateTime)
 
     posts = db.relationship("Post", backref="author", lazy=True, foreign_keys="Post.user_id")
     stories = db.relationship("Story", backref="author", lazy=True)
@@ -425,12 +455,32 @@ def create_app():
             session["user_id"] = user.id
             remember_account(user)
             flash("Welcome back.", "success")
+            if not user.accepted_terms_at:
+                return redirect(url_for("terms_agreement"))
             return redirect(url_for("admin" if user.is_admin else "index"))
         return render_template("auth.html", mode="login", title="Sign in")
 
     @app.route("/privacy")
     def privacy():
         return render_template("privacy.html", title="Privacy Policy")
+
+    @app.route("/terms")
+    def terms_of_use():
+        return render_template("terms.html", title="Terms of Use")
+
+    @app.route("/terms-agreement", methods=["GET", "POST"])
+    @login_required
+    def terms_agreement():
+        user = current_user()
+        if request.method == "POST":
+            if not request.form.get("agree_terms"):
+                flash("You must agree to the Terms of Use to continue.", "error")
+                return redirect(url_for("terms_agreement"))
+            user.accepted_terms_at = datetime.now(timezone.utc)
+            db.session.commit()
+            flash("Thanks for agreeing to the community rules.", "success")
+            return redirect(url_for("admin" if user.is_admin else "index"))
+        return render_template("terms_gate.html", title="Community Rules")
 
     @app.route("/media/<path:filename>")
     def media_file(filename):
@@ -460,6 +510,13 @@ def create_app():
             if wants_partial_response():
                 return jsonify({"ok": False, "error": "Say something or upload media to post."}), 400
             flash("Say something or upload media to post.", "error")
+            return redirect(request.referrer or url_for("index"))
+        blocked_term = find_prohibited_term(body)
+        if blocked_term:
+            message = "That post contains language that is not allowed in this community."
+            if wants_partial_response():
+                return jsonify({"ok": False, "error": message}), 400
+            flash(message, "error")
             return redirect(request.referrer or url_for("index"))
         media_path, media_type = save_upload(media, user=current_user(), max_video_seconds=15)
         if media and media.filename and not media_path:
@@ -537,7 +594,11 @@ def create_app():
         if post.user_id != current_user().id:
             flash("You can only edit your own posts.", "error")
             return redirect(url_for("post_detail", post_id=post_id))
-        post.body = request.form.get("body", "").strip()
+        updated_body = request.form.get("body", "").strip()
+        if find_prohibited_term(updated_body):
+            flash("That post contains language that is not allowed in this community.", "error")
+            return redirect(url_for("post_detail", post_id=post_id))
+        post.body = updated_body
         post.hashtags = ",".join(sorted(set(HASHTAG_RE.findall(post.body.lower()))))
         post.mentions = ",".join(sorted(set(MENTION_RE.findall(post.body.lower()))))
         post.edited_at = datetime.now(timezone.utc)
@@ -678,15 +739,25 @@ def create_app():
     def block_user(username):
         target = User.query.filter_by(username=username.lower()).first_or_404()
         user = current_user()
+        if target.id == user.id:
+            flash("You cannot block yourself.", "error")
+            return redirect(request.referrer or url_for("profile", username=username))
         block = Block.query.filter_by(blocker_id=user.id, blocked_id=target.id).first()
         if block:
             db.session.delete(block)
             flash("User unblocked.", "success")
         else:
             db.session.add(Block(blocker_id=user.id, blocked_id=target.id))
+            db.session.add(
+                Report(
+                    reporter_id=user.id,
+                    reported_user_id=target.id,
+                    reason="User blocked for abusive behavior",
+                )
+            )
             flash("User blocked.", "success")
         db.session.commit()
-        return redirect(request.referrer or url_for("profile", username=username))
+        return redirect(url_for("index"))
 
     @app.route("/users/<username>/mute", methods=["POST"])
     @login_required
@@ -785,6 +856,9 @@ def create_app():
             if not target.allow_messages:
                 flash("That user has messages turned off.", "error")
                 return redirect(url_for("messages"))
+            if find_prohibited_term(body):
+                flash("That message contains language that is not allowed in this community.", "error")
+                return redirect(url_for("messages", user=target.username))
             message = DirectMessage(sender_id=user.id, receiver_id=target.id, body=body)
             db.session.add(message)
             create_notification(target.id, user.id, "message", f"New message from {user.username}", url_for("messages", user=user.username))
@@ -842,8 +916,13 @@ def create_app():
     def settings():
         user = current_user()
         if request.method == "POST":
-            user.display_name = request.form.get("display_name", user.display_name).strip() or user.display_name
-            user.bio = request.form.get("bio", "").strip()
+            display_name = request.form.get("display_name", user.display_name).strip() or user.display_name
+            bio = request.form.get("bio", "").strip()
+            if find_prohibited_term(display_name) or find_prohibited_term(bio):
+                flash("Display names and bios cannot include objectionable language.", "error")
+                return redirect(url_for("settings"))
+            user.display_name = display_name
+            user.bio = bio
             user.location = request.form.get("location", "").strip()
             user.website = request.form.get("website", "").strip()
             user.profile_public = bool(request.form.get("profile_public"))
@@ -901,6 +980,9 @@ def create_app():
     def create_story():
         body = request.form.get("body", "").strip()
         media = request.files.get("media")
+        if find_prohibited_term(body):
+            flash("That story contains language that is not allowed in this community.", "error")
+            return redirect(url_for("index"))
         media_path, _ = save_upload(media, user=current_user(), max_video_seconds=15)
         if media and media.filename and not media_path:
             return redirect(url_for("index"))
@@ -1185,6 +1267,9 @@ def login_required(view):
         if not user:
             flash("Sign in to continue.", "error")
             return redirect(url_for("login"))
+        allowed_without_terms = {"terms_agreement", "terms_of_use", "privacy", "logout"}
+        if not user.accepted_terms_at and request.endpoint not in allowed_without_terms:
+            return redirect(url_for("terms_agreement"))
         if user.is_banned:
             session.clear()
             flash("This account has been banned.", "error")
@@ -1459,12 +1544,17 @@ def viewer_can_see_post(viewer, post):
         return False
     if viewer:
         blocked = Block.query.filter_by(blocker_id=post.author.id, blocked_id=viewer.id).first()
-        if blocked:
+        viewer_blocked = Block.query.filter_by(blocker_id=viewer.id, blocked_id=post.author.id).first()
+        if blocked or viewer_blocked:
             return False
     return True
 
 
 def can_view_profile(viewer, profile_user):
+    if viewer and Block.query.filter_by(blocker_id=viewer.id, blocked_id=profile_user.id).first():
+        return False
+    if viewer and Block.query.filter_by(blocker_id=profile_user.id, blocked_id=viewer.id).first():
+        return False
     if profile_user.profile_public:
         return True
     if viewer and viewer.id == profile_user.id:
@@ -1553,6 +1643,7 @@ def get_feed_posts(user, feed_mode="home"):
         return query.limit(40).all()
     followed_ids = [follow.followed_id for follow in Follow.query.filter_by(follower_id=user.id).all()]
     muted_ids = [mute.muted_id for mute in Mute.query.filter_by(muter_id=user.id).all()]
+    blocked_ids = [block.blocked_id for block in Block.query.filter_by(blocker_id=user.id).all()]
     blocked_by_ids = [block.blocker_id for block in Block.query.filter_by(blocked_id=user.id).all()]
     if feed_mode == "breaking":
         posts = query.filter(Post.feed_tab == "breaking").all()
@@ -1576,7 +1667,7 @@ def get_feed_posts(user, feed_mode="home"):
         timeline_map[post_obj.id] = post_obj
 
     for post in posts:
-        if post.user_id in muted_ids or post.user_id in blocked_by_ids:
+        if post.user_id in muted_ids or post.user_id in blocked_ids or post.user_id in blocked_by_ids:
             continue
         lowered = post.body.lower()
         if any(word in lowered for word in muted_words):
@@ -1601,7 +1692,7 @@ def get_feed_posts(user, feed_mode="home"):
         actor = db.session.get(User, repost.user_id)
         if not original or not actor:
             continue
-        if actor.id in muted_ids or actor.id in blocked_by_ids or original.user_id in muted_ids or original.user_id in blocked_by_ids:
+        if actor.id in muted_ids or actor.id in blocked_ids or actor.id in blocked_by_ids or original.user_id in muted_ids or original.user_id in blocked_ids or original.user_id in blocked_by_ids:
             continue
         lowered = original.body.lower()
         if any(word in lowered for word in muted_words):
@@ -1908,6 +1999,8 @@ def ensure_schema_updates():
         db.session.execute(text("ALTER TABLE user ADD COLUMN dark_mode BOOLEAN NOT NULL DEFAULT 0"))
     if "is_breaking_news" not in columns:
         db.session.execute(text("ALTER TABLE user ADD COLUMN is_breaking_news BOOLEAN NOT NULL DEFAULT 0"))
+    if "accepted_terms_at" not in columns:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN accepted_terms_at DATETIME"))
     post_columns = {
         row[1]
         for row in db.session.execute(text("PRAGMA table_info(post)")).fetchall()
@@ -1935,6 +2028,21 @@ def ensure_schema_updates():
         )
         db.session.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_post_view_user_post ON post_view (user_id, post_id)"))
     db.session.commit()
+
+
+def find_prohibited_term(*values):
+    normalized_values = [str(value or "").lower() for value in values if value]
+    if not normalized_values:
+        return None
+    for term in PROHIBITED_TERMS:
+        needle = term.strip().lower()
+        if not needle:
+            continue
+        pattern = re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)", re.IGNORECASE)
+        for value in normalized_values:
+            if pattern.search(value):
+                return needle
+    return None
 
 
 app = create_app()
