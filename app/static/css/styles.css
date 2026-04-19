@@ -1355,6 +1355,12 @@ body.dark-mode .connection-row {
     padding-top: 0;
 }
 
+.story-ring .emoji-avatar-glyph {
+    position: relative;
+    top: 2px;
+    transform: none;
+}
+
 .story-create-inline {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 180px auto;
@@ -2223,6 +2229,12 @@ body.dark-mode .profile-report-popover {
 .right-rail .emoji-avatar,
 .post-head .emoji-avatar {
     font-size: 1rem;
+}
+
+.post-head .emoji-avatar-glyph {
+    position: relative;
+    top: 2px;
+    transform: none;
 }
 
 .suggested-user-row {
