@@ -621,6 +621,17 @@
             const textInput = composeForm ? composeForm.querySelector('input[name="body"]') : null;
             const baseReplyId = root.querySelector(".comments-sheet-shell")?.dataset.commentsPostId;
 
+            root.querySelectorAll("[data-replies-toggle]").forEach((summary) => {
+                const details = summary.closest("details");
+                const label = summary.querySelector(".comment-replies-toggle-label");
+                if (!details || !label) return;
+                const syncRepliesLabel = () => {
+                    label.textContent = details.open ? (label.dataset.openLabel || "Hide replies") : (label.dataset.closedLabel || "View replies");
+                };
+                syncRepliesLabel();
+                details.addEventListener("toggle", syncRepliesLabel);
+            });
+
             root.querySelectorAll("[data-reply-target-id]").forEach((button) => {
                 button.addEventListener("click", () => {
                     if (!replyInput || !replyBanner || !replyName || !textInput) return;

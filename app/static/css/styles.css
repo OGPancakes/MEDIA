@@ -148,6 +148,21 @@ button,
     text-align: center;
     cursor: pointer;
     box-shadow: var(--shadow);
+    transition: transform 160ms ease, box-shadow 180ms ease, background-color 180ms ease, color 160ms ease, border-color 180ms ease, opacity 160ms ease;
+}
+
+button:hover,
+.button:hover,
+button:focus-visible,
+.button:focus-visible {
+    transform: translateY(-1px);
+    box-shadow: 0 14px 28px rgba(20, 33, 61, 0.16);
+}
+
+button:active,
+.button:active {
+    transform: translateY(0) scale(0.98);
+    box-shadow: 0 8px 18px rgba(20, 33, 61, 0.12);
 }
 
 .button.ghost,
@@ -157,6 +172,7 @@ summary {
     background: rgba(11, 61, 145, 0.08);
     color: var(--navy);
     box-shadow: none;
+    border: 1px solid rgba(11, 61, 145, 0.08);
 }
 
 summary {
@@ -164,6 +180,7 @@ summary {
     padding: 0.75rem 1rem;
     border-radius: 999px;
     cursor: pointer;
+    transition: transform 160ms ease, background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 180ms ease;
 }
 
 summary::-webkit-details-marker {
@@ -607,7 +624,10 @@ body.dark-mode .post-actions {
 }
 
 body.dark-mode .icon-action {
-    color: rgba(222, 232, 255, 0.62);
+    color: rgba(222, 232, 255, 0.78);
+    background: rgba(18, 31, 63, 0.72);
+    border-color: rgba(127, 164, 255, 0.16);
+    box-shadow: 0 10px 24px rgba(6, 10, 22, 0.24);
 }
 
 body.dark-mode .icon-action.quote-action {
@@ -618,10 +638,13 @@ body.dark-mode .icon-action:hover,
 body.dark-mode .icon-action:focus-visible,
 body.dark-mode .icon-action.active {
     color: #eef4ff;
+    background: rgba(21, 36, 70, 0.92);
+    border-color: rgba(127, 164, 255, 0.22);
 }
 
 body.dark-mode .icon-action.active.like-action {
     color: #ff7c98;
+    background: rgba(191, 10, 48, 0.16);
 }
 
 body.dark-mode .icon-action img {
@@ -634,6 +657,40 @@ body.dark-mode .icon-action:hover img,
 body.dark-mode .icon-action:focus-visible img {
     filter: none;
     opacity: 1;
+}
+
+body.dark-mode .comment-thread-item {
+    background: rgba(12, 22, 46, 0.82);
+    border-color: rgba(127, 164, 255, 0.12);
+    box-shadow: 0 12px 26px rgba(6, 10, 22, 0.24);
+}
+
+body.dark-mode .comment-action-button,
+body.dark-mode .comment-replies summary,
+body.dark-mode .comments-inline-close {
+    background: rgba(18, 31, 63, 0.74);
+    color: rgba(222, 232, 255, 0.8);
+    border-color: rgba(127, 164, 255, 0.14);
+    box-shadow: 0 8px 18px rgba(6, 10, 22, 0.18);
+}
+
+body.dark-mode .comment-action-button:hover,
+body.dark-mode .comment-action-button:focus-visible,
+body.dark-mode .comment-replies summary:hover,
+body.dark-mode .comments-inline-close:hover,
+body.dark-mode .comments-inline-close:focus-visible {
+    background: rgba(21, 36, 70, 0.92);
+    color: #eef4ff;
+    border-color: rgba(127, 164, 255, 0.22);
+}
+
+body.dark-mode .comment-action-button.active {
+    background: rgba(127, 164, 255, 0.16);
+    border-color: rgba(127, 164, 255, 0.24);
+}
+
+body.dark-mode .nested-comment .comment-thread-main {
+    border-left-color: rgba(127, 164, 255, 0.18);
 }
 
 body.dark-mode .connections-card {
@@ -1867,6 +1924,7 @@ body.native-compose-enabled .home-flow .composer {
     min-height: 38px;
     padding: 0.56rem 0.84rem;
     min-width: 0;
+    box-shadow: 0 8px 18px rgba(20, 33, 61, 0.08);
 }
 
 .profile-actions-row a.button {
@@ -2491,11 +2549,11 @@ body.dark-mode .profile-report-popover {
 
 .post-actions {
     display: flex;
-    gap: 0.25rem 0.9rem;
+    gap: 0.45rem 0.6rem;
     flex-wrap: wrap;
     align-items: center;
     justify-content: flex-start;
-    padding-top: 0.18rem;
+    padding-top: 0.55rem;
     border-top: 1px solid rgba(11, 61, 145, 0.08);
 }
 
@@ -2542,29 +2600,36 @@ body.dark-mode .profile-report-popover {
 .icon-action {
     display: inline-flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: center;
     position: relative;
-    gap: 0.35rem;
+    gap: 0.42rem;
     width: auto;
     min-width: 0;
-    height: 1.8rem;
-    min-height: 1.8rem;
-    padding: 0.18rem 0;
-    border-radius: 0;
-    background: transparent;
-    color: rgba(20, 33, 61, 0.52);
-    box-shadow: none;
+    min-height: 2.15rem;
+    padding: 0.42rem 0.72rem;
+    border-radius: 999px;
+    background: rgba(245, 247, 255, 0.95);
+    border: 1px solid rgba(11, 61, 145, 0.08);
+    color: rgba(20, 33, 61, 0.72);
+    box-shadow: 0 8px 18px rgba(20, 33, 61, 0.08);
     font-size: 0.8rem;
     line-height: 1;
     vertical-align: middle;
-    font-weight: 600;
-    transition: color 140ms ease, opacity 140ms ease, transform 140ms ease;
+    font-weight: 700;
+    transition: color 140ms ease, opacity 140ms ease, transform 140ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 180ms ease;
 }
 
 .icon-action:hover,
 .icon-action:focus-visible {
-    transform: none;
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.98);
+    border-color: rgba(11, 61, 145, 0.14);
+    box-shadow: 0 12px 22px rgba(20, 33, 61, 0.1);
     color: var(--navy);
+}
+
+.icon-action:active {
+    transform: translateY(0) scale(0.98);
 }
 
 .icon-action img {
@@ -2582,19 +2647,22 @@ body.dark-mode .profile-report-popover {
 }
 
 .icon-action.active {
-    background: transparent;
+    border-color: transparent;
 }
 
 .icon-action.active.like-action {
     color: var(--red);
+    background: rgba(191, 10, 48, 0.11);
 }
 
 .icon-action.active.repost-action {
     color: var(--navy);
+    background: rgba(11, 61, 145, 0.12);
 }
 
 .icon-action.active.save-action {
     color: var(--navy);
+    background: rgba(11, 61, 145, 0.12);
 }
 
 .icon-action.quote-action {
@@ -2640,7 +2708,7 @@ body.dark-mode .profile-report-popover {
 }
 
 .post-actions summary.icon-action {
-    padding: 0;
+    padding: 0.42rem 0.72rem;
 }
 
 .post-stats {
@@ -2654,7 +2722,8 @@ body.dark-mode .profile-report-popover {
 .delete-action,
 .danger-icon {
     color: var(--red);
-    background: transparent;
+    background: rgba(191, 10, 48, 0.08);
+    border-color: rgba(191, 10, 48, 0.12);
 }
 
 .report-action:hover,
@@ -2664,7 +2733,8 @@ body.dark-mode .profile-report-popover {
 .danger-icon:hover,
 .danger-icon:focus-visible {
     color: var(--red);
-    background: transparent;
+    background: rgba(191, 10, 48, 0.12);
+    border-color: rgba(191, 10, 48, 0.18);
 }
 
 .inline-form {
@@ -2865,7 +2935,7 @@ body.dark-mode .profile-report-popover {
 
 .comments-inline-list {
     display: grid;
-    gap: 0.75rem;
+    gap: 0.9rem;
     max-height: 24rem;
     overflow-y: auto;
     padding-right: 0.2rem;
@@ -2874,9 +2944,14 @@ body.dark-mode .profile-report-popover {
 .comment-thread-item {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: 0.72rem;
+    gap: 0.78rem;
     align-items: start;
     width: 100%;
+    padding: 0.9rem 0.95rem;
+    border: 1px solid rgba(11, 61, 145, 0.08);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.88);
+    box-shadow: 0 10px 22px rgba(20, 33, 61, 0.06);
 }
 
 .comment-thread-avatar {
@@ -2885,7 +2960,7 @@ body.dark-mode .profile-report-popover {
 
 .comment-thread-main {
     display: grid;
-    gap: 0.28rem;
+    gap: 0.4rem;
     min-width: 0;
 }
 
@@ -2916,7 +2991,8 @@ body.dark-mode .profile-report-popover {
 .comment-thread-actions {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem;
+    flex-wrap: wrap;
 }
 
 .comment-like-form {
@@ -2924,35 +3000,55 @@ body.dark-mode .profile-report-popover {
 }
 
 .comment-action-button {
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: rgba(20, 33, 61, 0.66);
-    font-size: 0.83rem;
+    min-height: 34px;
+    padding: 0.42rem 0.78rem;
+    border-radius: 999px;
+    border: 1px solid rgba(11, 61, 145, 0.08);
+    background: rgba(245, 247, 255, 0.92);
+    color: rgba(20, 33, 61, 0.78);
+    box-shadow: 0 6px 14px rgba(20, 33, 61, 0.05);
+    font-size: 0.81rem;
     font-weight: 700;
+    transition: transform 140ms ease, background-color 160ms ease, border-color 160ms ease, color 140ms ease, box-shadow 180ms ease;
+}
+
+.comment-action-button:hover,
+.comment-action-button:focus-visible {
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.98);
+    border-color: rgba(11, 61, 145, 0.14);
+    color: var(--navy);
+    box-shadow: 0 10px 18px rgba(20, 33, 61, 0.08);
+}
+
+.comment-action-button:active {
+    transform: translateY(0) scale(0.98);
 }
 
 .comment-action-button.active {
     color: var(--navy);
+    background: rgba(11, 61, 145, 0.1);
+    border-color: rgba(11, 61, 145, 0.14);
 }
 
 .comment-replies {
     display: grid;
     gap: 0.55rem;
-    margin-top: 0.12rem;
+    margin-top: 0.18rem;
 }
 
 .comment-replies summary {
     display: inline-flex;
     align-items: center;
     width: fit-content;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
+    min-height: 34px;
+    padding: 0.42rem 0.78rem;
+    border-radius: 999px;
+    background: rgba(11, 61, 145, 0.07);
+    border: 1px solid rgba(11, 61, 145, 0.08);
     box-shadow: none;
     cursor: pointer;
-    color: rgba(20, 33, 61, 0.66);
+    color: rgba(20, 33, 61, 0.74);
     font-size: 0.8rem;
     font-weight: 700;
     list-style: none;
@@ -2960,7 +3056,8 @@ body.dark-mode .profile-report-popover {
 
 .comment-replies summary:hover {
     color: var(--navy);
-    transform: none;
+    background: rgba(11, 61, 145, 0.11);
+    border-color: rgba(11, 61, 145, 0.13);
 }
 
 .comment-replies summary::-webkit-details-marker {
@@ -2969,14 +3066,27 @@ body.dark-mode .profile-report-popover {
 
 .comment-replies-list {
     display: grid;
-    gap: 0.7rem;
-    padding-top: 0.15rem;
+    gap: 0.65rem;
+    padding-top: 0.2rem;
 }
 
 .nested-comment {
-    margin-left: 0;
-    padding-left: 0;
-    border-left: 0;
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.nested-comment .comment-thread-avatar {
+    display: none;
+}
+
+.nested-comment .comment-thread-main {
+    padding-left: 0.9rem;
+    border-left: 2px solid rgba(11, 61, 145, 0.12);
 }
 
 .inline-comments-composer {
@@ -3476,8 +3586,11 @@ body.dark-mode .site-footer a {
     }
 
     .nested-comment {
-        margin-left: 0;
-        padding-left: 0;
+        padding: 0;
+    }
+
+    .nested-comment .comment-thread-main {
+        padding-left: 0.72rem;
     }
 
     .inline-comments-composer {

@@ -16,16 +16,18 @@
         <div class="comment-thread-actions">
             {% if current_user %}
             <form action="{{ url_for('like_post', post_id=comment.id) }}" method="post" class="comment-like-form" data-comment-like>
-                <button class="comment-action-button {% if has_liked(current_user, comment) %}active{% endif %}" type="submit">
+                <button class="comment-action-button comment-like-toggle {% if has_liked(current_user, comment) %}active{% endif %}" type="submit">
                     Like{% if comment.like_count %} {{ comment.like_count }}{% endif %}
                 </button>
             </form>
-            <button class="comment-action-button" type="button" data-reply-target-id="{{ comment.id }}" data-reply-target-name="{{ comment.author.username }}">Reply</button>
+            <button class="comment-action-button comment-reply-toggle" type="button" data-reply-target-id="{{ comment.id }}" data-reply-target-name="{{ comment.author.username }}">Reply</button>
             {% endif %}
         </div>
         {% if comment.child_replies %}
         <details class="comment-replies">
-            <summary>View replies ({{ comment.child_replies|length }})</summary>
+            <summary data-replies-toggle>
+                <span class="comment-replies-toggle-label" data-closed-label="View replies ({{ comment.child_replies|length }})" data-open-label="Hide replies">View replies ({{ comment.child_replies|length }})</span>
+            </summary>
             <div class="comment-replies-list">
                 {% for reply in comment.child_replies %}
                     {% set comment = reply %}
