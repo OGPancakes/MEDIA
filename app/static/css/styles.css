@@ -1055,7 +1055,7 @@ body.dark-mode .connection-row {
 .right-rail .emoji-avatar-glyph,
 .suggested-user-row .emoji-avatar-glyph,
 .search-row .emoji-avatar-glyph {
-    transform: translateY(0.1em) scale(1.08);
+    transform: translateY(0.16em) scale(1.08);
 }
 
 .nav-links,
