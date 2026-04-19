@@ -134,12 +134,20 @@
 
         function scrollAppToTop(behavior = "auto") {
             const scrollRoot = currentScrollContainer();
-            if (!scrollRoot) return;
-            if (typeof scrollRoot.scrollTo === "function") {
-                scrollRoot.scrollTo({top: 0, behavior});
-            } else {
-                scrollRoot.scrollTop = 0;
+            if (scrollRoot) {
+                if (typeof scrollRoot.scrollTo === "function") {
+                    scrollRoot.scrollTo({top: 0, behavior});
+                } else {
+                    scrollRoot.scrollTop = 0;
+                }
             }
+            window.scrollTo({top: 0, left: 0, behavior});
+        }
+
+        function resetScrollPosition(behavior = "auto") {
+            scrollAppToTop(behavior);
+            window.requestAnimationFrame(() => scrollAppToTop("auto"));
+            window.setTimeout(() => scrollAppToTop("auto"), 70);
         }
 
         function showTransientFlash(message, category = "error") {
@@ -365,6 +373,8 @@
             const incomingMain = currentMainElement(nextDocument);
             const existingMain = currentMainElement(document);
             if (incomingMain && existingMain) {
+                existingMain.scrollTop = 0;
+                incomingMain.scrollTop = 0;
                 incomingMain.classList.add("screen-swap-enter");
                 existingMain.replaceWith(incomingMain);
                 requestAnimationFrame(() => incomingMain.classList.remove("screen-swap-enter"));
@@ -379,6 +389,8 @@
             const incomingMain = currentMainElement(nextDocument);
             const existingMain = currentMainElement(document);
             if (incomingMain && existingMain) {
+                existingMain.scrollTop = 0;
+                incomingMain.scrollTop = 0;
                 incomingMain.classList.add("screen-swap-enter");
                 existingMain.replaceWith(incomingMain);
                 requestAnimationFrame(() => incomingMain.classList.remove("screen-swap-enter"));
@@ -409,7 +421,7 @@
                 } else {
                     window.history.pushState({}, "", url);
                 }
-                scrollAppToTop();
+                resetScrollPosition();
             } catch (error) {
                 window.location.assign(url);
             } finally {
@@ -432,7 +444,7 @@
                 replaceMainFromDocument(nextDocument);
                 const destinationUrl = response.url || window.location.href;
                 window.history.replaceState({}, "", destinationUrl);
-                scrollAppToTop();
+                resetScrollPosition();
             } catch (error) {
                 form.submit();
             }
