@@ -847,12 +847,16 @@ def create_app():
         user = current_user()
         target_name = request.args.get("user", "").strip().lower()
         target = User.query.filter_by(username=target_name).first() if target_name else None
+        blocked_conversation = target and (is_blocked(user, target) or is_blocked(target, user))
         if request.method == "POST":
             target = User.query.filter_by(username=request.form.get("receiver", "").strip().lower()).first()
             body = request.form.get("body", "").strip()
             if not target or not body:
                 flash("Choose a valid user and write a message.", "error")
                 return redirect(url_for("messages", **({"user": target_name} if target_name else {})))
+            if is_blocked(user, target) or is_blocked(target, user):
+                flash("You cannot message a blocked user.", "error")
+                return redirect(url_for("messages"))
             if not target.allow_messages:
                 flash("That user has messages turned off.", "error")
                 return redirect(url_for("messages"))
@@ -865,7 +869,10 @@ def create_app():
             db.session.commit()
             return redirect(url_for("messages", user=target.username))
         convo = []
-        if target:
+        if blocked_conversation:
+            flash("You cannot message a blocked user.", "error")
+            target = None
+        elif target:
             convo = (
                 DirectMessage.query.filter(
                     or_(
@@ -892,7 +899,14 @@ def create_app():
                 inbox_ids.append(other_id)
         if target and target.id not in inbox_ids:
             inbox_ids.insert(0, target.id)
-        inbox_users = [db.session.get(User, user_id) for user_id in inbox_ids if db.session.get(User, user_id)]
+        inbox_users = []
+        for user_id in inbox_ids:
+            other_user = db.session.get(User, user_id)
+            if not other_user:
+                continue
+            if is_blocked(user, other_user) or is_blocked(other_user, user):
+                continue
+            inbox_users.append(other_user)
         return render_template("messages.html", target=target, convo=convo, inbox_users=inbox_users, title="Messages")
 
     @app.route("/api/feed")

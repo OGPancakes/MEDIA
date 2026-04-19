@@ -1968,6 +1968,7 @@ body.dark-mode .profile-report-popover {
     padding: 0.55rem 0.1rem;
     border-radius: 16px;
     transition: background 140ms ease, transform 140ms ease;
+    align-items: flex-start;
 }
 
 .dm-user-row:hover {
@@ -1977,6 +1978,31 @@ body.dark-mode .profile-report-popover {
 
 .dm-user-row.active {
     background: rgba(11, 61, 145, 0.08);
+}
+
+.dm-user-row .user-copy {
+    gap: 0.08rem;
+}
+
+.dm-user-row .name-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.2rem;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: initial;
+    line-height: 1.18;
+}
+
+.dm-user-row strong.name-line {
+    overflow: visible;
+    text-overflow: initial;
+    white-space: normal;
+}
+
+.dm-user-row .name-line .verified-badge {
+    margin-top: 0.14rem;
+    flex: 0 0 auto;
 }
 
 .dm-panel {
