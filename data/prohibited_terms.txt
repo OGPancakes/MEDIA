@@ -1,0 +1,23 @@
+# Community moderation terms
+# One term per line. Lines beginning with # are ignored.
+
+nigger
+nigga
+faggot
+kike
+spic
+chink
+retard
+whore
+slut
+fuck
+fucking
+shit
+bitch
+bitches
+damn
+dam
+hell
+asshole
+bastard
+bullshit
