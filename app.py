@@ -1087,6 +1087,7 @@ def create_app():
     @app.route("/admin", methods=["GET", "POST"])
     @admin_required
     def admin():
+        admin_user = current_user()
         tab = request.args.get("tab", "overview").strip().lower()
         if tab not in {"overview", "users"}:
             tab = "overview"
@@ -1184,6 +1185,24 @@ def create_app():
                 user.set_password(password)
                 db.session.add(user)
                 flash("Account created.", "success")
+            elif action == "promote_admin_by_email":
+                email = request.form.get("email", "").strip().lower()
+                if not email:
+                    flash("Enter an email address to promote an account to admin.", "error")
+                    return redirect(url_for("admin", tab="users"))
+                user = User.query.filter_by(email=email).first()
+                if not user:
+                    flash("No account was found with that email.", "error")
+                    return redirect(url_for("admin", tab="users"))
+                user.is_admin = True
+                flash(f"@{user.username} is now an admin.", "success")
+            elif action == "demote_admin":
+                user = User.query.get_or_404(target_id)
+                if user.id == admin_user.id:
+                    flash("You cannot remove your own admin access here.", "error")
+                    return redirect(url_for("admin", tab="users"))
+                user.is_admin = False
+                flash(f"@{user.username} is no longer an admin.", "success")
             db.session.commit()
             return redirect(url_for("admin", tab=tab))
         stats = {
@@ -1210,9 +1229,11 @@ def create_app():
             )
         users_pagination = users_query.order_by(User.created_at.desc()).paginate(page=page, per_page=40, error_out=False)
         users = users_pagination.items
+        admin_accounts = User.query.filter_by(is_admin=True).order_by(User.display_name.asc(), User.username.asc()).all()
         polls = Poll.query.order_by(Poll.created_at.desc()).limit(10).all()
         return render_template(
             "admin.html",
+            admin_accounts=admin_accounts,
             stats=stats,
             reports=reports,
             users=users,

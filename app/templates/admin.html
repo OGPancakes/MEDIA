@@ -102,6 +102,48 @@
 
 <section class="card">
     <div class="feed-header">
+        <h2>Admin tools</h2>
+        <p class="muted">Promote trusted accounts by email and manage current admins.</p>
+    </div>
+    <form method="post" class="stack-form admin-create-user-form">
+        <input type="hidden" name="tab" value="users">
+        <input type="hidden" name="action" value="promote_admin_by_email">
+        <div class="form-row">
+            <input type="email" name="email" placeholder="Existing account email" required>
+            <button type="submit">Make admin</button>
+        </div>
+    </form>
+
+    <div class="stack-list">
+        {% for admin_account in admin_accounts %}
+        <div class="admin-row">
+            <div>
+                <strong>{{ admin_account.display_name }}</strong>
+                <p>@{{ admin_account.username }}</p>
+                <p>{{ admin_account.email }}</p>
+                <p>Admin{% if admin_account.is_verified %} · Verified{% endif %}{% if admin_account.is_creator %} · Creator{% endif %}</p>
+            </div>
+            <div class="actions">
+                {% if admin_account.id != current_user.id %}
+                <form method="post">
+                    <input type="hidden" name="tab" value="users">
+                    <input type="hidden" name="action" value="demote_admin">
+                    <input type="hidden" name="target_id" value="{{ admin_account.id }}">
+                    <button type="submit" class="button ghost">Remove admin</button>
+                </form>
+                {% else %}
+                <span class="muted">Current admin</span>
+                {% endif %}
+            </div>
+        </div>
+        {% else %}
+        <p class="muted">No admin accounts found.</p>
+        {% endfor %}
+    </div>
+</section>
+
+<section class="card">
+    <div class="feed-header">
         <h2>All users</h2>
         <p class="muted">{{ users_pagination.total }} accounts</p>
     </div>
