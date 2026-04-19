@@ -205,6 +205,100 @@ input[type="file"]::file-selector-button {
     cursor: pointer;
 }
 
+input[type="checkbox"],
+input[type="radio"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 1.18rem;
+    height: 1.18rem;
+    min-width: 1.18rem;
+    flex: 0 0 1.18rem;
+    margin: 0;
+    padding: 0;
+    border: 1.5px solid rgba(11, 61, 145, 0.2);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(235, 241, 255, 0.92));
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.88), 0 2px 6px rgba(11, 61, 145, 0.08);
+    display: inline-grid;
+    place-content: center;
+    vertical-align: middle;
+    cursor: pointer;
+    transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+input[type="checkbox"] {
+    border-radius: 0.42rem;
+}
+
+input[type="radio"] {
+    border-radius: 50%;
+}
+
+input[type="checkbox"]:hover,
+input[type="radio"]:hover {
+    border-color: rgba(11, 61, 145, 0.34);
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.88), 0 4px 10px rgba(11, 61, 145, 0.12);
+}
+
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+    outline: none;
+    border-color: rgba(11, 61, 145, 0.42);
+    box-shadow: 0 0 0 4px rgba(11, 61, 145, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.82);
+}
+
+input[type="checkbox"]:checked {
+    border-color: rgba(11, 61, 145, 0.82);
+    background:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.2 8.3 6.45 11.4 12.8 4.95' fill='none' stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/0.82rem 0.82rem no-repeat,
+        linear-gradient(135deg, #0b3d91, #2d66d4);
+    box-shadow: 0 6px 14px rgba(11, 61, 145, 0.2);
+}
+
+input[type="radio"]:checked {
+    border-color: rgba(11, 61, 145, 0.82);
+    background:
+        radial-gradient(circle at center, #0b3d91 0 36%, transparent 37%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(235, 241, 255, 0.92));
+    box-shadow: 0 6px 14px rgba(11, 61, 145, 0.16);
+}
+
+label:has(> input[type="checkbox"]),
+label:has(> input[type="radio"]) {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.68rem;
+    line-height: 1.35;
+    cursor: pointer;
+}
+
+label > input[type="checkbox"],
+label > input[type="radio"] {
+    margin-top: 0.12rem;
+}
+
+body.dark-mode input[type="checkbox"],
+body.dark-mode input[type="radio"] {
+    border-color: rgba(127, 164, 255, 0.24);
+    background: linear-gradient(180deg, rgba(25, 37, 68, 0.98), rgba(18, 29, 55, 0.92));
+    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.04), 0 2px 8px rgba(5, 10, 24, 0.28);
+}
+
+body.dark-mode input[type="checkbox"]:hover,
+body.dark-mode input[type="radio"]:hover {
+    border-color: rgba(127, 164, 255, 0.42);
+}
+
+body.dark-mode input[type="radio"]:checked {
+    background:
+        radial-gradient(circle at center, #7fa4ff 0 36%, transparent 37%),
+        linear-gradient(180deg, rgba(25, 37, 68, 0.98), rgba(18, 29, 55, 0.92));
+}
+
+body.dark-mode label:has(> input[type="checkbox"]),
+body.dark-mode label:has(> input[type="radio"]) {
+    color: #eef4ff;
+}
+
 textarea {
     resize: vertical;
 }
