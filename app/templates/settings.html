@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from "_avatar.html" import render_avatar with context %}
+{% from "_verified.html" import render_verified with context %}
 {% block content %}
 <section class="card">
     <h2>Settings and privacy</h2>
@@ -34,6 +36,30 @@
         <input type="text" name="endpoint" placeholder="Paste a push subscription endpoint">
         <button type="submit">Save endpoint</button>
     </form>
+</section>
+
+<section class="card">
+    <h3>Blocked users</h3>
+    {% if blocked_users %}
+    <div class="stack-list">
+        {% for blocked_user in blocked_users %}
+        <div class="settings-user-row">
+            <a class="user-row" href="{{ url_for('profile', username=blocked_user.username) }}">
+                {{ render_avatar(blocked_user, "user-avatar") }}
+                <div class="settings-user-copy">
+                    <strong class="name-line">{{ blocked_user.display_name }}{{ render_verified(blocked_user) }}</strong>
+                    <span>@{{ blocked_user.username }}</span>
+                </div>
+            </a>
+            <form method="post" action="{{ url_for('block_user', username=blocked_user.username) }}">
+                <button type="submit" class="button ghost">Unblock</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">You have not blocked anyone.</p>
+    {% endif %}
 </section>
 
 <section class="card danger-zone-card">

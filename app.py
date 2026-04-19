@@ -972,6 +972,12 @@ def create_app():
             db.session.commit()
             flash("Settings updated.", "success")
             return redirect(url_for("settings"))
+        blocked_users = (
+            User.query.join(Block, Block.blocked_id == User.id)
+            .filter(Block.blocker_id == user.id)
+            .order_by(User.display_name.asc(), User.username.asc())
+            .all()
+        )
         audit_username = request.args.get("audit_user", "").strip().lstrip("@").lower()
         audit_target = None
         audit_threads = []
@@ -984,6 +990,7 @@ def create_app():
         return render_template(
             "settings.html",
             title="Settings",
+            blocked_users=blocked_users,
             audit_target=audit_target,
             audit_threads=audit_threads,
             audit_username=audit_username,
