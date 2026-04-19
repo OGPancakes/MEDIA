@@ -1044,7 +1044,18 @@ body.dark-mode .connection-row {
     line-height: 1;
     font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
     font-size: inherit;
-    transform: translateY(0.06em);
+    transform: translateY(0.02em);
+    transform-origin: center;
+}
+
+.story-ring .emoji-avatar-glyph,
+.profile-pill .emoji-avatar-glyph,
+.post-head .emoji-avatar-glyph,
+.messages-layout > .card:first-child .emoji-avatar-glyph,
+.right-rail .emoji-avatar-glyph,
+.suggested-user-row .emoji-avatar-glyph,
+.search-row .emoji-avatar-glyph {
+    transform: translateY(0.1em) scale(1.08);
 }
 
 .nav-links,
