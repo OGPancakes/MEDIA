@@ -103,7 +103,7 @@
 <section class="card">
     <div class="feed-header">
         <h2>Admin tools</h2>
-        <p class="muted">Promote trusted accounts by email and manage current admins.</p>
+        <p class="muted">Promote trusted accounts by email, manage current admins, and re-trigger the Terms of Use when needed.</p>
     </div>
     <form method="post" class="stack-form admin-create-user-form">
         <input type="hidden" name="tab" value="users">
@@ -111,6 +111,15 @@
         <div class="form-row">
             <input type="email" name="email" placeholder="Existing account email" required>
             <button type="submit">Make admin</button>
+        </div>
+    </form>
+
+    <form method="post" class="stack-form admin-create-user-form">
+        <input type="hidden" name="tab" value="users">
+        <input type="hidden" name="action" value="reset_terms_for_all_users">
+        <div class="admin-eula-reset">
+            <p class="muted">Force every account to re-agree to the Terms of Use. This is useful after updating your EULA or moderation rules.</p>
+            <button type="submit" class="button ghost">Re-trigger EULA for everyone</button>
         </div>
     </form>
 

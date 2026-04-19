@@ -1203,6 +1203,9 @@ def create_app():
                     return redirect(url_for("admin", tab="users"))
                 user.is_admin = False
                 flash(f"@{user.username} is no longer an admin.", "success")
+            elif action == "reset_terms_for_all_users":
+                User.query.update({"accepted_terms_at": None}, synchronize_session=False)
+                flash("Everyone will need to agree to the Terms of Use again.", "success")
             db.session.commit()
             return redirect(url_for("admin", tab=tab))
         stats = {

@@ -1999,6 +1999,17 @@ body.native-compose-enabled .home-flow .composer {
     margin-top: 0.55rem;
 }
 
+.admin-eula-reset {
+    display: grid;
+    gap: 0.65rem;
+    align-items: start;
+}
+
+.admin-eula-reset p {
+    margin: 0;
+    max-width: 44rem;
+}
+
 .mention-chip {
     display: inline-flex;
     align-items: center;
