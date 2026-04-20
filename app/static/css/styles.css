@@ -1773,6 +1773,16 @@ body.native-compose-enabled .home-flow .composer {
     padding: 0.9rem;
 }
 
+.quote-media-frame {
+    width: 100%;
+    max-height: 280px;
+    margin-top: 0.7rem;
+    object-fit: cover;
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    display: block;
+}
+
 .media-frame {
     width: 100%;
     max-height: 520px;
