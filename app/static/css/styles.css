@@ -1020,6 +1020,32 @@ body.dark-mode .connection-row {
     flex: 0 0 auto;
 }
 
+img.user-avatar,
+img.profile-avatar {
+    display: block;
+    background: rgba(11, 61, 145, 0.08);
+}
+
+img.user-avatar.avatar-loading,
+img.profile-avatar.avatar-loading {
+    background:
+        linear-gradient(110deg,
+            rgba(11, 61, 145, 0.08) 8%,
+            rgba(255, 255, 255, 0.82) 18%,
+            rgba(11, 61, 145, 0.08) 33%);
+    background-size: 220% 100%;
+    animation: avatarShimmer 1.15s linear infinite;
+}
+
+@keyframes avatarShimmer {
+    from {
+        background-position: 200% 0;
+    }
+    to {
+        background-position: -20% 0;
+    }
+}
+
 .emoji-avatar {
     display: inline-flex;
     align-items: center;

@@ -114,11 +114,92 @@
         let touchLockStart = null;
         let activeComposer = null;
         let activeMentionSession = null;
+        const avatarImageCache = new Set();
+        const pageHtmlCache = new Map();
+        const navCachePaths = new Set([
+            "{{ url_for('index') }}",
+            "{{ url_for('messages') }}",
+            "{{ url_for('search') }}",
+            {% if current_user %}"{{ url_for('profile', username=current_user.username) }}"{% else %}"/__no_profile__"{% endif %}
+        ]);
 
         function syncTopbarHeight() {
             const topbar = document.querySelector(".app-topbar");
             const topbarHeight = topbar ? `${topbar.offsetHeight}px` : "0px";
             document.documentElement.style.setProperty("--app-topbar-height", topbarHeight);
+        }
+
+        function normalizeAppUrl(url) {
+            try {
+                const resolved = new URL(url, window.location.href);
+                return `${resolved.pathname}${resolved.search}`;
+            } catch (error) {
+                return url;
+            }
+        }
+
+        function rememberAvatarImage(img) {
+            const src = img?.currentSrc || img?.src;
+            if (src) {
+                avatarImageCache.add(src);
+            }
+            img?.classList?.remove("avatar-loading");
+        }
+
+        function hydrateAvatarImages(root = document) {
+            root.querySelectorAll("img.user-avatar, img.profile-avatar").forEach((img) => {
+                img.loading = "eager";
+                img.decoding = "async";
+                const src = img.currentSrc || img.src;
+                if (src && avatarImageCache.has(src)) {
+                    img.classList.remove("avatar-loading");
+                    return;
+                }
+                if (!img.complete) {
+                    img.classList.add("avatar-loading");
+                    img.addEventListener("load", () => rememberAvatarImage(img), {once: true});
+                    img.addEventListener("error", () => img.classList.remove("avatar-loading"), {once: true});
+                } else {
+                    rememberAvatarImage(img);
+                }
+            });
+        }
+
+        async function preloadAvatarImages(root) {
+            const pending = Array.from(
+                new Set(
+                    Array.from(root.querySelectorAll("img.user-avatar, img.profile-avatar"))
+                        .map((img) => img.currentSrc || img.getAttribute("src") || "")
+                        .filter((src) => src && !avatarImageCache.has(src))
+                )
+            );
+            if (!pending.length) return;
+            await Promise.allSettled(
+                pending.map((src) => new Promise((resolve) => {
+                    const probe = new Image();
+                    probe.decoding = "async";
+                    probe.onload = () => {
+                        avatarImageCache.add(src);
+                        resolve();
+                    };
+                    probe.onerror = () => resolve();
+                    probe.src = src;
+                    if (probe.complete) {
+                        avatarImageCache.add(src);
+                        resolve();
+                    }
+                }))
+            );
+        }
+
+        function seedAvatarCache(root = document) {
+            root.querySelectorAll("img.user-avatar, img.profile-avatar").forEach((img) => {
+                if (img.complete) {
+                    rememberAvatarImage(img);
+                } else {
+                    img.addEventListener("load", () => rememberAvatarImage(img), {once: true});
+                }
+            });
         }
 
         function refreshTopbarLayout() {
@@ -346,6 +427,8 @@
             startFeedRefresh();
             autoSizeTextareas();
             closeMentionDropdown();
+            hydrateAvatarImages();
+            seedAvatarCache();
         }
 
         function replaceShellFromDocument(nextDocument) {
@@ -400,9 +483,29 @@
             bootPageFeatures();
         }
 
+        async function parseAndPrepareDocument(html) {
+            const parser = new DOMParser();
+            const nextDocument = parser.parseFromString(html, "text/html");
+            hydrateAvatarImages(nextDocument);
+            await preloadAvatarImages(nextDocument);
+            return nextDocument;
+        }
+
         async function navigateInApp(url, options = {}) {
+            const normalizedUrl = normalizeAppUrl(url);
+            const canUseNavCache = navCachePaths.has(normalizedUrl);
             try {
                 document.body.classList.add("page-is-transitioning");
+                if (canUseNavCache && pageHtmlCache.has(normalizedUrl)) {
+                    const cachedDocument = await parseAndPrepareDocument(pageHtmlCache.get(normalizedUrl));
+                    replaceShellFromDocument(cachedDocument);
+                    if (options.replace) {
+                        window.history.replaceState({}, "", url);
+                    } else {
+                        window.history.pushState({}, "", url);
+                    }
+                    resetScrollPosition();
+                }
                 const response = await fetch(url, {
                     headers: {
                         "X-Requested-With": "fetch"
@@ -413,13 +516,16 @@
                     return;
                 }
                 const html = await response.text();
-                const parser = new DOMParser();
-                const nextDocument = parser.parseFromString(html, "text/html");
+                const finalNormalizedUrl = normalizeAppUrl(response.url || url);
+                if (navCachePaths.has(finalNormalizedUrl)) {
+                    pageHtmlCache.set(finalNormalizedUrl, html);
+                }
+                const nextDocument = await parseAndPrepareDocument(html);
                 replaceShellFromDocument(nextDocument);
                 if (options.replace) {
-                    window.history.replaceState({}, "", url);
+                    window.history.replaceState({}, "", response.url || url);
                 } else {
-                    window.history.pushState({}, "", url);
+                    window.history.pushState({}, "", response.url || url);
                 }
                 resetScrollPosition();
             } catch (error) {
@@ -439,10 +545,10 @@
                     }
                 });
                 const html = await response.text();
-                const parser = new DOMParser();
-                const nextDocument = parser.parseFromString(html, "text/html");
+                const nextDocument = await parseAndPrepareDocument(html);
                 replaceMainFromDocument(nextDocument);
                 const destinationUrl = response.url || window.location.href;
+                pageHtmlCache.set(normalizeAppUrl(destinationUrl), html);
                 window.history.replaceState({}, "", destinationUrl);
                 resetScrollPosition();
             } catch (error) {
@@ -537,10 +643,11 @@
                 }
 
                 const html = await response.text();
-                const parser = new DOMParser();
-                const nextDocument = parser.parseFromString(html, "text/html");
+                const nextDocument = await parseAndPrepareDocument(html);
                 replaceShellFromDocument(nextDocument);
-                window.history.replaceState({}, "", response.url || window.location.href);
+                const destinationUrl = response.url || window.location.href;
+                pageHtmlCache.set(normalizeAppUrl(destinationUrl), html);
+                window.history.replaceState({}, "", destinationUrl);
                 showTransientFlash("Post published.", "success");
             } catch (error) {
                 showTransientFlash("Couldn't publish post. Check your connection and try again.");
@@ -813,6 +920,7 @@
         window.addEventListener("pageshow", () => {
             document.body.classList.remove("page-is-transitioning");
             refreshTopbarLayout();
+            seedAvatarCache();
         });
 
         window.addEventListener("popstate", () => {
@@ -826,6 +934,7 @@
                 refreshTopbarLayout();
             }
         });
+        pageHtmlCache.set(normalizeAppUrl(window.location.href), document.documentElement.outerHTML);
         refreshTopbarLayout();
         bootPageFeatures();
     </script>
