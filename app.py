@@ -2,8 +2,12 @@ import os
 import re
 import secrets
 import hashlib
+import base64
+import json
 import socket
+import subprocess
 import struct
+import tempfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
@@ -12,8 +16,9 @@ from uuid import uuid4
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from flask_sqlalchemy import SQLAlchemy
 from markupsafe import Markup, escape
-from sqlalchemy import and_, or_, text
+from sqlalchemy import and_, event, or_, text
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
@@ -32,6 +37,7 @@ PROHIBITED_TERMS_PATH = BASE_DIR / "data" / "prohibited_terms.txt"
 IMPORTED_USER_PASSWORD = os.environ.get("IMPORTED_USER_PASSWORD", "WelcomePIA2026!")
 HASHTAG_RE = re.compile(r"#(\w+)")
 MENTION_RE = re.compile(r"@(\w+)")
+PUSH_QUEUE_KEY = "pending_push_notifications"
 
 db = SQLAlchemy()
 
@@ -62,6 +68,210 @@ def load_prohibited_terms():
 
 
 PROHIBITED_TERMS = load_prohibited_terms()
+
+
+def base64url_encode(value):
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def decode_der_length(raw_bytes, index):
+    first = raw_bytes[index]
+    index += 1
+    if first < 0x80:
+        return first, index
+    octet_count = first & 0x7F
+    length = int.from_bytes(raw_bytes[index:index + octet_count], "big")
+    return length, index + octet_count
+
+
+def der_ecdsa_signature_to_raw(signature_der, component_length=32):
+    if not signature_der or signature_der[0] != 0x30:
+        raise ValueError("Invalid DER signature sequence.")
+    _, index = decode_der_length(signature_der, 1)
+    if signature_der[index] != 0x02:
+        raise ValueError("Invalid DER signature integer for r.")
+    r_length, index = decode_der_length(signature_der, index + 1)
+    r_value = signature_der[index:index + r_length]
+    index += r_length
+    if signature_der[index] != 0x02:
+        raise ValueError("Invalid DER signature integer for s.")
+    s_length, index = decode_der_length(signature_der, index + 1)
+    s_value = signature_der[index:index + s_length]
+
+    def normalize_component(component):
+        component = component.lstrip(b"\x00")
+        if len(component) > component_length:
+            raise ValueError("ECDSA signature component is too long.")
+        return component.rjust(component_length, b"\x00")
+
+    return normalize_component(r_value) + normalize_component(s_value)
+
+
+def generate_apns_auth_token():
+    key_id = os.environ.get("APNS_KEY_ID", "").strip()
+    team_id = os.environ.get("APNS_TEAM_ID", "").strip()
+    auth_key_path = os.environ.get("APNS_AUTH_KEY_PATH", "").strip()
+    auth_key_pem = os.environ.get("APNS_AUTH_KEY", "").strip()
+    if not key_id or not team_id or (not auth_key_path and not auth_key_pem):
+        return None
+
+    header = {"alg": "ES256", "kid": key_id}
+    payload = {"iss": team_id, "iat": int(datetime.now(timezone.utc).timestamp())}
+    signing_input = f"{base64url_encode(json.dumps(header, separators=(',', ':')).encode('utf-8'))}.{base64url_encode(json.dumps(payload, separators=(',', ':')).encode('utf-8'))}"
+
+    temp_key_path = None
+    try:
+        if auth_key_path:
+            key_path = auth_key_path
+        else:
+            with tempfile.NamedTemporaryFile("w", suffix=".p8", delete=False, encoding="utf-8") as temp_key_file:
+                temp_key_file.write(auth_key_pem)
+                temp_key_path = temp_key_file.name
+            key_path = temp_key_path
+
+        with tempfile.NamedTemporaryFile("wb", delete=False) as input_file:
+            input_file.write(signing_input.encode("utf-8"))
+            input_path = input_file.name
+        with tempfile.NamedTemporaryFile("wb", delete=False) as signature_file:
+            signature_path = signature_file.name
+
+        try:
+            subprocess.run(
+                ["openssl", "dgst", "-sha256", "-sign", key_path, "-out", signature_path, input_path],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            signature_der = Path(signature_path).read_bytes()
+            signature_raw = der_ecdsa_signature_to_raw(signature_der)
+            return f"{signing_input}.{base64url_encode(signature_raw)}"
+        finally:
+            Path(input_path).unlink(missing_ok=True)
+            Path(signature_path).unlink(missing_ok=True)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    finally:
+        if temp_key_path:
+            Path(temp_key_path).unlink(missing_ok=True)
+
+
+def build_push_message(note_type, message):
+    title_map = {
+        "like": "New like",
+        "comment": "New comment",
+        "repost": "New repost",
+        "follow": "New follower",
+        "message": "New message",
+    }
+    return title_map.get(note_type, "New notification"), (message or "You have a new notification").strip()
+
+
+def should_remove_push_subscription(status_code, response_body):
+    if status_code in {400, 403, 410}:
+        reason = ""
+        try:
+            reason = (json.loads(response_body or "{}").get("reason") or "").strip()
+        except json.JSONDecodeError:
+            reason = ""
+        return reason in {"BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered", "TopicDisallowed"} or status_code == 410
+    return False
+
+
+def send_apns_push(subscription, title, body, link=None, note_type="notification"):
+    topic = os.environ.get("APNS_BUNDLE_ID", "").strip() or os.environ.get("IOS_BUNDLE_ID", "").strip()
+    token = (subscription.endpoint or "").removeprefix("apns:").strip()
+    auth_token = generate_apns_auth_token()
+    if not topic or not token or not auth_token:
+        return False
+
+    payload = {
+        "aps": {
+            "alert": {"title": title[:120], "body": body[:240]},
+            "sound": "default",
+            "badge": unread_notifications_count(User.query.get(subscription.user_id)),
+        },
+        "link": link or "/notifications",
+        "type": note_type,
+    }
+    host = "https://api.sandbox.push.apple.com" if os.environ.get("APNS_USE_SANDBOX", "").strip().lower() in {"1", "true", "yes"} else "https://api.push.apple.com"
+    target_url = f"{host}/3/device/{token}"
+
+    try:
+        result = subprocess.run(
+            [
+                "curl",
+                "--silent",
+                "--show-error",
+                "--http2",
+                "--write-out",
+                "\n%{http_code}",
+                "-X",
+                "POST",
+                target_url,
+                "-H",
+                f"authorization: bearer {auth_token}",
+                "-H",
+                f"apns-topic: {topic}",
+                "-H",
+                "apns-push-type: alert",
+                "-H",
+                "apns-priority: 10",
+                "-H",
+                "content-type: application/json",
+                "-d",
+                json.dumps(payload, separators=(",", ":")),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return False
+
+    response_text = (result.stdout or "").strip()
+    response_lines = response_text.rsplit("\n", 1)
+    response_body = response_lines[0] if len(response_lines) == 2 else ""
+    try:
+        status_code = int(response_lines[-1]) if response_lines else 0
+    except ValueError:
+        status_code = 0
+
+    if status_code == 200:
+        return True
+    if should_remove_push_subscription(status_code, response_body):
+        db.session.delete(subscription)
+        db.session.commit()
+    return False
+
+
+def deliver_push_notification(payload):
+    user_id = payload.get("user_id")
+    recipient = User.query.get(user_id)
+    if not recipient or not recipient.push_enabled:
+        return
+    title, body = build_push_message(payload.get("note_type"), payload.get("message"))
+    subscriptions = PushSubscription.query.filter_by(user_id=user_id).order_by(PushSubscription.created_at.desc()).all()
+    for subscription in subscriptions:
+        if not (subscription.endpoint or "").startswith("apns:"):
+            continue
+        send_apns_push(subscription, title, body, payload.get("link"), payload.get("note_type", "notification"))
+
+
+@event.listens_for(Session, "after_commit")
+def dispatch_pending_push_notifications(session):
+    pending_notifications = session.info.pop(PUSH_QUEUE_KEY, [])
+    if not pending_notifications:
+        return
+    for payload in pending_notifications:
+        try:
+            deliver_push_notification(payload)
+        except Exception:
+            continue
+
+
+@event.listens_for(Session, "after_rollback")
+def clear_pending_push_notifications(session):
+    session.info.pop(PUSH_QUEUE_KEY, None)
 
 
 def ensure_persistent_storage_config():
@@ -1253,10 +1463,16 @@ def create_app():
         payload = request.get_json(silent=True) or {}
         endpoint = (payload.get("endpoint") or request.form.get("endpoint") or "").strip()
         if endpoint:
-            existing = PushSubscription.query.filter_by(user_id=current_user().id, endpoint=endpoint).first()
-            if not existing:
+            existing = PushSubscription.query.filter_by(endpoint=endpoint).order_by(PushSubscription.created_at.desc()).all()
+            current_subscription = None
+            for subscription in existing:
+                if subscription.user_id == current_user().id and current_subscription is None:
+                    current_subscription = subscription
+                    continue
+                db.session.delete(subscription)
+            if not current_subscription:
                 db.session.add(PushSubscription(user_id=current_user().id, endpoint=endpoint))
-                db.session.commit()
+            db.session.commit()
             if wants_partial_response():
                 return jsonify({"ok": True, "saved": True})
             flash("Push endpoint saved.", "success")
@@ -1648,6 +1864,16 @@ def create_notification(user_id, actor_id, note_type, message, link):
         return
     note = Notification(user_id=user_id, actor_id=actor_id, type=note_type, message=message, link=link)
     db.session.add(note)
+    pending = db.session.info.setdefault(PUSH_QUEUE_KEY, [])
+    pending.append(
+        {
+            "user_id": user_id,
+            "actor_id": actor_id,
+            "note_type": note_type,
+            "message": message,
+            "link": link,
+        }
+    )
 
 
 def trending_topics(viewer=None):
@@ -1843,14 +2069,17 @@ def poll_option_votes(option):
 
 
 def purge_post_records(post_id):
+    child_replies = Post.query.filter_by(reply_to_id=post_id).all()
+    for child_reply in child_replies:
+        purge_post_records(child_reply.id)
+        db.session.delete(child_reply)
+
     Like.query.filter_by(post_id=post_id).delete(synchronize_session=False)
     Bookmark.query.filter_by(post_id=post_id).delete(synchronize_session=False)
     Repost.query.filter_by(post_id=post_id).delete(synchronize_session=False)
     PostView.query.filter_by(post_id=post_id).delete(synchronize_session=False)
     Report.query.filter_by(post_id=post_id).delete(synchronize_session=False)
-    Post.query.filter(
-        or_(Post.reply_to_id == post_id, Post.quote_post_id == post_id)
-    ).update({"reply_to_id": None, "quote_post_id": None}, synchronize_session=False)
+    Post.query.filter_by(quote_post_id=post_id).update({"quote_post_id": None}, synchronize_session=False)
 
 
 def purge_user_account(user):
