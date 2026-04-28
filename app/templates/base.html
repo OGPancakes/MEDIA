@@ -118,6 +118,9 @@
         const renderImageCache = new Set();
         const pageHtmlCache = new Map();
         const scrollPositionCache = new Map();
+        const routePrefetchCache = new Map();
+        let activeNavAbortController = null;
+        let activeNavTarget = null;
         const navCachePaths = new Set([
             "{{ url_for('index') }}",
             "{{ url_for('messages') }}",
@@ -138,6 +141,10 @@
             } catch (error) {
                 return url;
             }
+        }
+
+        function isCacheableRoute(normalizedUrl) {
+            return navCachePaths.has(normalizedUrl) || normalizedUrl.startsWith("/post/") || normalizedUrl.startsWith("/users/");
         }
 
         function currentScrollTop(root = document) {
@@ -590,12 +597,59 @@
             return nextDocument;
         }
 
+        async function fetchNavigationResponse(url, signal) {
+            return fetch(url, {
+                headers: {
+                    "X-Requested-With": "fetch"
+                },
+                signal
+            });
+        }
+
+        async function prefetchRoute(url) {
+            const normalizedUrl = normalizeAppUrl(url);
+            if (!isCacheableRoute(normalizedUrl) || pageHtmlCache.has(normalizedUrl)) {
+                return;
+            }
+            if (routePrefetchCache.has(normalizedUrl)) {
+                return routePrefetchCache.get(normalizedUrl);
+            }
+            const request = fetchNavigationResponse(url)
+                .then(async (response) => {
+                    if (!response.ok) return null;
+                    const html = await response.text();
+                    const finalNormalizedUrl = normalizeAppUrl(response.url || url);
+                    if (isCacheableRoute(finalNormalizedUrl)) {
+                        pageHtmlCache.set(finalNormalizedUrl, html);
+                    }
+                    return html;
+                })
+                .catch(() => null)
+                .finally(() => {
+                    routePrefetchCache.delete(normalizedUrl);
+                });
+            routePrefetchCache.set(normalizedUrl, request);
+            return request;
+        }
+
         async function navigateInApp(url, options = {}) {
             const normalizedUrl = normalizeAppUrl(url);
-            const canUseNavCache = navCachePaths.has(normalizedUrl) || normalizedUrl.startsWith("/post/") || normalizedUrl.startsWith("/users/");
+            const currentNormalizedUrl = normalizeAppUrl(window.location.href);
+            const canUseNavCache = isCacheableRoute(normalizedUrl);
+            if (!options.replace && normalizedUrl === currentNormalizedUrl) {
+                return;
+            }
+            if (document.body.classList.contains("page-is-transitioning") && activeNavTarget === normalizedUrl) {
+                return;
+            }
+            activeNavAbortController?.abort();
+            const navController = new AbortController();
+            activeNavAbortController = navController;
+            activeNavTarget = normalizedUrl;
             try {
                 saveScrollPosition(window.location.href);
                 document.body.classList.add("page-is-transitioning");
+                let renderedFromCache = false;
                 if (canUseNavCache && pageHtmlCache.has(normalizedUrl)) {
                     const cachedDocument = await parseAndPrepareDocument(pageHtmlCache.get(normalizedUrl));
                     replaceShellFromDocument(cachedDocument);
@@ -609,36 +663,43 @@
                     } else {
                         resetScrollPosition();
                     }
+                    renderedFromCache = true;
                 }
-                const response = await fetch(url, {
-                    headers: {
-                        "X-Requested-With": "fetch"
-                    }
-                });
+                const response = await fetchNavigationResponse(url, navController.signal);
                 if (!response.ok) {
-                    window.location.assign(url);
+                    if (!renderedFromCache) {
+                        window.location.assign(url);
+                    }
                     return;
                 }
                 const html = await response.text();
                 const finalNormalizedUrl = normalizeAppUrl(response.url || url);
-                if (navCachePaths.has(finalNormalizedUrl) || finalNormalizedUrl.startsWith("/post/") || finalNormalizedUrl.startsWith("/users/")) {
+                if (isCacheableRoute(finalNormalizedUrl)) {
                     pageHtmlCache.set(finalNormalizedUrl, html);
                 }
-                const nextDocument = await parseAndPrepareDocument(html);
-                replaceShellFromDocument(nextDocument);
-                if (options.replace) {
-                    window.history.replaceState({__scrollTop: options.restoreScroll ? (scrollPositionCache.get(finalNormalizedUrl) || 0) : 0}, "", response.url || url);
-                } else {
-                    window.history.pushState({__scrollTop: 0}, "", response.url || url);
-                }
-                if (options.restoreScroll) {
-                    restoreScrollPosition(response.url || url);
-                } else {
-                    resetScrollPosition();
+                if (!renderedFromCache || finalNormalizedUrl !== normalizedUrl) {
+                    const nextDocument = await parseAndPrepareDocument(html);
+                    replaceShellFromDocument(nextDocument);
+                    if (options.replace) {
+                        window.history.replaceState({__scrollTop: options.restoreScroll ? (scrollPositionCache.get(finalNormalizedUrl) || 0) : 0}, "", response.url || url);
+                    } else {
+                        window.history.pushState({__scrollTop: 0}, "", response.url || url);
+                    }
+                    if (options.restoreScroll) {
+                        restoreScrollPosition(response.url || url);
+                    } else {
+                        resetScrollPosition();
+                    }
                 }
             } catch (error) {
-                window.location.assign(url);
+                if (error?.name !== "AbortError" && !pageHtmlCache.has(normalizedUrl)) {
+                    window.location.assign(url);
+                }
             } finally {
+                if (activeNavAbortController === navController) {
+                    activeNavAbortController = null;
+                    activeNavTarget = null;
+                }
                 document.body.classList.remove("page-is-transitioning");
             }
         }
@@ -951,6 +1012,23 @@
                 closeMentionDropdown();
             }
         });
+
+        document.addEventListener("pointerdown", (event) => {
+            const postCard = event.target.closest("[data-post-link]");
+            if (postCard?.dataset.postLink) {
+                prefetchRoute(postCard.dataset.postLink);
+                return;
+            }
+            const internalLink = event.target.closest('a[href]');
+            if (!internalLink) return;
+            const href = internalLink.getAttribute("href") || "";
+            const resolvedUrl = new URL(href, window.location.href);
+            const isExternal = internalLink.target === "_blank" || internalLink.hasAttribute("download") || resolvedUrl.origin !== window.location.origin;
+            const isLogout = resolvedUrl.pathname === "{{ url_for('logout') }}";
+            if (!isExternal && !isLogout) {
+                prefetchRoute(resolvedUrl.toString());
+            }
+        }, {passive: true});
 
         document.addEventListener("keydown", (event) => {
             if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLElement) {
