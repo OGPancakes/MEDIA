@@ -25,10 +25,14 @@
             </div>
 
             {% if current_user %}
-            <form action="{{ url_for('create_post') }}" method="post" class="comments-composer inline-comments-composer post-detail-composer" data-app-shell-submit>
+            <form action="{{ url_for('create_post') }}" method="post" class="comments-composer inline-comments-composer post-detail-composer" data-comments-compose>
                 {{ render_avatar(current_user, "user-avatar") }}
                 <div class="comments-compose-main">
                     <input type="hidden" name="reply_to_id" value="{{ post.id }}">
+                    <div class="comments-replying" hidden>
+                        Replying to <strong data-replying-name></strong>
+                        <button type="button" data-clear-reply>Clear</button>
+                    </div>
                     <input type="text" name="body" placeholder="Reply to this post..." autocomplete="off" data-mentions-enabled>
                 </div>
                 <button type="submit" class="comments-post-button">Reply</button>

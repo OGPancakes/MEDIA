@@ -725,6 +725,30 @@
             }
         }
 
+        async function refreshCurrentPostDetail() {
+            const currentUrl = window.location.href;
+            const preservedTop = currentScrollTop();
+            const response = await fetch(currentUrl, {
+                headers: {
+                    "X-Requested-With": "fetch"
+                }
+            });
+            if (!response.ok) {
+                throw new Error("Could not refresh post detail");
+            }
+            const html = await response.text();
+            const nextDocument = await parseAndPrepareDocument(html);
+            replaceMainFromDocument(nextDocument);
+            const normalizedUrl = normalizeAppUrl(response.url || currentUrl);
+            pageHtmlCache.set(normalizedUrl, html);
+            scrollPositionCache.set(normalizedUrl, preservedTop);
+            const scrollRoot = currentScrollContainer();
+            if (scrollRoot) {
+                scrollRoot.scrollTop = preservedTop;
+            }
+            window.scrollTo({top: preservedTop, left: 0, behavior: "auto"});
+        }
+
         async function submitPostAction(form) {
             const response = await fetch(form.action, {
                 method: "POST",
@@ -978,6 +1002,8 @@
             const closeButton = event.target.closest("[data-close-inline-comments]");
             const postCard = event.target.closest("[data-post-link]");
             const internalLink = event.target.closest('a[href]');
+            const replyButton = event.target.closest("[data-reply-target-id]");
+            const clearReplyButton = event.target.closest("[data-clear-reply]");
             const clickedInteractive = event.target.closest("button, summary, details, form, input, textarea, select, video, audio, [data-close-inline-comments], [data-comments-url]");
             if (postCard && !internalLink && !clickedInteractive) {
                 event.preventDefault();
@@ -1001,6 +1027,33 @@
             }
             if (closeButton) {
                 closeCommentsSheet(closeButton.closest("[data-comments-host], .inline-comments-host"));
+            }
+            if (replyButton) {
+                const thread = replyButton.closest(".post-detail-thread");
+                const composeForm = thread?.querySelector("form[data-comments-compose]");
+                const replyInput = composeForm?.querySelector('input[name="reply_to_id"]');
+                const replyBanner = composeForm?.querySelector(".comments-replying");
+                const replyName = composeForm?.querySelector("[data-replying-name]");
+                const textInput = composeForm?.querySelector('input[name="body"]');
+                if (thread && composeForm && replyInput && replyBanner && replyName && textInput) {
+                    event.preventDefault();
+                    replyInput.value = replyButton.dataset.replyTargetId || replyInput.defaultValue || "";
+                    replyName.textContent = `@${replyButton.dataset.replyTargetName || ""}`;
+                    replyBanner.hidden = false;
+                    textInput.focus();
+                    return;
+                }
+            }
+            if (clearReplyButton) {
+                const composeForm = clearReplyButton.closest("form[data-comments-compose]");
+                const replyInput = composeForm?.querySelector('input[name="reply_to_id"]');
+                const replyBanner = composeForm?.querySelector(".comments-replying");
+                if (replyInput && replyBanner) {
+                    event.preventDefault();
+                    replyInput.value = replyInput.defaultValue || "";
+                    replyBanner.hidden = true;
+                    return;
+                }
             }
             const mentionChoice = event.target.closest("[data-mention-username]");
             if (mentionChoice && activeMentionSession) {
@@ -1047,11 +1100,57 @@
                 await submitPostAction(actionForm);
                 return;
             }
+            const commentLikeForm = event.target.closest("form[data-comment-like]");
+            if (commentLikeForm) {
+                const detailThread = commentLikeForm.closest(".post-detail-thread");
+                if (detailThread) {
+                    event.preventDefault();
+                    const response = await fetch(commentLikeForm.action, {
+                        method: "POST",
+                        headers: {"X-Requested-With": "fetch"}
+                    });
+                    if (response.ok) {
+                        await refreshCurrentPostDetail();
+                    }
+                    return;
+                }
+            }
+            const commentDeleteForm = event.target.closest("form[data-comment-delete]");
+            if (commentDeleteForm) {
+                const detailThread = commentDeleteForm.closest(".post-detail-thread");
+                if (detailThread) {
+                    event.preventDefault();
+                    const response = await fetch(commentDeleteForm.action, {
+                        method: "POST",
+                        headers: {"X-Requested-With": "fetch", "Accept": "application/json"}
+                    });
+                    if (response.ok) {
+                        await refreshCurrentPostDetail();
+                    }
+                    return;
+                }
+            }
             const composeForm = event.target.closest("form[data-compose-post]");
             if (composeForm) {
                 event.preventDefault();
                 await submitComposeForm(composeForm);
                 return;
+            }
+            const commentsComposeForm = event.target.closest("form[data-comments-compose]");
+            if (commentsComposeForm) {
+                const detailThread = commentsComposeForm.closest(".post-detail-thread");
+                if (detailThread) {
+                    event.preventDefault();
+                    const response = await fetch(commentsComposeForm.action, {
+                        method: commentsComposeForm.method || "POST",
+                        body: new FormData(commentsComposeForm),
+                        headers: {"X-Requested-With": "fetch"}
+                    });
+                    if (response.ok) {
+                        await refreshCurrentPostDetail();
+                    }
+                    return;
+                }
             }
             const shellForm = event.target.closest("form[data-app-shell-submit]");
             if (shellForm) {
