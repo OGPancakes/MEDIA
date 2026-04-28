@@ -1126,6 +1126,101 @@ def create_app():
             inbox_users.append(other_user)
         return render_template("messages.html", target=target, convo=convo, inbox_users=inbox_users, title="Messages")
 
+    @app.route("/api/messages/inbox")
+    @login_required
+    def api_messages_inbox():
+        user = current_user()
+        message_pairs = (
+            DirectMessage.query.filter(or_(DirectMessage.sender_id == user.id, DirectMessage.receiver_id == user.id))
+            .order_by(DirectMessage.created_at.desc())
+            .all()
+        )
+        inbox_ids = []
+        latest_by_user_id = {}
+        unread_counts = {}
+        for item in message_pairs:
+            other_id = item.receiver_id if item.sender_id == user.id else item.sender_id
+            if other_id not in latest_by_user_id:
+                latest_by_user_id[other_id] = item
+            if item.receiver_id == user.id and not item.is_read:
+                unread_counts[other_id] = unread_counts.get(other_id, 0) + 1
+            if other_id not in inbox_ids:
+                inbox_ids.append(other_id)
+
+        conversations = []
+        for other_id in inbox_ids:
+            other_user = db.session.get(User, other_id)
+            if not other_user:
+                continue
+            if is_blocked(user, other_user) or is_blocked(other_user, user):
+                continue
+            latest = latest_by_user_id.get(other_id)
+            entry = serialize_user_brief(other_user)
+            entry["latest_message"] = latest.body if latest else ""
+            entry["latest_message_relative"] = timesince(latest.created_at) if latest else ""
+            entry["latest_message_at"] = latest.created_at.isoformat() if latest and latest.created_at else ""
+            entry["unread_count"] = unread_counts.get(other_id, 0)
+            conversations.append(entry)
+
+        return jsonify({"conversations": conversations})
+
+    @app.route("/api/messages/thread")
+    @login_required
+    def api_messages_thread():
+        user = current_user()
+        target_name = request.args.get("user", "").strip().lower()
+        target = User.query.filter_by(username=target_name).first() if target_name else None
+        if not target:
+            return jsonify({"ok": False, "error": "Choose a valid user."}), 404
+        if is_blocked(user, target) or is_blocked(target, user):
+            return jsonify({"ok": False, "error": "You cannot message a blocked user."}), 403
+        convo = (
+            DirectMessage.query.filter(
+                or_(
+                    and_(DirectMessage.sender_id == user.id, DirectMessage.receiver_id == target.id),
+                    and_(DirectMessage.sender_id == target.id, DirectMessage.receiver_id == user.id),
+                )
+            )
+            .order_by(DirectMessage.created_at.asc())
+            .all()
+        )
+        did_mark_read = False
+        for msg in convo:
+            if msg.receiver_id == user.id and not msg.is_read:
+                msg.is_read = True
+                did_mark_read = True
+        if did_mark_read:
+            db.session.commit()
+        return jsonify(
+            {
+                "ok": True,
+                "target": serialize_user_brief(target),
+                "messages": [serialize_direct_message(message, user) for message in convo],
+            }
+        )
+
+    @app.route("/api/messages/send", methods=["POST"])
+    @login_required
+    def api_messages_send():
+        user = current_user()
+        payload = request.get_json(silent=True) or request.form
+        receiver_name = (payload.get("receiver") or "").strip().lower()
+        body = (payload.get("body") or "").strip()
+        target = User.query.filter_by(username=receiver_name).first() if receiver_name else None
+        if not target or not body:
+            return jsonify({"ok": False, "error": "Choose a valid user and write a message."}), 400
+        if is_blocked(user, target) or is_blocked(target, user):
+            return jsonify({"ok": False, "error": "You cannot message a blocked user."}), 403
+        if not target.allow_messages:
+            return jsonify({"ok": False, "error": "That user has messages turned off."}), 403
+        if find_prohibited_term(body):
+            return jsonify({"ok": False, "error": "That message contains language that is not allowed in this community."}), 400
+        message = DirectMessage(sender_id=user.id, receiver_id=target.id, body=body)
+        db.session.add(message)
+        create_notification(target.id, user.id, "message", f"New message from {user.username}", url_for("messages", user=user.username))
+        db.session.commit()
+        return jsonify({"ok": True, "message": serialize_direct_message(message, user)})
+
     @app.route("/api/feed")
     @login_required
     def api_feed():
@@ -1712,6 +1807,32 @@ def media_url(path):
     if path.startswith("uploads/"):
         return url_for("media_file", filename=path.split("/", 1)[1])
     return url_for("static", filename=path)
+
+
+def serialize_user_brief(user):
+    return {
+        "id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "avatar_url": media_url(user.avatar) if not should_use_emoji_avatar(user) else "",
+        "avatar_emoji": avatar_emoji_for(user),
+        "use_emoji": should_use_emoji_avatar(user),
+        "is_verified": bool(user.is_verified),
+        "is_creator": bool(user.is_creator),
+    }
+
+
+def serialize_direct_message(message, viewer):
+    return {
+        "id": message.id,
+        "body": message.body,
+        "is_mine": message.sender_id == viewer.id,
+        "is_read": bool(message.is_read),
+        "created_at": message.created_at.isoformat() if message.created_at else "",
+        "created_at_relative": timesince(message.created_at),
+        "sender": serialize_user_brief(message.sender),
+        "receiver": serialize_user_brief(message.receiver),
+    }
 
 
 def wants_partial_response():
