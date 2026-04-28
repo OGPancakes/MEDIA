@@ -776,16 +776,14 @@ def create_app():
     @app.route("/post/<int:post_id>")
     def post_detail(post_id):
         post = Post.query.get_or_404(post_id)
-        if viewer_can_see_post(current_user(), post):
+        viewer = current_user()
+        if viewer_can_see_post(viewer, post):
             reset_post_display_state([post])
-            register_post_view(post, current_user())
-            related = (
-                Post.query.filter_by(reply_to_id=post.id)
-                .order_by(Post.created_at.asc())
-                .all()
-            )
-            reset_post_display_state(related)
-            return render_template("post_detail.html", post=post, replies=related, title="Post")
+            register_post_view(post, viewer)
+            comments = build_comment_tree(post.id, viewer)
+            flat_comments = flatten_comment_tree(comments)
+            reset_post_display_state(flat_comments)
+            return render_template("post_detail.html", post=post, comments=comments, title="Post")
         flash("That post is not available to you.", "error")
         return redirect(url_for("index"))
 
@@ -820,18 +818,27 @@ def create_app():
     @login_required
     def delete_post(post_id):
         post = Post.query.get_or_404(post_id)
+        redirect_target = comment_return_target(post) if post.reply_to_id else url_for("index")
         if post.user_id != current_user().id and not current_user().is_admin:
             if wants_partial_response():
                 return jsonify({"ok": False, "message": "You cannot delete this post."}), 403
             flash("You cannot delete this post.", "error")
-            return redirect(url_for("index"))
+            return redirect(redirect_target)
         purge_post_records(post.id)
         db.session.delete(post)
         db.session.commit()
         if wants_partial_response():
-            return jsonify({"ok": True, "deleted": True, "post_id": post_id})
+            return jsonify(
+                {
+                    "ok": True,
+                    "deleted": True,
+                    "post_id": post_id,
+                    "redirect_url": redirect_target,
+                    "was_comment": bool(post.reply_to_id),
+                }
+            )
         flash("Post deleted.", "success")
-        return redirect(url_for("index"))
+        return redirect(redirect_target)
 
     @app.route("/post/<int:post_id>/like", methods=["POST"])
     @login_required
@@ -1970,7 +1977,7 @@ def get_feed_posts(user, feed_mode="home"):
             continue
         if feed_mode == "fyp" and actor.id == user.id and original.user_id not in followed_ids:
             continue
-        keep_entry(original, repost.created_at, reposted_by=actor)
+        keep_entry(original, original.created_at, reposted_by=actor)
 
     visible_posts = list(timeline_map.values())
     visible_posts.sort(key=lambda item: getattr(item, "timeline_created_at", item.created_at), reverse=True)
@@ -1993,7 +2000,7 @@ def get_profile_timeline(user):
         post = db.session.get(Post, repost.post_id)
         if not post:
             continue
-        post.timeline_created_at = repost.created_at
+        post.timeline_created_at = post.created_at
         post.reposted_by = user
         timeline.append(post)
     timeline.sort(key=lambda item: item.timeline_created_at, reverse=True)
@@ -2013,6 +2020,28 @@ def build_comment_tree(parent_id, viewer):
         comment.child_replies = build_comment_tree(comment.id, viewer)
         visible_comments.append(comment)
     return visible_comments
+
+
+def flatten_comment_tree(comments):
+    flat = []
+    for comment in comments:
+        flat.append(comment)
+        flat.extend(flatten_comment_tree(getattr(comment, "child_replies", [])))
+    return flat
+
+
+def root_post_for(post):
+    current = post
+    seen = set()
+    while current and current.reply_to_id and current.id not in seen:
+        seen.add(current.id)
+        current = current.reply_to
+    return current or post
+
+
+def comment_return_target(post):
+    root = root_post_for(post)
+    return url_for("post_detail", post_id=root.id)
 
 
 def get_admin_dm_threads(target_user):

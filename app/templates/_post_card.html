@@ -1,6 +1,6 @@
 {% from "_avatar.html" import render_avatar with context %}
 {% from "_verified.html" import render_verified with context %}
-<article class="card post-card {% if post.reposted_by %}repost-card{% endif %}" data-post-card="{{ post.id }}">
+<article class="card post-card {% if post.reposted_by %}repost-card{% endif %}" data-post-card="{{ post.id }}" data-post-link="{{ url_for('post_detail', post_id=post.id) }}" tabindex="0" role="link" aria-label="Open post by {{ post.author.display_name }}">
     {% if post.reposted_by %}
     <p class="repost-label">@{{ post.reposted_by.username }} reposted this</p>
     {% endif %}

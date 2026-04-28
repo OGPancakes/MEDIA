@@ -115,7 +115,9 @@
         let activeComposer = null;
         let activeMentionSession = null;
         const avatarImageCache = new Set();
+        const renderImageCache = new Set();
         const pageHtmlCache = new Map();
+        const scrollPositionCache = new Map();
         const navCachePaths = new Set([
             "{{ url_for('index') }}",
             "{{ url_for('messages') }}",
@@ -138,12 +140,53 @@
             }
         }
 
+        function currentScrollTop(root = document) {
+            const scrollRoot = currentScrollContainer(root);
+            if (scrollRoot && typeof scrollRoot.scrollTop === "number") {
+                return scrollRoot.scrollTop;
+            }
+            return window.scrollY || 0;
+        }
+
+        function saveScrollPosition(url = window.location.href) {
+            const normalized = normalizeAppUrl(url);
+            const top = currentScrollTop();
+            scrollPositionCache.set(normalized, top);
+            const currentState = window.history.state || {};
+            window.history.replaceState({...currentState, __scrollTop: top}, "", window.location.href);
+        }
+
+        function restoreScrollPosition(url = window.location.href) {
+            const normalized = normalizeAppUrl(url);
+            const saved = scrollPositionCache.get(normalized) ?? window.history.state?.__scrollTop ?? 0;
+            const scrollRoot = currentScrollContainer();
+            if (scrollRoot) {
+                scrollRoot.scrollTop = saved;
+            }
+            window.scrollTo({top: saved, left: 0, behavior: "auto"});
+            window.requestAnimationFrame(() => {
+                if (scrollRoot) {
+                    scrollRoot.scrollTop = saved;
+                }
+                window.scrollTo({top: saved, left: 0, behavior: "auto"});
+            });
+        }
+
         function rememberAvatarImage(img) {
             const src = img?.currentSrc || img?.src;
             if (src) {
                 avatarImageCache.add(src);
+                renderImageCache.add(src);
             }
             img?.classList?.remove("avatar-loading");
+        }
+
+        function rememberRenderableImage(img) {
+            const src = img?.currentSrc || img?.src;
+            if (src) {
+                renderImageCache.add(src);
+            }
+            img?.classList?.remove("image-loading");
         }
 
         function hydrateAvatarImages(root = document) {
@@ -161,6 +204,25 @@
                     img.addEventListener("error", () => img.classList.remove("avatar-loading"), {once: true});
                 } else {
                     rememberAvatarImage(img);
+                }
+            });
+        }
+
+        function hydrateRenderableImages(root = document) {
+            root.querySelectorAll("img.media-frame, img.comment-media, img.quote-media-frame").forEach((img) => {
+                img.loading = "eager";
+                img.decoding = "async";
+                const src = img.currentSrc || img.src;
+                if (src && renderImageCache.has(src)) {
+                    img.classList.remove("image-loading");
+                    return;
+                }
+                if (!img.complete) {
+                    img.classList.add("image-loading");
+                    img.addEventListener("load", () => rememberRenderableImage(img), {once: true});
+                    img.addEventListener("error", () => img.classList.remove("image-loading"), {once: true});
+                } else {
+                    rememberRenderableImage(img);
                 }
             });
         }
@@ -192,12 +254,47 @@
             );
         }
 
+        async function preloadRenderableImages(root) {
+            const pending = Array.from(
+                new Set(
+                    Array.from(root.querySelectorAll("img.user-avatar, img.profile-avatar, img.media-frame, img.comment-media, img.quote-media-frame"))
+                        .map((img) => img.currentSrc || img.getAttribute("src") || "")
+                        .filter((src) => src && !renderImageCache.has(src))
+                )
+            );
+            if (!pending.length) return;
+            await Promise.allSettled(
+                pending.map((src) => new Promise((resolve) => {
+                    const probe = new Image();
+                    probe.decoding = "async";
+                    probe.onload = () => {
+                        renderImageCache.add(src);
+                        resolve();
+                    };
+                    probe.onerror = () => resolve();
+                    probe.src = src;
+                    if (probe.complete) {
+                        renderImageCache.add(src);
+                        resolve();
+                    }
+                }))
+            );
+        }
+
         function seedAvatarCache(root = document) {
-            root.querySelectorAll("img.user-avatar, img.profile-avatar").forEach((img) => {
+            root.querySelectorAll("img.user-avatar, img.profile-avatar, img.media-frame, img.comment-media, img.quote-media-frame").forEach((img) => {
                 if (img.complete) {
-                    rememberAvatarImage(img);
+                    rememberRenderableImage(img);
+                    if (img.matches("img.user-avatar, img.profile-avatar")) {
+                        rememberAvatarImage(img);
+                    }
                 } else {
-                    img.addEventListener("load", () => rememberAvatarImage(img), {once: true});
+                    img.addEventListener("load", () => {
+                        rememberRenderableImage(img);
+                        if (img.matches("img.user-avatar, img.profile-avatar")) {
+                            rememberAvatarImage(img);
+                        }
+                    }, {once: true});
                 }
             });
         }
@@ -415,6 +512,9 @@
                         liveFeed.innerHTML = data.html;
                         latestPostId = data.latest_post_id || 0;
                         liveFeed.dataset.latestPostId = String(latestPostId);
+                        hydrateAvatarImages(liveFeed);
+                        hydrateRenderableImages(liveFeed);
+                        seedAvatarCache(liveFeed);
                     }
                 } catch (error) {
                     console.debug("Feed refresh skipped", error);
@@ -428,6 +528,7 @@
             autoSizeTextareas();
             closeMentionDropdown();
             hydrateAvatarImages();
+            hydrateRenderableImages();
             seedAvatarCache();
         }
 
@@ -456,8 +557,6 @@
             const incomingMain = currentMainElement(nextDocument);
             const existingMain = currentMainElement(document);
             if (incomingMain && existingMain) {
-                existingMain.scrollTop = 0;
-                incomingMain.scrollTop = 0;
                 incomingMain.classList.add("screen-swap-enter");
                 existingMain.replaceWith(incomingMain);
                 requestAnimationFrame(() => incomingMain.classList.remove("screen-swap-enter"));
@@ -472,8 +571,6 @@
             const incomingMain = currentMainElement(nextDocument);
             const existingMain = currentMainElement(document);
             if (incomingMain && existingMain) {
-                existingMain.scrollTop = 0;
-                incomingMain.scrollTop = 0;
                 incomingMain.classList.add("screen-swap-enter");
                 existingMain.replaceWith(incomingMain);
                 requestAnimationFrame(() => incomingMain.classList.remove("screen-swap-enter"));
@@ -488,23 +585,30 @@
             const nextDocument = parser.parseFromString(html, "text/html");
             hydrateAvatarImages(nextDocument);
             await preloadAvatarImages(nextDocument);
+            hydrateRenderableImages(nextDocument);
+            await preloadRenderableImages(nextDocument);
             return nextDocument;
         }
 
         async function navigateInApp(url, options = {}) {
             const normalizedUrl = normalizeAppUrl(url);
-            const canUseNavCache = navCachePaths.has(normalizedUrl);
+            const canUseNavCache = navCachePaths.has(normalizedUrl) || normalizedUrl.startsWith("/post/") || normalizedUrl.startsWith("/users/");
             try {
+                saveScrollPosition(window.location.href);
                 document.body.classList.add("page-is-transitioning");
                 if (canUseNavCache && pageHtmlCache.has(normalizedUrl)) {
                     const cachedDocument = await parseAndPrepareDocument(pageHtmlCache.get(normalizedUrl));
                     replaceShellFromDocument(cachedDocument);
                     if (options.replace) {
-                        window.history.replaceState({}, "", url);
+                        window.history.replaceState({__scrollTop: options.restoreScroll ? (scrollPositionCache.get(normalizedUrl) || 0) : 0}, "", url);
                     } else {
-                        window.history.pushState({}, "", url);
+                        window.history.pushState({__scrollTop: 0}, "", url);
                     }
-                    resetScrollPosition();
+                    if (options.restoreScroll) {
+                        restoreScrollPosition(url);
+                    } else {
+                        resetScrollPosition();
+                    }
                 }
                 const response = await fetch(url, {
                     headers: {
@@ -517,17 +621,21 @@
                 }
                 const html = await response.text();
                 const finalNormalizedUrl = normalizeAppUrl(response.url || url);
-                if (navCachePaths.has(finalNormalizedUrl)) {
+                if (navCachePaths.has(finalNormalizedUrl) || finalNormalizedUrl.startsWith("/post/") || finalNormalizedUrl.startsWith("/users/")) {
                     pageHtmlCache.set(finalNormalizedUrl, html);
                 }
                 const nextDocument = await parseAndPrepareDocument(html);
                 replaceShellFromDocument(nextDocument);
                 if (options.replace) {
-                    window.history.replaceState({}, "", response.url || url);
+                    window.history.replaceState({__scrollTop: options.restoreScroll ? (scrollPositionCache.get(finalNormalizedUrl) || 0) : 0}, "", response.url || url);
                 } else {
-                    window.history.pushState({}, "", response.url || url);
+                    window.history.pushState({__scrollTop: 0}, "", response.url || url);
                 }
-                resetScrollPosition();
+                if (options.restoreScroll) {
+                    restoreScrollPosition(response.url || url);
+                } else {
+                    resetScrollPosition();
+                }
             } catch (error) {
                 window.location.assign(url);
             } finally {
@@ -549,7 +657,7 @@
                 replaceMainFromDocument(nextDocument);
                 const destinationUrl = response.url || window.location.href;
                 pageHtmlCache.set(normalizeAppUrl(destinationUrl), html);
-                window.history.replaceState({}, "", destinationUrl);
+                window.history.replaceState({__scrollTop: 0}, "", destinationUrl);
                 resetScrollPosition();
             } catch (error) {
                 form.submit();
@@ -771,6 +879,22 @@
                 });
             });
 
+            root.querySelectorAll("[data-comment-delete]").forEach((form) => {
+                form.addEventListener("submit", async (event) => {
+                    event.preventDefault();
+                    const response = await fetch(form.action, {
+                        method: "POST",
+                        headers: {"X-Requested-With": "fetch", "Accept": "application/json"}
+                    });
+                    if (response.ok) {
+                        const trigger = document.querySelector(`[data-comments-url="${sourceUrl}"]`);
+                        if (trigger) {
+                            loadCommentsSheet(trigger, true);
+                        }
+                    }
+                });
+            });
+
             if (composeForm) {
                 composeForm.addEventListener("submit", async (event) => {
                     event.preventDefault();
@@ -791,7 +915,14 @@
         document.addEventListener("click", (event) => {
             const commentButton = event.target.closest("[data-comments-url]");
             const closeButton = event.target.closest("[data-close-inline-comments]");
+            const postCard = event.target.closest("[data-post-link]");
             const internalLink = event.target.closest('a[href]');
+            const clickedInteractive = event.target.closest("button, summary, details, form, input, textarea, select, video, audio, [data-close-inline-comments], [data-comments-url]");
+            if (postCard && !internalLink && !clickedInteractive) {
+                event.preventDefault();
+                navigateInApp(postCard.dataset.postLink);
+                return;
+            }
             if (internalLink && !commentButton) {
                 const href = internalLink.getAttribute("href") || "";
                 const resolvedUrl = new URL(href, window.location.href);
@@ -818,6 +949,16 @@
             }
             if (!event.target.closest(".mentions-dropdown")) {
                 closeMentionDropdown();
+            }
+        });
+
+        document.addEventListener("keydown", (event) => {
+            if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLElement) {
+                const postCard = event.target.closest("[data-post-link]");
+                if (postCard && event.target === postCard) {
+                    event.preventDefault();
+                    navigateInApp(postCard.dataset.postLink);
+                }
             }
         });
 
@@ -924,7 +1065,7 @@
         });
 
         window.addEventListener("popstate", () => {
-            navigateInApp(window.location.href, {replace: true});
+            navigateInApp(window.location.href, {replace: true, restoreScroll: true});
         });
 
         window.addEventListener("resize", refreshTopbarLayout);

@@ -665,6 +665,24 @@ body.dark-mode .comment-thread-item {
     box-shadow: 0 12px 26px rgba(6, 10, 22, 0.24);
 }
 
+body.dark-mode .post-body,
+body.dark-mode .comment-thread-body,
+body.dark-mode .comment-body,
+body.dark-mode .comment-author-link,
+body.dark-mode .comments-inline-header h4,
+body.dark-mode .post-detail-thread-head h2 {
+    color: #eef4ff;
+}
+
+body.dark-mode .comment-thread-head span,
+body.dark-mode .comment-author-link span,
+body.dark-mode .comments-inline-header p,
+body.dark-mode .comments-replying,
+body.dark-mode .post-detail-thread-head p,
+body.dark-mode .post-detail-back {
+    color: rgba(222, 232, 255, 0.76);
+}
+
 body.dark-mode .comment-action-button,
 body.dark-mode .comment-replies summary,
 body.dark-mode .comments-inline-close {
@@ -687,6 +705,12 @@ body.dark-mode .comments-inline-close:focus-visible {
 body.dark-mode .comment-action-button.active {
     background: rgba(127, 164, 255, 0.16);
     border-color: rgba(127, 164, 255, 0.24);
+}
+
+body.dark-mode .comment-delete-button {
+    color: #ff9bb0;
+    background: rgba(191, 10, 48, 0.14);
+    border-color: rgba(255, 124, 152, 0.18);
 }
 
 body.dark-mode .nested-comment .comment-thread-main {
@@ -1028,6 +1052,18 @@ img.profile-avatar {
 
 img.user-avatar.avatar-loading,
 img.profile-avatar.avatar-loading {
+    background:
+        linear-gradient(110deg,
+            rgba(11, 61, 145, 0.08) 8%,
+            rgba(255, 255, 255, 0.82) 18%,
+            rgba(11, 61, 145, 0.08) 33%);
+    background-size: 220% 100%;
+    animation: avatarShimmer 1.15s linear infinite;
+}
+
+img.media-frame.image-loading,
+img.comment-media.image-loading,
+img.quote-media-frame.image-loading {
     background:
         linear-gradient(110deg,
             rgba(11, 61, 145, 0.08) 8%,
@@ -2649,13 +2685,55 @@ body.dark-mode .profile-report-popover {
 
 .post-detail-page {
     display: grid;
-    gap: 0.02rem;
+    gap: 1rem;
     align-content: start;
 }
 
-.post-detail-page > .feed-list {
+.post-detail-shell {
+    display: grid;
+    gap: 1rem;
+}
+
+.post-detail-back {
+    width: fit-content;
+}
+
+.post-detail-focus {
     gap: var(--space-2);
     align-content: start;
+}
+
+.post-detail-thread {
+    display: grid;
+    gap: 1rem;
+    padding: 1.1rem;
+}
+
+.post-detail-thread-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.post-detail-thread-head h2,
+.post-detail-thread-head p {
+    margin: 0;
+}
+
+.post-detail-thread-head p {
+    color: rgba(20, 33, 61, 0.62);
+    font-size: 0.92rem;
+}
+
+.post-detail-comments {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
+}
+
+.post-detail-composer {
+    margin-top: 0;
 }
 
 .post-actions form {
@@ -2664,6 +2742,26 @@ body.dark-mode .profile-report-popover {
 
 .post-card {
     transition: transform 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
+    cursor: pointer;
+}
+
+.post-card:focus-visible,
+.post-card:hover {
+    box-shadow: 0 18px 36px rgba(20, 33, 61, 0.1);
+}
+
+.post-card [data-comments-host],
+.post-card .post-actions,
+.post-card .user-row,
+.post-card .reply-line,
+.post-card details,
+.post-card form,
+.post-card video,
+.post-card summary,
+.post-card button,
+.post-card a {
+    position: relative;
+    z-index: 1;
 }
 
 .card-swap-enter {
@@ -3036,18 +3134,31 @@ body.dark-mode .profile-report-popover {
     padding-top: 0.12rem;
 }
 
+.comment-profile-link {
+    display: inline-flex;
+}
+
 .comment-thread-main {
     display: grid;
-    gap: 0.4rem;
+    gap: 0.52rem;
     min-width: 0;
 }
 
 .comment-thread-head {
     display: flex;
     align-items: center;
-    gap: 0.38rem;
+    gap: 0.5rem;
     flex-wrap: wrap;
     font-size: 0.92rem;
+}
+
+.comment-author-link {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.34rem;
+    min-width: 0;
+    color: var(--ink);
 }
 
 .comment-thread-head span {
@@ -3109,6 +3220,19 @@ body.dark-mode .profile-report-popover {
     border-color: rgba(11, 61, 145, 0.14);
 }
 
+.comment-delete-button {
+    color: var(--red);
+    background: rgba(191, 10, 48, 0.08);
+    border-color: rgba(191, 10, 48, 0.12);
+}
+
+.comment-delete-button:hover,
+.comment-delete-button:focus-visible {
+    color: var(--red);
+    background: rgba(191, 10, 48, 0.12);
+    border-color: rgba(191, 10, 48, 0.18);
+}
+
 .comment-replies {
     display: grid;
     gap: 0.55rem;
@@ -3163,7 +3287,7 @@ body.dark-mode .profile-report-popover {
 }
 
 .nested-comment .comment-thread-main {
-    padding-left: 0.9rem;
+    padding-left: 0.8rem;
     border-left: 2px solid rgba(11, 61, 145, 0.12);
 }
 
@@ -3213,7 +3337,7 @@ body.dark-mode .profile-report-popover {
 
 .comment-item {
     display: grid;
-    gap: 0.45rem;
+    gap: 0.7rem;
     padding: 0.8rem 0.95rem;
 }
 

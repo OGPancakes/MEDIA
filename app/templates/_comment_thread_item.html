@@ -2,12 +2,16 @@
 {% from "_verified.html" import render_verified with context %}
 <article class="comment-thread-item{% if nested %} nested-comment{% endif %}">
     <div class="comment-thread-avatar">
-        {{ render_avatar(comment.author, "user-avatar") }}
+        <a href="{{ url_for('profile', username=comment.author.username) }}" class="comment-profile-link" data-comment-profile-link>
+            {{ render_avatar(comment.author, "user-avatar") }}
+        </a>
     </div>
     <div class="comment-thread-main">
         <div class="comment-thread-head">
-            <strong class="name-line">{{ comment.author.display_name }}{{ render_verified(comment.author) }}</strong>
-            <span>@{{ comment.author.username }}</span>
+            <a href="{{ url_for('profile', username=comment.author.username) }}" class="comment-author-link" data-comment-profile-link>
+                <strong class="name-line">{{ comment.author.display_name }}{{ render_verified(comment.author) }}</strong>
+                <span>@{{ comment.author.username }}</span>
+            </a>
             <span class="comment-thread-time">{{ comment.created_at|timesince }}</span>
         </div>
         {% if comment.body %}
@@ -21,6 +25,11 @@
                 </button>
             </form>
             <button class="comment-action-button comment-reply-toggle" type="button" data-reply-target-id="{{ comment.id }}" data-reply-target-name="{{ comment.author.username }}">Reply</button>
+            {% if current_user.id == comment.user_id or current_user.is_admin %}
+            <form action="{{ url_for('delete_post', post_id=comment.id) }}" method="post" class="comment-delete-form" data-comment-delete>
+                <button class="comment-action-button comment-delete-button" type="submit">Delete</button>
+            </form>
+            {% endif %}
             {% endif %}
         </div>
         {% if comment.child_replies %}

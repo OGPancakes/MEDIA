@@ -1,18 +1,40 @@
 {% extends "base.html" %}
+{% from "_avatar.html" import render_avatar with context %}
 {% block content %}
 <section class="post-detail-page">
-<section class="feed-list">
-    {% include "_post_card.html" %}
-</section>
-<section class="feed-header">
-    <h2>Replies</h2>
-</section>
-<section class="feed-list comment-thread">
-    {% for post in replies %}
-        {% include "_comment_item.html" %}
-    {% else %}
-    <div class="card empty-state-card"><p>No replies yet.</p></div>
-    {% endfor %}
-</section>
+    <div class="post-detail-shell">
+        <a class="back-link post-detail-back" href="{{ request.referrer or url_for('index') }}">← Back</a>
+        <section class="feed-list post-detail-focus">
+            {% include "_post_card.html" %}
+        </section>
+        <section class="post-detail-thread card">
+            <div class="post-detail-thread-head">
+                <div>
+                    <h2>Conversation</h2>
+                    <p>Scroll through replies and join the thread.</p>
+                </div>
+            </div>
+
+            <div class="comments-inline-list post-detail-comments">
+                {% for comment in comments %}
+                    {% set nested = false %}
+                    {% include "_comment_thread_item.html" %}
+                {% else %}
+                <div class="card empty-state-card"><p>No replies yet.</p></div>
+                {% endfor %}
+            </div>
+
+            {% if current_user %}
+            <form action="{{ url_for('create_post') }}" method="post" class="comments-composer inline-comments-composer post-detail-composer" data-app-shell-submit>
+                {{ render_avatar(current_user, "user-avatar") }}
+                <div class="comments-compose-main">
+                    <input type="hidden" name="reply_to_id" value="{{ post.id }}">
+                    <input type="text" name="body" placeholder="Reply to this post..." autocomplete="off" data-mentions-enabled>
+                </div>
+                <button type="submit" class="comments-post-button">Reply</button>
+            </form>
+            {% endif %}
+        </section>
+    </div>
 </section>
 {% endblock %}
