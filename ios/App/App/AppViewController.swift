@@ -300,11 +300,15 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeTabBar.layer.cornerRadius = 26
         nativeTabBar.layer.cornerCurve = .continuous
         nativeTabBar.clipsToBounds = true
-        nativeTabBar.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.72)
-        nativeTabBar.layer.shadowColor = UIColor.black.withAlphaComponent(0.12).cgColor
+        nativeTabBar.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.9)
+        nativeTabBar.layer.borderWidth = 1
+        nativeTabBar.layer.borderColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.1).cgColor
+        nativeTabBar.layer.shadowColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.18).cgColor
         nativeTabBar.layer.shadowOpacity = 1
         nativeTabBar.layer.shadowRadius = 18
         nativeTabBar.layer.shadowOffset = CGSize(width: 0, height: 10)
+        nativeTabBar.alpha = 0
+        nativeTabBar.isHidden = true
         view.addSubview(nativeTabBar)
 
         nativeTabStack.translatesAutoresizingMaskIntoConstraints = false
@@ -376,8 +380,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 guard let section = self.section(for: button.tag) else { return }
                 let isActive = section == self.currentPrimarySection
                 button.backgroundColor = isActive
-                    ? UIColor(red: 230.0 / 255.0, green: 236.0 / 255.0, blue: 250.0 / 255.0, alpha: 0.98)
-                    : UIColor(red: 246.0 / 255.0, green: 248.0 / 255.0, blue: 253.0 / 255.0, alpha: 0.9)
+                    ? UIColor(red: 240.0 / 255.0, green: 244.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
+                    : UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.06)
                 button.setTitleColor(
                     isActive
                         ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
@@ -393,6 +397,26 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             }
         } else {
             updates()
+        }
+    }
+
+    private func setNativeTabBarVisible(_ visible: Bool, animated: Bool) {
+        if visible {
+            nativeTabBar.isHidden = false
+        }
+        let changes = {
+            self.nativeTabBar.alpha = visible ? 1 : 0
+        }
+        let completion: (Bool) -> Void = { _ in
+            if !visible {
+                self.nativeTabBar.isHidden = true
+            }
+        }
+        if animated {
+            UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut], animations: changes, completion: completion)
+        } else {
+            changes()
+            completion(true)
         }
     }
 
@@ -541,6 +565,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func handleLoginState(loggedIn: Bool, username: String) {
         let wasLoggedIn = isLoggedIntoWebApp
         isLoggedIntoWebApp = loggedIn
+        setNativeTabBarVisible(loggedIn, animated: true)
         guard loggedIn else {
             lastRegisteredPushToken = nil
             warmedRoutesForUsername = nil
