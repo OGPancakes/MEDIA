@@ -1477,6 +1477,10 @@ img.quote-media-frame.image-loading {
     backdrop-filter: blur(18px);
 }
 
+body.native-tab-shell-enabled .bottom-nav {
+    display: none;
+}
+
 body.dark-mode .bottom-nav {
     background: rgba(12, 22, 46, 0.92);
     border-color: rgba(127, 164, 255, 0.14);

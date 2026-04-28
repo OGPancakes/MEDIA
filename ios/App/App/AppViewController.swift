@@ -6,6 +6,13 @@ import PhotosUI
 import UserNotifications
 
 final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, UITextViewDelegate, PHPickerViewControllerDelegate {
+    private enum PrimarySection: String {
+        case feed
+        case messages
+        case search
+        case profile
+    }
+
     private let shellBackground = UIColor(red: 238.0 / 255.0, green: 244.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
     private let topGradient = UIColor(red: 247.0 / 255.0, green: 250.0 / 255.0, blue: 255.0 / 255.0, alpha: 1).cgColor
     private let bottomGradient = UIColor(red: 255.0 / 255.0, green: 247.0 / 255.0, blue: 239.0 / 255.0, alpha: 1).cgColor
@@ -24,6 +31,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let composerRemovePhotoButton = UIButton(type: .system)
     private let composerPostButton = UIButton(type: .system)
     private let composeButton = UIButton(type: .system)
+    private let nativeTabBar = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
+    private let nativeTabStack = UIStackView()
+    private let messagesTabButton = UIButton(type: .system)
+    private let feedTabButton = UIButton(type: .system)
+    private let searchTabButton = UIButton(type: .system)
+    private let profileTabButton = UIButton(type: .system)
 
     private var composerSheetBottomConstraint: NSLayoutConstraint?
     private var composeButtonBottomConstraint: NSLayoutConstraint?
@@ -39,6 +52,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var selectedImageName: String?
     private var selectedImageMimeType = "image/jpeg"
     private var currentFeedTab = "home"
+    private var currentUsername = ""
+    private var currentPrimarySection: PrimarySection = .feed
+    private var warmedRoutesForUsername: String?
 
     private let composerScriptMessageName = "nativeComposerState"
 
@@ -56,6 +72,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
         configureWebView()
         configureNativeComposer()
+        configureNativeTabBar()
         installKeyboardObservers()
         observePushToken()
         installComposerBridge()
@@ -209,7 +226,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         view.addSubview(composeButton)
 
         composerSheetBottomConstraint = composerSheet.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: 360)
-        composeButtonBottomConstraint = composeButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92)
         composerTextViewHeightConstraint = composerTextView.heightAnchor.constraint(equalToConstant: 112)
         composerPreviewHeightConstraint = composerPreviewContainer.heightAnchor.constraint(equalToConstant: 0)
 
@@ -271,7 +287,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             composerPostButton.bottomAnchor.constraint(equalTo: sheetContent.bottomAnchor, constant: -16),
 
             composeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
-            composeButtonBottomConstraint!,
             composeButton.widthAnchor.constraint(equalToConstant: 56),
             composeButton.heightAnchor.constraint(equalToConstant: 56)
         ])
@@ -280,20 +295,155 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         composerPostButton.alpha = 0.55
     }
 
+    private func configureNativeTabBar() {
+        nativeTabBar.translatesAutoresizingMaskIntoConstraints = false
+        nativeTabBar.layer.cornerRadius = 26
+        nativeTabBar.layer.cornerCurve = .continuous
+        nativeTabBar.clipsToBounds = true
+        nativeTabBar.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.72)
+        nativeTabBar.layer.shadowColor = UIColor.black.withAlphaComponent(0.12).cgColor
+        nativeTabBar.layer.shadowOpacity = 1
+        nativeTabBar.layer.shadowRadius = 18
+        nativeTabBar.layer.shadowOffset = CGSize(width: 0, height: 10)
+        view.addSubview(nativeTabBar)
+
+        nativeTabStack.translatesAutoresizingMaskIntoConstraints = false
+        nativeTabStack.axis = .horizontal
+        nativeTabStack.distribution = .fillEqually
+        nativeTabStack.alignment = .fill
+        nativeTabStack.spacing = 10
+        nativeTabBar.contentView.addSubview(nativeTabStack)
+
+        configureTabButton(messagesTabButton, title: "DM", section: .messages)
+        configureTabButton(feedTabButton, title: "Feed", section: .feed)
+        configureTabButton(searchTabButton, title: "Search", section: .search)
+        configureTabButton(profileTabButton, title: "Profile", section: .profile)
+
+        [messagesTabButton, feedTabButton, searchTabButton, profileTabButton].forEach(nativeTabStack.addArrangedSubview)
+
+        composeButtonBottomConstraint = composeButton.bottomAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -14)
+
+        NSLayoutConstraint.activate([
+            nativeTabBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+            nativeTabBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
+            nativeTabBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
+
+            nativeTabStack.leadingAnchor.constraint(equalTo: nativeTabBar.contentView.leadingAnchor, constant: 10),
+            nativeTabStack.trailingAnchor.constraint(equalTo: nativeTabBar.contentView.trailingAnchor, constant: -10),
+            nativeTabStack.topAnchor.constraint(equalTo: nativeTabBar.contentView.topAnchor, constant: 10),
+            nativeTabStack.bottomAnchor.constraint(equalTo: nativeTabBar.contentView.bottomAnchor, constant: -10),
+
+            composeButtonBottomConstraint!
+        ])
+
+        updateNativeTabSelection(animated: false)
+    }
+
+    private func configureTabButton(_ button: UIButton, title: String, section: PrimarySection) {
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle(title, for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)
+        button.layer.cornerRadius = 18
+        button.layer.cornerCurve = .continuous
+        button.contentEdgeInsets = UIEdgeInsets(top: 14, left: 12, bottom: 14, right: 12)
+        button.tag = tabTag(for: section)
+        button.addTarget(self, action: #selector(handleNativeTabTap(_:)), for: .touchUpInside)
+        button.heightAnchor.constraint(equalToConstant: 56).isActive = true
+    }
+
+    private func tabTag(for section: PrimarySection) -> Int {
+        switch section {
+        case .messages: return 1
+        case .feed: return 2
+        case .search: return 3
+        case .profile: return 4
+        }
+    }
+
+    private func section(for tag: Int) -> PrimarySection? {
+        switch tag {
+        case 1: return .messages
+        case 2: return .feed
+        case 3: return .search
+        case 4: return .profile
+        default: return nil
+        }
+    }
+
+    private func updateNativeTabSelection(animated: Bool) {
+        let updates = {
+            [self.messagesTabButton, self.feedTabButton, self.searchTabButton, self.profileTabButton].forEach { button in
+                guard let section = self.section(for: button.tag) else { return }
+                let isActive = section == self.currentPrimarySection
+                button.backgroundColor = isActive
+                    ? UIColor(red: 230.0 / 255.0, green: 236.0 / 255.0, blue: 250.0 / 255.0, alpha: 0.98)
+                    : UIColor(red: 246.0 / 255.0, green: 248.0 / 255.0, blue: 253.0 / 255.0, alpha: 0.9)
+                button.setTitleColor(
+                    isActive
+                        ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+                        : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 1),
+                    for: .normal
+                )
+                button.transform = isActive ? CGAffineTransform(scaleX: 1.02, y: 1.02) : .identity
+            }
+        }
+        if animated {
+            UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut]) {
+                updates()
+            }
+        } else {
+            updates()
+        }
+    }
+
     private func installComposerBridge() {
         guard let webView = webView else { return }
         let source = """
         (function() {
           if (window.__nativeComposerBridgeInstalled) return;
           window.__nativeComposerBridgeInstalled = true;
+          function normalizedProfilePath(username) {
+            return username ? `/users/${encodeURIComponent(username)}` : '/';
+          }
+          function primarySection() {
+            const path = window.location.pathname || '/';
+            if (path.startsWith('/messages')) return 'messages';
+            if (path.startsWith('/search')) return 'search';
+            if (path.startsWith('/users/')) return 'profile';
+            return 'feed';
+          }
+          window.nativeOpenPrimaryRoute = function(section, profileUsername) {
+            const destinations = {
+              messages: '/messages',
+              feed: '/',
+              search: '/search',
+              profile: normalizedProfilePath(profileUsername || '')
+            };
+            const targetUrl = destinations[section] || '/';
+            if (window.navigateInApp) {
+              return window.navigateInApp(targetUrl);
+            }
+            window.location.assign(targetUrl);
+          };
+          window.nativePrefetchPrimaryRoutes = function(profileUsername) {
+            if (!window.prefetchRoute) return;
+            const urls = ['/messages', '/', '/search', normalizedProfilePath(profileUsername || '')];
+            urls.forEach(function(url) {
+              window.prefetchRoute(url);
+            });
+          };
           function notify() {
             try {
               document.body && document.body.classList.add('native-compose-enabled');
+              document.body && document.body.classList.add('native-tab-shell-enabled');
+              const username = document.querySelector('.account-trigger-copy span') ? document.querySelector('.account-trigger-copy span').textContent.replace(/^@/, '').trim() : '';
               window.webkit.messageHandlers.\(composerScriptMessageName).postMessage({
                 loggedIn: document.body ? document.body.classList.contains('app-body') : false,
+                username: username,
                 isFeed: !!document.querySelector('.home-flow'),
                 canCompose: !!document.querySelector('.home-flow .composer form'),
-                feedMode: (document.querySelector('#live-feed') && document.querySelector('#live-feed').dataset.feedMode) || 'home'
+                feedMode: (document.querySelector('#live-feed') && document.querySelector('#live-feed').dataset.feedMode) || 'home',
+                primarySection: primarySection()
               });
             } catch (e) {}
           }
@@ -344,13 +494,25 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         (function() {
           if (document.body) {
             document.body.classList.add('native-compose-enabled');
+            document.body.classList.add('native-tab-shell-enabled');
           }
+            const username = document.querySelector('.account-trigger-copy span') ? document.querySelector('.account-trigger-copy span').textContent.replace(/^@/, '').trim() : '';
+            const path = window.location.pathname || '/';
+            let primarySection = 'feed';
+            if (path.startsWith('/messages')) {
+              primarySection = 'messages';
+            } else if (path.startsWith('/search')) {
+              primarySection = 'search';
+            } else if (path.startsWith('/users/')) {
+              primarySection = 'profile';
+            }
             return {
               loggedIn: !!(document.body && document.body.classList.contains('app-body')),
-              username: document.querySelector('.account-trigger-copy span') ? document.querySelector('.account-trigger-copy span').textContent.replace(/^@/, '').trim() : '',
+              username: username,
               isFeed: !!document.querySelector('.home-flow'),
               canCompose: !!document.querySelector('.home-flow .composer form'),
-              feedMode: (document.querySelector('#live-feed') && document.querySelector('#live-feed').dataset.feedMode) || 'home'
+              feedMode: (document.querySelector('#live-feed') && document.querySelector('#live-feed').dataset.feedMode) || 'home',
+              primarySection: primarySection
             };
         })();
         """
@@ -362,8 +524,16 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 let canCompose = payload["canCompose"] as? Bool ?? false
                 let username = payload["username"] as? String ?? ""
                 self.currentFeedTab = payload["feedMode"] as? String ?? "home"
+                if let section = PrimarySection(rawValue: payload["primarySection"] as? String ?? "feed") {
+                    self.currentPrimarySection = section
+                } else {
+                    self.currentPrimarySection = .feed
+                }
+                self.currentUsername = username
                 self.handleLoginState(loggedIn: loggedIn, username: username)
                 self.setComposeButtonVisible(loggedIn && isFeed && canCompose, animated: true)
+                self.updateNativeTabSelection(animated: true)
+                self.prefetchPrimaryRoutesIfNeeded(username: username)
             }
         }
     }
@@ -373,6 +543,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         isLoggedIntoWebApp = loggedIn
         guard loggedIn else {
             lastRegisteredPushToken = nil
+            warmedRoutesForUsername = nil
             return
         }
         if !wasLoggedIn {
@@ -656,10 +827,44 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let canCompose = payload["canCompose"] as? Bool ?? false
         let username = payload["username"] as? String ?? ""
         currentFeedTab = payload["feedMode"] as? String ?? "home"
+        if let section = PrimarySection(rawValue: payload["primarySection"] as? String ?? "feed") {
+            currentPrimarySection = section
+        } else {
+            currentPrimarySection = .feed
+        }
+        currentUsername = username
         DispatchQueue.main.async {
             self.handleLoginState(loggedIn: loggedIn, username: username)
             self.setComposeButtonVisible(loggedIn && isFeed && canCompose, animated: true)
+            self.updateNativeTabSelection(animated: true)
+            self.prefetchPrimaryRoutesIfNeeded(username: username)
         }
+    }
+
+    private func prefetchPrimaryRoutesIfNeeded(username: String) {
+        guard isLoggedIntoWebApp, !username.isEmpty, warmedRoutesForUsername != username else { return }
+        warmedRoutesForUsername = username
+        let escapedUsername = username
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "window.nativePrefetchPrimaryRoutes && window.nativePrefetchPrimaryRoutes(\"\(escapedUsername)\");"
+        webView?.evaluateJavaScript(script, completionHandler: nil)
+    }
+
+    @objc private func handleNativeTabTap(_ sender: UIButton) {
+        guard let section = section(for: sender.tag) else { return }
+        openPrimarySection(section)
+    }
+
+    private func openPrimarySection(_ section: PrimarySection) {
+        let targetUsername = currentUsername
+        let escapedUsername = targetUsername
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        currentPrimarySection = section
+        updateNativeTabSelection(animated: true)
+        let script = "window.nativeOpenPrimaryRoute && window.nativeOpenPrimaryRoute(\"\(section.rawValue)\", \"\(escapedUsername)\");"
+        webView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
     func textViewDidChange(_ textView: UITextView) {
