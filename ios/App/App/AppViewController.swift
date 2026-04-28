@@ -55,6 +55,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var currentUsername = ""
     private var currentPrimarySection: PrimarySection = .feed
     private var warmedRoutesForUsername: String?
+    private var lastRouteBySection: [PrimarySection: String] = [
+        .messages: "/messages",
+        .feed: "/",
+        .search: "/search"
+    ]
 
     private let composerScriptMessageName = "nativeComposerState"
 
@@ -429,6 +434,16 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
           function normalizedProfilePath(username) {
             return username ? `/users/${encodeURIComponent(username)}` : '/';
           }
+          function normalizedCurrentRoute() {
+            return `${window.location.pathname || '/'}${window.location.search || ''}`;
+          }
+          function currentScrollTop() {
+            const scrollRoot = document.querySelector('[data-app-scroll-root]') || document.querySelector('main.content, main.guest-shell');
+            if (scrollRoot && typeof scrollRoot.scrollTop === 'number') {
+              return scrollRoot.scrollTop;
+            }
+            return window.scrollY || 0;
+          }
           function primarySection() {
             const path = window.location.pathname || '/';
             if (path.startsWith('/messages')) return 'messages';
@@ -436,16 +451,16 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             if (path.startsWith('/users/')) return 'profile';
             return 'feed';
           }
-          window.nativeOpenPrimaryRoute = function(section, profileUsername) {
+          window.nativeOpenPrimaryRoute = function(section, profileUsername, preferredRoute, restoreScroll) {
             const destinations = {
               messages: '/messages',
               feed: '/',
               search: '/search',
               profile: normalizedProfilePath(profileUsername || '')
             };
-            const targetUrl = destinations[section] || '/';
+            const targetUrl = preferredRoute || destinations[section] || '/';
             if (window.navigateInApp) {
-              return window.navigateInApp(targetUrl);
+              return window.navigateInApp(targetUrl, { restoreScroll: !!restoreScroll });
             }
             window.location.assign(targetUrl);
           };
@@ -467,7 +482,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 isFeed: !!document.querySelector('.home-flow'),
                 canCompose: !!document.querySelector('.home-flow .composer form'),
                 feedMode: (document.querySelector('#live-feed') && document.querySelector('#live-feed').dataset.feedMode) || 'home',
-                primarySection: primarySection()
+                primarySection: primarySection(),
+                currentRoute: normalizedCurrentRoute(),
+                scrollTop: currentScrollTop()
               });
             } catch (e) {}
           }
@@ -536,7 +553,15 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
               isFeed: !!document.querySelector('.home-flow'),
               canCompose: !!document.querySelector('.home-flow .composer form'),
               feedMode: (document.querySelector('#live-feed') && document.querySelector('#live-feed').dataset.feedMode) || 'home',
-              primarySection: primarySection
+              primarySection: primarySection,
+              currentRoute: `${window.location.pathname || '/'}${window.location.search || ''}`,
+              scrollTop: (() => {
+                const scrollRoot = document.querySelector('[data-app-scroll-root]') || document.querySelector('main.content, main.guest-shell');
+                if (scrollRoot && typeof scrollRoot.scrollTop === 'number') {
+                  return scrollRoot.scrollTop;
+                }
+                return window.scrollY || 0;
+              })()
             };
         })();
         """
@@ -554,6 +579,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.currentPrimarySection = .feed
                 }
                 self.currentUsername = username
+                if let route = payload["currentRoute"] as? String, !route.isEmpty {
+                    self.lastRouteBySection[self.currentPrimarySection] = route
+                }
+                if !username.isEmpty {
+                    self.lastRouteBySection[.profile] = "/users/\(username)"
+                }
                 self.handleLoginState(loggedIn: loggedIn, username: username)
                 self.setComposeButtonVisible(loggedIn && isFeed && canCompose, animated: true)
                 self.updateNativeTabSelection(animated: true)
@@ -569,10 +600,18 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         guard loggedIn else {
             lastRegisteredPushToken = nil
             warmedRoutesForUsername = nil
+            lastRouteBySection = [
+                .messages: "/messages",
+                .feed: "/",
+                .search: "/search"
+            ]
             return
         }
         if !wasLoggedIn {
             maybeRequestNotificationPermission(for: username)
+        }
+        if !username.isEmpty {
+            lastRouteBySection[.profile] = "/users/\(username)"
         }
     }
 
@@ -858,6 +897,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             currentPrimarySection = .feed
         }
         currentUsername = username
+        if let route = payload["currentRoute"] as? String, !route.isEmpty {
+            lastRouteBySection[currentPrimarySection] = route
+        }
+        if !username.isEmpty {
+            lastRouteBySection[.profile] = "/users/\(username)"
+        }
         DispatchQueue.main.async {
             self.handleLoginState(loggedIn: loggedIn, username: username)
             self.setComposeButtonVisible(loggedIn && isFeed && canCompose, animated: true)
@@ -886,9 +931,20 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let escapedUsername = targetUsername
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
+        let preferredRoute = lastRouteBySection[section] ?? {
+            switch section {
+            case .messages: return "/messages"
+            case .feed: return "/"
+            case .search: return "/search"
+            case .profile: return targetUsername.isEmpty ? "/" : "/users/\(targetUsername)"
+            }
+        }()
+        let escapedRoute = preferredRoute
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
         currentPrimarySection = section
         updateNativeTabSelection(animated: true)
-        let script = "window.nativeOpenPrimaryRoute && window.nativeOpenPrimaryRoute(\"\(section.rawValue)\", \"\(escapedUsername)\");"
+        let script = "window.nativeOpenPrimaryRoute && window.nativeOpenPrimaryRoute(\"\(section.rawValue)\", \"\(escapedUsername)\", \"\(escapedRoute)\", true);"
         webView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
