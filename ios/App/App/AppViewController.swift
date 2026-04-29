@@ -5,7 +5,7 @@ import ObjectiveC.runtime
 import PhotosUI
 import UserNotifications
 
-final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, UITextViewDelegate, PHPickerViewControllerDelegate, UITableViewDataSource, UITableViewDelegate {
+final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, UITextViewDelegate, PHPickerViewControllerDelegate, UITableViewDataSource, UITableViewDelegate, UITableViewDataSourcePrefetching {
     private enum PrimarySection: String {
         case feed
         case messages
@@ -56,22 +56,33 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeThreadSendButton = UIButton(type: .system)
     private let nativeThreadLoadingView = UIActivityIndicatorView(style: .large)
     private let nativeThreadEmptyLabel = UILabel()
+    private let nativeFeedContainer = UIView()
+    private let nativeFeedHeader = UILabel()
+    private let nativeFeedSegment = UISegmentedControl(items: ["Home", "FYP", "Breaking"])
+    private let nativeFeedTableView = UITableView(frame: .zero, style: .plain)
+    private let nativeFeedEmptyLabel = UILabel()
+    private let nativeFeedRefreshControl = UIRefreshControl()
 
     private var composerSheetBottomConstraint: NSLayoutConstraint?
     private var composeButtonBottomConstraint: NSLayoutConstraint?
     private var composerTextViewHeightConstraint: NSLayoutConstraint?
     private var composerPreviewHeightConstraint: NSLayoutConstraint?
     private var nativeThreadComposerBottomConstraint: NSLayoutConstraint?
+    private var nativeThreadTextViewHeightConstraint: NSLayoutConstraint?
     private var keyboardObserversInstalled = false
     private var nativeComposerAvailable = false
     private var isPostingComposer = false
     private var isLoggedIntoWebApp = false
+    private var isShowingNativeFeed = false
+    private var isLoadingNativeFeed = false
     private var isShowingNativeMessages = false
     private var isLoadingNativeInbox = false
     private var isLoadingNativeThread = false
     private var isSendingNativeMessage = false
+    private var isRefreshingNativeThread = false
     private var lastRegisteredPushToken: String?
     private var stateSyncTimer: Timer?
+    private var nativeThreadRefreshTimer: Timer?
     private var selectedImageData: Data?
     private var selectedImageName: String?
     private var selectedImageMimeType = "image/jpeg"
@@ -79,7 +90,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var currentUsername = ""
     private var currentRoute = "/"
     private var currentPrimarySection: PrimarySection = .feed
+    private var currentKeyboardFrameInView: CGRect?
     private var warmedRoutesForUsername: String?
+    private var pendingPushRoute: String?
     private var lastRouteBySection: [PrimarySection: String] = [
         .messages: "/messages",
         .feed: "/",
@@ -87,9 +100,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     ]
     private var nativeMessageConversations: [NativeMessageConversation] = []
     private var nativeThreadMessages: [NativeThreadMessage] = []
+    private var nativeFeedPosts: [NativeFeedPost] = []
+    private var nativeFeedLatestPostID = 0
     private var nativeMessageTarget: NativeUserSummary?
     private var pendingNativeJSONRequests: [String: (Result<Data, Error>) -> Void] = [:]
     private let nativeAvatarImageCache = NSCache<NSString, UIImage>()
+    private let nativeFeedImageCache = NSCache<NSString, UIImage>()
 
     private let composerScriptMessageName = "nativeComposerState"
     private let nativeJSONScriptMessageName = "nativeJSONResponse"
@@ -109,16 +125,20 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         configureWebView()
         configureNativeComposer()
         configureNativeTabBar()
+        configureNativeFeed()
         configureNativeMessages()
         installKeyboardObservers()
         observePushToken()
+        observePushNotificationTaps()
         installComposerBridge()
         startStateSyncTimer()
+        consumeStoredPushRoute()
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
         stateSyncTimer?.invalidate()
+        nativeThreadRefreshTimer?.invalidate()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: composerScriptMessageName)
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: nativeJSONScriptMessageName)
     }
@@ -514,6 +534,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadTextView.textContainerInset = UIEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
         nativeThreadTextView.textContainer.lineFragmentPadding = 0
         nativeThreadTextView.isScrollEnabled = false
+        nativeThreadTextView.returnKeyType = .default
+        nativeThreadTextView.enablesReturnKeyAutomatically = false
         nativeThreadTextView.autocorrectionType = .yes
         nativeThreadTextView.spellCheckingType = .yes
         nativeThreadComposerBar.contentView.addSubview(nativeThreadTextView)
@@ -549,6 +571,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadContainer.addSubview(nativeThreadEmptyLabel)
 
         nativeThreadComposerBottomConstraint = nativeThreadComposerBar.bottomAnchor.constraint(equalTo: nativeThreadContainer.bottomAnchor, constant: -14)
+        nativeThreadTextViewHeightConstraint = nativeThreadTextView.heightAnchor.constraint(equalToConstant: 44)
 
         NSLayoutConstraint.activate([
             nativeMessagesContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -614,7 +637,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeThreadTextView.trailingAnchor.constraint(equalTo: nativeThreadSendButton.leadingAnchor, constant: -10),
             nativeThreadTextView.topAnchor.constraint(equalTo: nativeThreadComposerBar.contentView.topAnchor, constant: 2),
             nativeThreadTextView.bottomAnchor.constraint(equalTo: nativeThreadComposerBar.contentView.bottomAnchor, constant: -2),
-            nativeThreadTextView.heightAnchor.constraint(greaterThanOrEqualToConstant: 24),
+            nativeThreadTextViewHeightConstraint!,
 
             nativeThreadPlaceholder.leadingAnchor.constraint(equalTo: nativeThreadTextView.leadingAnchor),
             nativeThreadPlaceholder.topAnchor.constraint(equalTo: nativeThreadTextView.topAnchor, constant: 12),
@@ -656,6 +679,73 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         button.tag = tabTag(for: section)
         button.addTarget(self, action: #selector(handleNativeTabTap(_:)), for: .touchUpInside)
         button.heightAnchor.constraint(equalToConstant: 56).isActive = true
+    }
+
+    private func configureNativeFeed() {
+        nativeFeedContainer.translatesAutoresizingMaskIntoConstraints = false
+        nativeFeedContainer.alpha = 0
+        nativeFeedContainer.isHidden = true
+        nativeFeedContainer.backgroundColor = shellBackground
+        nativeFeedContainer.isOpaque = true
+        nativeFeedContainer.layer.zPosition = 30
+        view.addSubview(nativeFeedContainer)
+
+        nativeFeedHeader.translatesAutoresizingMaskIntoConstraints = false
+        nativeFeedHeader.text = "Feed"
+        nativeFeedHeader.font = .systemFont(ofSize: 34, weight: .bold)
+        nativeFeedHeader.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nativeFeedContainer.addSubview(nativeFeedHeader)
+
+        nativeFeedSegment.translatesAutoresizingMaskIntoConstraints = false
+        nativeFeedSegment.selectedSegmentIndex = 0
+        nativeFeedSegment.addTarget(self, action: #selector(handleNativeFeedSegmentChanged), for: .valueChanged)
+        nativeFeedContainer.addSubview(nativeFeedSegment)
+
+        nativeFeedTableView.translatesAutoresizingMaskIntoConstraints = false
+        nativeFeedTableView.backgroundColor = .clear
+        nativeFeedTableView.separatorStyle = .none
+        nativeFeedTableView.showsVerticalScrollIndicator = false
+        nativeFeedTableView.keyboardDismissMode = .interactive
+        nativeFeedTableView.rowHeight = UITableView.automaticDimension
+        nativeFeedTableView.estimatedRowHeight = 280
+        nativeFeedTableView.contentInset = UIEdgeInsets(top: 8, left: 0, bottom: 20, right: 0)
+        nativeFeedTableView.dataSource = self
+        nativeFeedTableView.delegate = self
+        nativeFeedTableView.prefetchDataSource = self
+        nativeFeedTableView.register(NativeFeedPostCell.self, forCellReuseIdentifier: NativeFeedPostCell.reuseIdentifier)
+        nativeFeedRefreshControl.addTarget(self, action: #selector(handleNativeFeedRefresh), for: .valueChanged)
+        nativeFeedTableView.refreshControl = nativeFeedRefreshControl
+        nativeFeedContainer.addSubview(nativeFeedTableView)
+
+        nativeFeedEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeFeedEmptyLabel.text = "No posts yet."
+        nativeFeedEmptyLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        nativeFeedEmptyLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.75)
+        nativeFeedEmptyLabel.textAlignment = .center
+        nativeFeedEmptyLabel.isHidden = true
+        nativeFeedContainer.addSubview(nativeFeedEmptyLabel)
+
+        NSLayoutConstraint.activate([
+            nativeFeedContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            nativeFeedContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nativeFeedContainer.topAnchor.constraint(equalTo: view.topAnchor),
+            nativeFeedContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            nativeFeedHeader.leadingAnchor.constraint(equalTo: nativeFeedContainer.leadingAnchor, constant: 20),
+            nativeFeedHeader.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+
+            nativeFeedSegment.leadingAnchor.constraint(equalTo: nativeFeedHeader.trailingAnchor, constant: 16),
+            nativeFeedSegment.trailingAnchor.constraint(equalTo: nativeFeedContainer.trailingAnchor, constant: -20),
+            nativeFeedSegment.centerYAnchor.constraint(equalTo: nativeFeedHeader.centerYAnchor),
+
+            nativeFeedTableView.leadingAnchor.constraint(equalTo: nativeFeedContainer.leadingAnchor, constant: 10),
+            nativeFeedTableView.trailingAnchor.constraint(equalTo: nativeFeedContainer.trailingAnchor, constant: -10),
+            nativeFeedTableView.topAnchor.constraint(equalTo: nativeFeedHeader.bottomAnchor, constant: 14),
+            nativeFeedTableView.bottomAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -16),
+
+            nativeFeedEmptyLabel.centerXAnchor.constraint(equalTo: nativeFeedTableView.centerXAnchor),
+            nativeFeedEmptyLabel.centerYAnchor.constraint(equalTo: nativeFeedTableView.centerYAnchor)
+        ])
     }
 
     private func tabTag(for section: PrimarySection) -> Int {
@@ -730,6 +820,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func updateNativeSectionPresentation() {
+        let shouldShowFeed = isLoggedIntoWebApp && currentPrimarySection == .feed && routeSupportsNativeFeed(currentRoute)
+        if shouldShowFeed {
+            showNativeFeedIfNeeded()
+        } else {
+            hideNativeFeedIfNeeded()
+        }
+
         let shouldShowMessages = isLoggedIntoWebApp && currentPrimarySection == .messages
         if shouldShowMessages {
             showNativeMessagesIfNeeded()
@@ -741,6 +838,54 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             }
         } else {
             hideNativeMessagesIfNeeded()
+        }
+    }
+
+    private func routeSupportsNativeFeed(_ route: String) -> Bool {
+        if route == "/" { return true }
+        guard route.starts(with: "/?") else { return false }
+        guard let components = URLComponents(string: "https://local\(route)") else { return false }
+        let tab = components.queryItems?.first(where: { $0.name == "tab" })?.value ?? "home"
+        return ["home", "fyp", "breaking"].contains(tab)
+    }
+
+    private func showNativeFeedIfNeeded() {
+        guard !isShowingNativeFeed else {
+            syncNativeFeedSegment()
+            return
+        }
+        isShowingNativeFeed = true
+        syncNativeFeedSegment()
+        nativeFeedContainer.isHidden = false
+        nativeFeedContainer.alpha = 1
+        view.bringSubviewToFront(nativeFeedContainer)
+        view.bringSubviewToFront(composeButton)
+        view.bringSubviewToFront(nativeTabBarBackdrop)
+        view.bringSubviewToFront(nativeTabBar)
+        if nativeFeedPosts.isEmpty {
+            loadNativeFeed(force: false)
+        }
+    }
+
+    private func hideNativeFeedIfNeeded() {
+        guard isShowingNativeFeed else { return }
+        isShowingNativeFeed = false
+        UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
+            self.nativeFeedContainer.alpha = 0
+        } completion: { _ in
+            self.nativeFeedContainer.isHidden = true
+        }
+    }
+
+    private func syncNativeFeedSegment() {
+        let targetIndex: Int
+        switch currentFeedTab {
+        case "fyp": targetIndex = 1
+        case "breaking": targetIndex = 2
+        default: targetIndex = 0
+        }
+        if nativeFeedSegment.selectedSegmentIndex != targetIndex {
+            nativeFeedSegment.selectedSegmentIndex = targetIndex
         }
     }
 
@@ -759,6 +904,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func hideNativeMessagesIfNeeded() {
         guard isShowingNativeMessages else { return }
         isShowingNativeMessages = false
+        stopNativeThreadRefresh()
         UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseInOut]) {
             self.nativeMessagesContainer.alpha = 0
         } completion: { _ in
@@ -785,7 +931,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let canSend = !trimmed.isEmpty && !isSendingNativeMessage && nativeMessageTarget != nil
         nativeThreadPlaceholder.isHidden = !trimmed.isEmpty
         nativeThreadSendButton.isEnabled = canSend
-        nativeThreadSendButton.alpha = canSend ? 1 : 0.5
+        nativeThreadSendButton.setTitle(isSendingNativeMessage ? "..." : "Send", for: .normal)
+        nativeThreadSendButton.alpha = (canSend || isSendingNativeMessage) ? 1 : 0.55
+        nativeThreadSendButton.backgroundColor = canSend
+            ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+            : UIColor(red: 123.0 / 255.0, green: 145.0 / 255.0, blue: 189.0 / 255.0, alpha: 0.88)
     }
 
     private func installComposerBridge() {
@@ -974,13 +1124,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeMessageTarget = nil
             nativeMessageConversations = []
             nativeThreadMessages = []
+            nativeFeedPosts = []
+            nativeFeedLatestPostID = 0
             lastRouteBySection = [
                 .messages: "/messages",
                 .feed: "/",
                 .search: "/search"
             ]
+            nativeFeedTableView.reloadData()
             nativeMessagesListTableView.reloadData()
             renderNativeThreadMessages()
+            hideNativeFeedIfNeeded()
             hideNativeMessagesIfNeeded()
             return
         }
@@ -990,6 +1144,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if !username.isEmpty {
             lastRouteBySection[.profile] = "/users/\(username)"
         }
+        openPendingPushRouteIfPossible()
     }
 
     private func observePushToken() {
@@ -999,6 +1154,21 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             name: .piaDidRegisterPushToken,
             object: nil
         )
+    }
+
+    private func observePushNotificationTaps() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePushNotificationTap(_:)),
+            name: .piaDidTapPushNotification,
+            object: nil
+        )
+    }
+
+    private func consumeStoredPushRoute() {
+        guard let link = UserDefaults.standard.string(forKey: "pia.pendingPushLink"), !link.isEmpty else { return }
+        UserDefaults.standard.removeObject(forKey: "pia.pendingPushLink")
+        handlePushRoute(link)
     }
 
     private func maybeRequestNotificationPermission(for username: String) {
@@ -1034,13 +1204,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
               let token = note.userInfo?["token"] as? String,
               !token.isEmpty,
               token != lastRegisteredPushToken else { return }
+        print("APNs device token received: \(token.prefix(12))...")
         lastRegisteredPushToken = token
         registerPushToken(token)
     }
 
     private func registerPushToken(_ token: String) {
         guard let targetURL = URL(string: "/push/register", relativeTo: webView?.url)?.absoluteURL else { return }
-        fetchCookieHeader(for: targetURL) { cookieHeader in
+        fetchCookieHeader(for: targetURL) { [weak self] cookieHeader in
             var request = URLRequest(url: targetURL)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1050,8 +1221,112 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
             }
             request.httpBody = try? JSONSerialization.data(withJSONObject: ["endpoint": "apns:\(token)"], options: [])
-            URLSession.shared.dataTask(with: request).resume()
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let preview = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                if let error {
+                    print("Push token registration failed: \(error.localizedDescription)")
+                    return
+                }
+                print("Push token registration response: status=\(status) body=\(preview.prefix(160))")
+                if status < 200 || status >= 300 {
+                    DispatchQueue.main.async {
+                        self?.showNativeFlash(message: "Push registration failed: \(status)", category: "error")
+                    }
+                }
+            }.resume()
         }
+    }
+
+    @objc private func handlePushNotificationTap(_ note: Notification) {
+        guard let link = note.userInfo?["link"] as? String else { return }
+        UserDefaults.standard.removeObject(forKey: "pia.pendingPushLink")
+        handlePushRoute(link)
+    }
+
+    private func handlePushRoute(_ rawRoute: String) {
+        guard let route = normalizedPushRoute(rawRoute) else { return }
+        if !isLoggedIntoWebApp {
+            pendingPushRoute = route
+            return
+        }
+        openPushRoute(route)
+    }
+
+    private func openPendingPushRouteIfPossible() {
+        guard isLoggedIntoWebApp, let route = pendingPushRoute else { return }
+        pendingPushRoute = nil
+        openPushRoute(route)
+    }
+
+    private func normalizedPushRoute(_ rawRoute: String) -> String? {
+        let trimmed = rawRoute.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.hasPrefix("/") {
+            return trimmed
+        }
+        guard let components = URLComponents(string: trimmed) else { return nil }
+        let path = components.path.isEmpty ? "/" : components.path
+        return "\(path)\(components.query.map { "?\($0)" } ?? "")"
+    }
+
+    private func primarySection(for route: String) -> PrimarySection {
+        if route.starts(with: "/messages") { return .messages }
+        if route.starts(with: "/search") { return .search }
+        if route.starts(with: "/users/") { return .profile }
+        return .feed
+    }
+
+    private func openPushRoute(_ route: String) {
+        let section = primarySection(for: route)
+        currentPrimarySection = section
+        currentRoute = route
+        lastRouteBySection[section] = route
+        updateNativeTabSelection(animated: true)
+
+        if section == .messages {
+            hideNativeFeedIfNeeded()
+            showNativeMessagesIfNeeded()
+            if let username = nativeMessageUsername(from: route) {
+                lastRouteBySection[.messages] = route
+                loadNativeThread(username: username, animate: nativeMessageTarget != nil)
+            } else {
+                nativeMessagesSubtitle.isHidden = false
+                nativeMessagesListTableView.isHidden = false
+                nativeThreadContainer.isHidden = true
+                nativeMessageTarget = nil
+                nativeThreadMessages = []
+                renderNativeThreadMessages()
+                loadNativeInbox()
+            }
+            return
+        }
+
+        hideNativeMessagesIfNeeded()
+        if section == .feed && routeSupportsNativeFeed(route) {
+            updateNativeSectionPresentation()
+            loadNativeFeed(force: false)
+        } else {
+            hideNativeFeedIfNeeded()
+        }
+        navigateWebView(to: route, replace: false)
+    }
+
+    private func navigateWebView(to route: String, replace: Bool) {
+        guard let payloadData = try? JSONSerialization.data(withJSONObject: ["route": route, "replace": replace], options: []),
+              let payloadJSON = String(data: payloadData, encoding: .utf8) else {
+            return
+        }
+        let script = """
+        (function(payload) {
+          if (window.navigateInApp) {
+            window.navigateInApp(payload.route, {replace: !!payload.replace, restoreScroll: false});
+          } else {
+            window.location.assign(payload.route);
+          }
+        })(\(payloadJSON));
+        """
+        webView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
     private func setComposeButtonVisible(_ visible: Bool, animated: Bool) {
@@ -1131,8 +1406,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if isShowingNativeMessages, !nativeThreadContainer.isHidden,
            let frameValue = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue {
             let keyboardFrame = view.convert(frameValue.cgRectValue, from: nil)
-            let overlap = max(0, view.bounds.maxY - keyboardFrame.minY)
-            nativeThreadComposerBottomConstraint?.constant = -(overlap - view.safeAreaInsets.bottom) - 8
+            currentKeyboardFrameInView = keyboardFrame
+            updateNativeThreadKeyboardPosition()
+            updateNativeThreadTableInsets()
             shouldAnimate = true
         }
         if !composerSheet.isHidden,
@@ -1149,8 +1425,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     @objc private func handleKeyboardWillHide(_ note: Notification) {
         var shouldAnimate = false
+        currentKeyboardFrameInView = nil
         if isShowingNativeMessages, !nativeThreadContainer.isHidden {
             nativeThreadComposerBottomConstraint?.constant = -14
+            updateNativeThreadTableInsets()
             shouldAnimate = true
         }
         if !composerSheet.isHidden {
@@ -1168,6 +1446,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
         UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState]) {
             self.view.layoutIfNeeded()
+            self.scrollNativeThreadToBottomWhenReady(animated: false)
         }
     }
 
@@ -1224,6 +1503,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
                     let latestPostID = (json["latest_post_id"] as? NSNumber)?.intValue ?? (json["post_id"] as? NSNumber)?.intValue ?? 0
                     self.injectPostedCard(html: html, latestPostID: latestPostID)
+                    if self.isShowingNativeFeed {
+                        self.loadNativeFeed(force: true)
+                    }
                     self.showNativeFlash(message: "Posted.", category: "success")
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
@@ -1467,6 +1749,78 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         return []
     }
 
+    private func loadNativeFeed(force: Bool) {
+        guard isLoggedIntoWebApp, !isLoadingNativeFeed else { return }
+        isLoadingNativeFeed = true
+        if !force && nativeFeedPosts.isEmpty {
+            nativeFeedEmptyLabel.text = "Loading posts..."
+            nativeFeedEmptyLabel.isHidden = false
+        }
+        let tab = currentFeedTab.isEmpty ? "home" : currentFeedTab
+        performNativeJSONRequest(path: "/api/feed?tab=\(tab.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? tab)") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isLoadingNativeFeed = false
+                self.nativeFeedRefreshControl.endRefreshing()
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeFeedResponse.self, from: data), payload.ok else {
+                        let apiError = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.error
+                        self.handleNativeFeedLoadError(apiError ?? "Feed error: \(self.nativeResponsePreview(from: data))")
+                        return
+                    }
+                    self.currentFeedTab = payload.feed_mode
+                    self.nativeFeedLatestPostID = payload.latest_post_id
+                    self.nativeFeedPosts = payload.posts
+                    self.syncNativeFeedSegment()
+                    self.nativeFeedTableView.reloadData()
+                    self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(8)))
+                    self.nativeFeedEmptyLabel.text = "No posts yet."
+                    self.nativeFeedEmptyLabel.isHidden = !payload.posts.isEmpty
+                case .failure(let error):
+                    self.nativeFeedEmptyLabel.text = "Feed couldn't load."
+                    self.nativeFeedEmptyLabel.isHidden = !self.nativeFeedPosts.isEmpty
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
+    private func handleNativeFeedLoadError(_ message: String) {
+        nativeFeedRefreshControl.endRefreshing()
+        nativeFeedEmptyLabel.text = message.isEmpty ? "Feed couldn't load." : message
+        nativeFeedEmptyLabel.isHidden = false
+        showNativeFlash(message: nativeFeedEmptyLabel.text ?? "Feed couldn't load.", category: "error")
+        if message.localizedCaseInsensitiveContains("terms") {
+            currentRoute = "/terms-agreement"
+            hideNativeFeedIfNeeded()
+            navigateWebView(to: "/terms-agreement", replace: false)
+        }
+    }
+
+    private func prefetchNativeFeedImages(for posts: [NativeFeedPost]) {
+        posts.forEach { post in
+            preloadNativeImage(urlString: post.author.avatar_url, cache: nativeAvatarImageCache)
+            preloadNativeImage(urlString: post.media_url, cache: nativeFeedImageCache)
+            if let quote = post.quote {
+                preloadNativeImage(urlString: quote.media_url, cache: nativeFeedImageCache)
+                if let author = quote.author {
+                    preloadNativeImage(urlString: author.avatar_url, cache: nativeAvatarImageCache)
+                }
+            }
+        }
+    }
+
+    private func preloadNativeImage(urlString: String, cache: NSCache<NSString, UIImage>) {
+        guard !urlString.isEmpty else { return }
+        let key = NSString(string: urlString)
+        guard cache.object(forKey: key) == nil, let url = URL(string: urlString) else { return }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data, let image = UIImage(data: data) else { return }
+            cache.setObject(image, forKey: key)
+        }.resume()
+    }
+
     private func loadNativeInbox() {
         guard isLoggedIntoWebApp, !isLoadingNativeInbox else { return }
         isLoadingNativeInbox = true
@@ -1484,6 +1838,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                         return
                     }
                     self.nativeMessageConversations = payload.conversations
+                    if let openUsername = self.nativeMessageTarget?.username {
+                        self.clearNativeUnread(for: openUsername)
+                    }
                     self.nativeMessagesListTableView.reloadData()
                     self.nativeMessagesEmptyLabel.isHidden = !payload.conversations.isEmpty || !self.nativeThreadContainer.isHidden
                 case .failure(let error):
@@ -1495,6 +1852,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func presentNativeThreadShell(for target: NativeUserSummary) {
         nativeMessageTarget = target
+        clearNativeUnread(for: target.username)
         nativeThreadTitleLabel.text = target.display_name
         nativeThreadVerifiedBadgeView.isHidden = !target.is_verified
         nativeThreadSubtitleLabel.text = "@\(target.username)"
@@ -1509,6 +1867,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadTableView.isHidden = false
         nativeThreadEmptyLabel.isHidden = true
         nativeThreadComposerBottomConstraint?.constant = -14
+        updateNativeThreadTextViewHeight(animated: false)
+        updateNativeThreadTableInsets()
         updateNativeThreadComposeState()
         view.layoutIfNeeded()
     }
@@ -1569,9 +1929,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.currentRoute = self.lastRouteBySection[.messages] ?? "/messages"
                     self.renderNativeThreadMessages()
                     self.nativeThreadEmptyLabel.isHidden = !payload.messages.isEmpty
-                    self.nativeThreadComposerBottomConstraint?.constant = -14
+                    self.updateNativeThreadKeyboardPosition()
+                    self.updateNativeThreadTableInsets()
                     self.view.layoutIfNeeded()
-                    self.scrollNativeThreadToBottom(animated: animate)
+                    self.scrollNativeThreadToBottomWhenReady(animated: animate)
+                    self.focusNativeThreadComposer()
+                    self.startNativeThreadRefresh(for: target.username)
                     self.nativeThreadContainer.alpha = 1
                     self.nativeThreadContainer.transform = .identity
                 case .failure(let error):
@@ -1584,9 +1947,222 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func scrollNativeThreadToBottom(animated: Bool) {
         guard !nativeThreadMessages.isEmpty else { return }
         nativeThreadTableView.layoutIfNeeded()
-        let lastRow = nativeThreadMessages.count - 1
+        let rowCount = nativeThreadTableView.numberOfRows(inSection: 0)
+        guard rowCount > 0 else { return }
+        let lastRow = min(nativeThreadMessages.count, rowCount) - 1
         guard lastRow >= 0 else { return }
         nativeThreadTableView.scrollToRow(at: IndexPath(row: lastRow, section: 0), at: .bottom, animated: animated)
+    }
+
+    private func scrollNativeThreadToBottomWhenReady(animated: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.nativeThreadTableView.layoutIfNeeded()
+            self.scrollNativeThreadToBottom(animated: animated)
+        }
+    }
+
+    private func focusNativeThreadComposer() {
+        guard isShowingNativeMessages,
+              !nativeThreadContainer.isHidden,
+              nativeMessageTarget != nil else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            guard let self,
+                  self.isShowingNativeMessages,
+                  !self.nativeThreadContainer.isHidden,
+                  self.nativeMessageTarget != nil else { return }
+            self.nativeThreadTextView.becomeFirstResponder()
+            self.updateNativeThreadKeyboardPosition()
+            self.updateNativeThreadComposeState()
+        }
+    }
+
+    private func startNativeThreadRefresh(for username: String) {
+        nativeThreadRefreshTimer?.invalidate()
+        let timer = Timer(timeInterval: 2.5, repeats: true) { [weak self] _ in
+            self?.refreshNativeThreadIfNeeded(username: username)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        nativeThreadRefreshTimer = timer
+        nativeThreadRefreshTimer?.tolerance = 0.5
+    }
+
+    private func stopNativeThreadRefresh() {
+        nativeThreadRefreshTimer?.invalidate()
+        nativeThreadRefreshTimer = nil
+        isRefreshingNativeThread = false
+    }
+
+    private func refreshNativeThreadIfNeeded(username: String) {
+        guard isLoggedIntoWebApp,
+              isShowingNativeMessages,
+              !nativeThreadContainer.isHidden,
+              nativeMessageTarget?.username == username,
+              !isLoadingNativeThread,
+              !isRefreshingNativeThread,
+              !isSendingNativeMessage else { return }
+
+        isRefreshingNativeThread = true
+        performNativeJSONRequest(path: "/api/messages/thread?user=\(username.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? username)") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isRefreshingNativeThread = false
+                guard self.nativeMessageTarget?.username == username else { return }
+                guard case .success(let data) = result,
+                      let payload = self.parseNativeThreadPayload(from: data),
+                      payload.ok else { return }
+
+                let currentIDs = Set(self.nativeThreadMessages.map(\.id))
+                let newMessages = payload.messages.filter { !currentIDs.contains($0.id) }
+                if !newMessages.isEmpty {
+                    newMessages.forEach { self.appendNativeThreadMessage($0, animated: true) }
+                    if let latest = newMessages.last, let target = self.nativeMessageTarget {
+                        self.updateNativeConversationPreview(for: target, message: latest)
+                    }
+                } else if payload.messages.count != self.nativeThreadMessages.count {
+                    self.nativeThreadMessages = payload.messages
+                    self.renderNativeThreadMessages()
+                }
+                self.clearNativeUnread(for: username)
+            }
+        }
+    }
+
+    private func updateNativeThreadKeyboardPosition() {
+        guard isShowingNativeMessages, !nativeThreadContainer.isHidden else { return }
+        guard let keyboardFrame = currentKeyboardFrameInView else {
+            nativeThreadComposerBottomConstraint?.constant = -14
+            return
+        }
+        let containerFrame = nativeThreadContainer.convert(nativeThreadContainer.bounds, to: view)
+        let overlap = max(0, containerFrame.maxY - keyboardFrame.minY)
+        nativeThreadComposerBottomConstraint?.constant = -(overlap + 14)
+    }
+
+    private func updateNativeThreadTableInsets() {
+        nativeThreadTableView.contentInset.bottom = 8
+        nativeThreadTableView.verticalScrollIndicatorInsets.bottom = 8
+    }
+
+    private func updateNativeThreadTextViewHeight(animated: Bool) {
+        let fittingSize = CGSize(width: max(nativeThreadTextView.bounds.width, 1), height: CGFloat.greatestFiniteMagnitude)
+        let measuredHeight = nativeThreadTextView.sizeThatFits(fittingSize).height
+        let targetHeight = min(max(measuredHeight, 44), 104)
+        nativeThreadTextViewHeightConstraint?.constant = targetHeight
+        nativeThreadTextView.isScrollEnabled = measuredHeight > 104
+        updateNativeThreadTableInsets()
+        let changes = {
+            self.view.layoutIfNeeded()
+            self.scrollNativeThreadToBottomWhenReady(animated: false)
+        }
+        if animated {
+            UIView.animate(withDuration: 0.12, delay: 0, options: [.beginFromCurrentState, .curveEaseOut], animations: changes)
+        } else {
+            changes()
+        }
+    }
+
+    private func nativeCurrentUserSummary() -> NativeUserSummary {
+        NativeUserSummary(
+            id: 0,
+            username: currentUsername,
+            display_name: currentUsername.isEmpty ? "You" : currentUsername,
+            avatar_url: "",
+            avatar_emoji: "🦅",
+            use_emoji: true,
+            is_verified: false,
+            is_creator: false
+        )
+    }
+
+    private func appendNativeThreadMessage(_ message: NativeThreadMessage, animated: Bool) {
+        let previousCount = nativeThreadMessages.count
+        let tableRows = nativeThreadTableView.numberOfRows(inSection: 0)
+        nativeThreadMessages.append(message)
+        nativeThreadEmptyLabel.isHidden = true
+
+        guard animated, tableRows == previousCount else {
+            renderNativeThreadMessages()
+            scrollNativeThreadToBottomWhenReady(animated: animated)
+            return
+        }
+
+        let indexPath = IndexPath(row: previousCount, section: 0)
+        nativeThreadTableView.performBatchUpdates({
+            nativeThreadTableView.insertRows(at: [indexPath], with: .bottom)
+        }, completion: { [weak self] _ in
+            self?.scrollNativeThreadToBottomWhenReady(animated: true)
+        })
+    }
+
+    private func replaceNativeThreadMessage(id: Int, with message: NativeThreadMessage) {
+        guard let index = nativeThreadMessages.firstIndex(where: { $0.id == id }) else { return }
+        nativeThreadMessages[index] = message
+        let rowCount = nativeThreadTableView.numberOfRows(inSection: 0)
+        guard index < rowCount else {
+            renderNativeThreadMessages()
+            return
+        }
+        nativeThreadTableView.reloadRows(at: [IndexPath(row: index, section: 0)], with: .fade)
+    }
+
+    private func removeNativeThreadMessage(id: Int) {
+        guard let index = nativeThreadMessages.firstIndex(where: { $0.id == id }) else { return }
+        let previousCount = nativeThreadMessages.count
+        let tableRows = nativeThreadTableView.numberOfRows(inSection: 0)
+        nativeThreadMessages.remove(at: index)
+        nativeThreadEmptyLabel.isHidden = !nativeThreadMessages.isEmpty
+
+        guard tableRows == previousCount, index < tableRows else {
+            renderNativeThreadMessages()
+            return
+        }
+
+        nativeThreadTableView.performBatchUpdates({
+            nativeThreadTableView.deleteRows(at: [IndexPath(row: index, section: 0)], with: .fade)
+        })
+    }
+
+    private func updateNativeConversationPreview(for target: NativeUserSummary, message: NativeThreadMessage) {
+        if let convoIndex = nativeMessageConversations.firstIndex(where: { $0.username == target.username }) {
+            nativeMessageConversations[convoIndex].latest_message = message.body
+            nativeMessageConversations[convoIndex].latest_message_relative = message.created_at_relative
+            nativeMessageConversations[convoIndex].latest_message_at = message.created_at
+            nativeMessageConversations[convoIndex].unread_count = target.username == nativeMessageTarget?.username ? 0 : nativeMessageConversations[convoIndex].unread_count
+            let updated = nativeMessageConversations.remove(at: convoIndex)
+            nativeMessageConversations.insert(updated, at: 0)
+        } else {
+            var newConversation = NativeMessageConversation(from: target)
+            newConversation.latest_message = message.body
+            newConversation.latest_message_relative = message.created_at_relative
+            newConversation.latest_message_at = message.created_at
+            nativeMessageConversations.insert(newConversation, at: 0)
+        }
+        nativeMessagesListTableView.reloadData()
+    }
+
+    private func clearNativeUnread(for username: String) {
+        guard let index = nativeMessageConversations.firstIndex(where: { $0.username == username }),
+              nativeMessageConversations[index].unread_count != 0 else { return }
+        nativeMessageConversations[index].unread_count = 0
+        let rowCount = nativeMessagesListTableView.numberOfRows(inSection: 0)
+        guard index < rowCount else {
+            nativeMessagesListTableView.reloadData()
+            return
+        }
+        nativeMessagesListTableView.reloadRows(at: [IndexPath(row: index, section: 0)], with: .fade)
+    }
+
+    private func animateNativeSendPress() {
+        UIView.animate(withDuration: 0.08, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
+            self.nativeThreadSendButton.transform = CGAffineTransform(scaleX: 0.94, y: 0.94)
+            self.nativeThreadComposerBar.transform = CGAffineTransform(translationX: 0, y: 1)
+        } completion: { _ in
+            UIView.animate(withDuration: 0.16, delay: 0, usingSpringWithDamping: 0.62, initialSpringVelocity: 0.5, options: [.beginFromCurrentState]) {
+                self.nativeThreadSendButton.transform = .identity
+                self.nativeThreadComposerBar.transform = .identity
+            }
+        }
     }
 
     private func multipartBody(boundary: String, body: String, feedTab: String, imageData: Data?, imageName: String?, mimeType: String) -> Data {
@@ -1669,6 +2245,30 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         openPrimarySection(section)
     }
 
+    @objc private func handleNativeFeedRefresh() {
+        loadNativeFeed(force: true)
+    }
+
+    @objc private func handleNativeFeedSegmentChanged() {
+        switch nativeFeedSegment.selectedSegmentIndex {
+        case 1:
+            currentFeedTab = "fyp"
+        case 2:
+            currentFeedTab = "breaking"
+        default:
+            currentFeedTab = "home"
+        }
+        let route = currentFeedTab == "home" ? "/" : "/?tab=\(currentFeedTab)"
+        currentRoute = route
+        lastRouteBySection[.feed] = route
+        nativeFeedPosts = []
+        nativeFeedTableView.reloadData()
+        nativeFeedEmptyLabel.text = "Loading posts..."
+        nativeFeedEmptyLabel.isHidden = false
+        navigateWebView(to: route, replace: false)
+        loadNativeFeed(force: true)
+    }
+
     private func openPrimarySection(_ section: PrimarySection) {
         if section == .messages {
             currentPrimarySection = .messages
@@ -1705,12 +2305,22 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         currentPrimarySection = section
         updateNativeTabSelection(animated: true)
         hideNativeMessagesIfNeeded()
+        if section == .feed {
+            currentFeedTab = preferredRoute.contains("tab=fyp") ? "fyp" : (preferredRoute.contains("tab=breaking") ? "breaking" : "home")
+            currentRoute = preferredRoute
+            lastRouteBySection[.feed] = preferredRoute
+            updateNativeSectionPresentation()
+            loadNativeFeed(force: false)
+        } else {
+            hideNativeFeedIfNeeded()
+        }
         let script = "window.nativeOpenPrimaryRoute && window.nativeOpenPrimaryRoute(\"\(section.rawValue)\", \"\(escapedUsername)\", \"\(escapedRoute)\", true);"
         webView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
     @objc private func handleNativeThreadBack() {
         nativeThreadTextView.resignFirstResponder()
+        stopNativeThreadRefresh()
         nativeThreadContainer.isHidden = true
         nativeThreadMessages = []
         renderNativeThreadMessages()
@@ -1730,7 +2340,27 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let body = nativeThreadTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty, !isSendingNativeMessage else { return }
         isSendingNativeMessage = true
+        animateNativeSendPress()
         updateNativeThreadComposeState()
+        let optimisticID = -Int(Date().timeIntervalSince1970 * 1000)
+        let previousConversations = nativeMessageConversations
+        let optimisticMessage = NativeThreadMessage(
+            id: optimisticID,
+            body: body,
+            is_mine: true,
+            is_read: true,
+            created_at: "",
+            created_at_relative: "now",
+            sender: nativeCurrentUserSummary(),
+            receiver: target
+        )
+        nativeThreadTextView.text = ""
+        updateNativeThreadTextViewHeight(animated: true)
+        appendNativeThreadMessage(optimisticMessage, animated: true)
+        updateNativeConversationPreview(for: target, message: optimisticMessage)
+        nativeThreadTextView.becomeFirstResponder()
+        updateNativeThreadComposeState()
+
         performNativeJSONRequest(path: "/api/messages/send", method: "POST", bodyObject: ["receiver": target.username, "body": body]) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -1738,6 +2368,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 switch result {
                 case .success(let data):
                     guard let payload = self.parseNativeSendMessagePayload(from: data), payload.ok else {
+                        self.removeNativeThreadMessage(id: optimisticID)
+                        self.nativeMessageConversations = previousConversations
+                        self.nativeMessagesListTableView.reloadData()
+                        self.nativeThreadTextView.text = body
+                        self.updateNativeThreadTextViewHeight(animated: true)
                         if let payload = self.parseNativeSendMessagePayload(from: data), let error = payload.error, !error.isEmpty {
                             self.showNativeFlash(message: error, category: "error")
                         } else {
@@ -1746,47 +2381,21 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                         self.updateNativeThreadComposeState()
                         return
                     }
-                    let message = payload.message ?? NativeThreadMessage(
-                        id: Int(Date().timeIntervalSince1970),
-                        body: body,
-                        is_mine: true,
-                        is_read: true,
-                        created_at: "",
-                        created_at_relative: "now",
-                        sender: NativeUserSummary(
-                            id: 0,
-                            username: self.currentUsername,
-                            display_name: self.currentUsername.isEmpty ? "You" : self.currentUsername,
-                            avatar_url: "",
-                            avatar_emoji: "🦅",
-                            use_emoji: true,
-                            is_verified: false,
-                            is_creator: false
-                        ),
-                        receiver: target
-                    )
-                    self.nativeThreadTextView.text = ""
-                    self.nativeThreadMessages.append(message)
-                    self.renderNativeThreadMessages()
-                    self.nativeThreadEmptyLabel.isHidden = true
-                    self.scrollNativeThreadToBottom(animated: true)
-                    if let convoIndex = self.nativeMessageConversations.firstIndex(where: { $0.username == target.username }) {
-                        self.nativeMessageConversations[convoIndex].latest_message = message.body
-                        self.nativeMessageConversations[convoIndex].latest_message_relative = message.created_at_relative
-                        self.nativeMessageConversations[convoIndex].latest_message_at = message.created_at
-                        let updated = self.nativeMessageConversations.remove(at: convoIndex)
-                        self.nativeMessageConversations.insert(updated, at: 0)
-                    } else {
-                        var newConversation = NativeMessageConversation(from: target)
-                        newConversation.latest_message = message.body
-                        newConversation.latest_message_relative = message.created_at_relative
-                        newConversation.latest_message_at = message.created_at
-                        self.nativeMessageConversations.insert(newConversation, at: 0)
+                    if let message = payload.message {
+                        self.replaceNativeThreadMessage(id: optimisticID, with: message)
+                        self.updateNativeConversationPreview(for: target, message: message)
                     }
+                    self.updateNativeThreadComposeState()
+                    self.nativeThreadTextView.becomeFirstResponder()
+                case .failure(let error):
+                    self.removeNativeThreadMessage(id: optimisticID)
+                    self.nativeMessageConversations = previousConversations
                     self.nativeMessagesListTableView.reloadData()
+                    self.nativeThreadTextView.text = body
+                    self.updateNativeThreadTextViewHeight(animated: true)
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
                     self.updateNativeThreadComposeState()
-                case .failure:
-                    self.updateNativeThreadComposeState()
+                    self.nativeThreadTextView.becomeFirstResponder()
                 }
             }
         }
@@ -1794,13 +2403,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     func textViewDidChange(_ textView: UITextView) {
         if textView === nativeThreadTextView {
-            nativeThreadPlaceholder.isHidden = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            let targetHeight = min(max(textView.contentSize.height, 24), 104)
-            textView.constraints.first(where: { $0.firstAttribute == .height })?.constant = targetHeight
             updateNativeThreadComposeState()
-            UIView.animate(withDuration: 0.14) {
-                self.view.layoutIfNeeded()
-            }
+            updateNativeThreadTextViewHeight(animated: true)
             return
         }
         composerPlaceholder.isHidden = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1815,11 +2419,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func renderNativeThreadMessages() {
         nativeThreadTableView.reloadData()
-        nativeThreadTableView.layoutIfNeeded()
         nativeThreadEmptyLabel.isHidden = !nativeThreadMessages.isEmpty
+        scrollNativeThreadToBottomWhenReady(animated: false)
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        if tableView === nativeFeedTableView {
+            return nativeFeedPosts.count
+        }
         if tableView === nativeMessagesListTableView {
             return nativeMessageConversations.count
         }
@@ -1827,6 +2434,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        if tableView === nativeFeedTableView {
+            let cell = tableView.dequeueReusableCell(withIdentifier: NativeFeedPostCell.reuseIdentifier, for: indexPath) as! NativeFeedPostCell
+            cell.configure(with: nativeFeedPosts[indexPath.row], avatarCache: nativeAvatarImageCache, mediaCache: nativeFeedImageCache)
+            return cell
+        }
         if tableView === nativeMessagesListTableView {
             let cell = tableView.dequeueReusableCell(withIdentifier: NativeConversationCell.reuseIdentifier, for: indexPath) as! NativeConversationCell
             cell.configure(with: nativeMessageConversations[indexPath.row], imageCache: nativeAvatarImageCache)
@@ -1839,6 +2451,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
+        if tableView === nativeFeedTableView {
+            let post = nativeFeedPosts[indexPath.row]
+            currentRoute = post.url
+            lastRouteBySection[.feed] = "/"
+            hideNativeFeedIfNeeded()
+            navigateWebView(to: post.url, replace: false)
+            return
+        }
         if tableView === nativeMessagesListTableView {
             let conversation = nativeMessageConversations[indexPath.row]
             presentNativeThreadShell(for: NativeUserSummary(
@@ -1853,6 +2473,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             ))
             loadNativeThread(username: conversation.username)
         }
+    }
+
+    func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
+        guard tableView === nativeFeedTableView else { return }
+        let posts = indexPaths.compactMap { indexPath in
+            indexPath.row < nativeFeedPosts.count ? nativeFeedPosts[indexPath.row] : nil
+        }
+        prefetchNativeFeedImages(for: posts)
     }
 
     @objc private func openPhotoPicker() {
@@ -1897,6 +2525,48 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             }
         }
     }
+}
+
+private struct NativeFeedResponse: Decodable {
+    let ok: Bool
+    let feed_mode: String
+    let latest_post_id: Int
+    let posts: [NativeFeedPost]
+}
+
+private struct NativeFeedPost: Decodable {
+    let id: Int
+    let body: String
+    let author: NativeUserSummary
+    let created_at_relative: String
+    let feed_tab: String
+    let media_url: String
+    let media_type: String
+    let quote: NativeFeedQuote?
+    let reposted_by: NativeUserSummary?
+    let url: String
+    let view_count: Int
+    let like_count: Int
+    let comment_count: Int
+    let repost_count: Int
+    let bookmark_count: Int
+    let has_liked: Bool
+    let has_reposted: Bool
+    let has_bookmarked: Bool
+    let is_breaking: Bool
+}
+
+private struct NativeFeedQuote: Decodable {
+    let id: Int
+    let body: String
+    let author: NativeUserSummary?
+    let media_url: String
+    let media_type: String
+}
+
+private struct NativeAPIErrorResponse: Decodable {
+    let ok: Bool?
+    let error: String?
 }
 
 private struct NativeInboxResponse: Decodable {
@@ -2095,6 +2765,330 @@ private final class NativeAvatarView: UIView {
                 self.emojiLabel.isHidden = true
             }
         }.resume()
+    }
+}
+
+private final class NativeFeedMediaView: UIView {
+    private let imageView = UIImageView()
+    private let videoBadge = UILabel()
+    private var currentURL = ""
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        backgroundColor = UIColor(red: 241.0 / 255.0, green: 245.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
+        layer.cornerRadius = 18
+        layer.cornerCurve = .continuous
+        clipsToBounds = true
+
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFill
+        imageView.clipsToBounds = true
+        addSubview(imageView)
+
+        videoBadge.translatesAutoresizingMaskIntoConstraints = false
+        videoBadge.text = "Video"
+        videoBadge.textColor = .white
+        videoBadge.font = .systemFont(ofSize: 13, weight: .bold)
+        videoBadge.textAlignment = .center
+        videoBadge.backgroundColor = UIColor.black.withAlphaComponent(0.48)
+        videoBadge.layer.cornerRadius = 12
+        videoBadge.layer.cornerCurve = .continuous
+        videoBadge.clipsToBounds = true
+        videoBadge.isHidden = true
+        addSubview(videoBadge)
+
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            videoBadge.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            videoBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            videoBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 58),
+            videoBadge.heightAnchor.constraint(equalToConstant: 24)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(urlString: String, mediaType: String, cache: NSCache<NSString, UIImage>) {
+        currentURL = urlString
+        videoBadge.isHidden = mediaType != "video"
+        imageView.image = nil
+        isHidden = urlString.isEmpty
+        guard !urlString.isEmpty else { return }
+        let key = NSString(string: urlString)
+        if let cached = cache.object(forKey: key) {
+            imageView.image = cached
+            return
+        }
+        guard let url = URL(string: urlString) else { return }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data, let image = UIImage(data: data) else { return }
+            cache.setObject(image, forKey: key)
+            DispatchQueue.main.async {
+                guard self.currentURL == urlString else { return }
+                self.imageView.image = image
+            }
+        }.resume()
+    }
+}
+
+private final class NativeFeedPostCell: UITableViewCell {
+    static let reuseIdentifier = "NativeFeedPostCell"
+
+    private let cardView = UIView()
+    private let repostLabel = UILabel()
+    private let avatarView = NativeAvatarView()
+    private let nameLabel = UILabel()
+    private let verifiedBadgeView = UIImageView()
+    private let usernameLabel = UILabel()
+    private let timeLabel = UILabel()
+    private let breakingLabel = UILabel()
+    private let bodyLabel = UILabel()
+    private let mediaView = NativeFeedMediaView()
+    private let quoteView = UIView()
+    private let quoteLabel = UILabel()
+    private let quoteBodyLabel = UILabel()
+    private let quoteMediaView = NativeFeedMediaView()
+    private let statsLabel = UILabel()
+    private let actionStack = UIStackView()
+    private var mediaHeightConstraint: NSLayoutConstraint!
+    private var quoteMediaHeightConstraint: NSLayoutConstraint!
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = .clear
+        selectionStyle = .none
+        contentView.backgroundColor = .clear
+
+        cardView.translatesAutoresizingMaskIntoConstraints = false
+        cardView.backgroundColor = UIColor.white.withAlphaComponent(0.92)
+        cardView.layer.cornerRadius = 22
+        cardView.layer.cornerCurve = .continuous
+        cardView.layer.borderWidth = 1
+        cardView.layer.borderColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.08).cgColor
+        contentView.addSubview(cardView)
+
+        repostLabel.translatesAutoresizingMaskIntoConstraints = false
+        repostLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        repostLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.8)
+        repostLabel.isHidden = true
+        cardView.addSubview(repostLabel)
+
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        cardView.addSubview(avatarView)
+
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = .systemFont(ofSize: 17, weight: .bold)
+        nameLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        cardView.addSubview(nameLabel)
+
+        verifiedBadgeView.translatesAutoresizingMaskIntoConstraints = false
+        verifiedBadgeView.image = UIImage(systemName: "checkmark.seal.fill")
+        verifiedBadgeView.tintColor = UIColor(red: 62.0 / 255.0, green: 164.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+        verifiedBadgeView.contentMode = .scaleAspectFit
+        verifiedBadgeView.isHidden = true
+        cardView.addSubview(verifiedBadgeView)
+
+        usernameLabel.translatesAutoresizingMaskIntoConstraints = false
+        usernameLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        usernameLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.92)
+        cardView.addSubview(usernameLabel)
+
+        timeLabel.translatesAutoresizingMaskIntoConstraints = false
+        timeLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        timeLabel.textColor = UIColor(red: 107.0 / 255.0, green: 119.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.86)
+        timeLabel.textAlignment = .right
+        cardView.addSubview(timeLabel)
+
+        breakingLabel.translatesAutoresizingMaskIntoConstraints = false
+        breakingLabel.text = "Breaking"
+        breakingLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        breakingLabel.textColor = UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 1)
+        breakingLabel.backgroundColor = UIColor(red: 255.0 / 255.0, green: 235.0 / 255.0, blue: 240.0 / 255.0, alpha: 1)
+        breakingLabel.textAlignment = .center
+        breakingLabel.layer.cornerRadius = 10
+        breakingLabel.layer.cornerCurve = .continuous
+        breakingLabel.clipsToBounds = true
+        breakingLabel.isHidden = true
+        cardView.addSubview(breakingLabel)
+
+        bodyLabel.translatesAutoresizingMaskIntoConstraints = false
+        bodyLabel.font = .systemFont(ofSize: 17, weight: .regular)
+        bodyLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        bodyLabel.numberOfLines = 0
+        cardView.addSubview(bodyLabel)
+
+        cardView.addSubview(mediaView)
+
+        quoteView.translatesAutoresizingMaskIntoConstraints = false
+        quoteView.backgroundColor = UIColor(red: 247.0 / 255.0, green: 250.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+        quoteView.layer.cornerRadius = 16
+        quoteView.layer.cornerCurve = .continuous
+        quoteView.layer.borderWidth = 1
+        quoteView.layer.borderColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.08).cgColor
+        quoteView.isHidden = true
+        cardView.addSubview(quoteView)
+
+        quoteLabel.translatesAutoresizingMaskIntoConstraints = false
+        quoteLabel.font = .systemFont(ofSize: 13, weight: .bold)
+        quoteLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.92)
+        quoteView.addSubview(quoteLabel)
+
+        quoteBodyLabel.translatesAutoresizingMaskIntoConstraints = false
+        quoteBodyLabel.font = .systemFont(ofSize: 15, weight: .regular)
+        quoteBodyLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.94)
+        quoteBodyLabel.numberOfLines = 3
+        quoteView.addSubview(quoteBodyLabel)
+        quoteView.addSubview(quoteMediaView)
+
+        statsLabel.translatesAutoresizingMaskIntoConstraints = false
+        statsLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        statsLabel.textColor = UIColor(red: 107.0 / 255.0, green: 119.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.88)
+        cardView.addSubview(statsLabel)
+
+        actionStack.translatesAutoresizingMaskIntoConstraints = false
+        actionStack.axis = .horizontal
+        actionStack.distribution = .fillEqually
+        actionStack.spacing = 8
+        ["heart", "arrow.2.squarepath", "bubble.left", "bookmark"].forEach { symbol in
+            let imageView = UIImageView(image: UIImage(systemName: symbol))
+            imageView.contentMode = .scaleAspectFit
+            imageView.tintColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+            actionStack.addArrangedSubview(imageView)
+        }
+        cardView.addSubview(actionStack)
+
+        mediaHeightConstraint = mediaView.heightAnchor.constraint(equalToConstant: 220)
+        quoteMediaHeightConstraint = quoteMediaView.heightAnchor.constraint(equalToConstant: 116)
+
+        NSLayoutConstraint.activate([
+            cardView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 6),
+            cardView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -6),
+            cardView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 7),
+            cardView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -7),
+
+            repostLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
+            repostLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -18),
+            repostLabel.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 14),
+
+            avatarView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
+            avatarView.topAnchor.constraint(equalTo: repostLabel.bottomAnchor, constant: 10),
+            avatarView.widthAnchor.constraint(equalToConstant: 48),
+            avatarView.heightAnchor.constraint(equalToConstant: 48),
+
+            timeLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
+            timeLabel.topAnchor.constraint(equalTo: avatarView.topAnchor, constant: 2),
+            timeLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 92),
+
+            nameLabel.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 12),
+            nameLabel.topAnchor.constraint(equalTo: avatarView.topAnchor, constant: 1),
+            verifiedBadgeView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 5),
+            verifiedBadgeView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            verifiedBadgeView.widthAnchor.constraint(equalToConstant: 17),
+            verifiedBadgeView.heightAnchor.constraint(equalToConstant: 17),
+            verifiedBadgeView.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -8),
+
+            usernameLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            usernameLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -8),
+            usernameLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
+
+            breakingLabel.leadingAnchor.constraint(equalTo: usernameLabel.leadingAnchor),
+            breakingLabel.topAnchor.constraint(equalTo: usernameLabel.bottomAnchor, constant: 7),
+            breakingLabel.widthAnchor.constraint(equalToConstant: 76),
+            breakingLabel.heightAnchor.constraint(equalToConstant: 22),
+
+            bodyLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
+            bodyLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -18),
+            bodyLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 14),
+
+            mediaView.leadingAnchor.constraint(equalTo: bodyLabel.leadingAnchor),
+            mediaView.trailingAnchor.constraint(equalTo: bodyLabel.trailingAnchor),
+            mediaView.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 12),
+            mediaHeightConstraint,
+
+            quoteView.leadingAnchor.constraint(equalTo: bodyLabel.leadingAnchor),
+            quoteView.trailingAnchor.constraint(equalTo: bodyLabel.trailingAnchor),
+            quoteView.topAnchor.constraint(equalTo: mediaView.bottomAnchor, constant: 12),
+
+            quoteLabel.leadingAnchor.constraint(equalTo: quoteView.leadingAnchor, constant: 14),
+            quoteLabel.trailingAnchor.constraint(equalTo: quoteView.trailingAnchor, constant: -14),
+            quoteLabel.topAnchor.constraint(equalTo: quoteView.topAnchor, constant: 12),
+            quoteBodyLabel.leadingAnchor.constraint(equalTo: quoteLabel.leadingAnchor),
+            quoteBodyLabel.trailingAnchor.constraint(equalTo: quoteLabel.trailingAnchor),
+            quoteBodyLabel.topAnchor.constraint(equalTo: quoteLabel.bottomAnchor, constant: 6),
+            quoteMediaView.leadingAnchor.constraint(equalTo: quoteLabel.leadingAnchor),
+            quoteMediaView.trailingAnchor.constraint(equalTo: quoteLabel.trailingAnchor),
+            quoteMediaView.topAnchor.constraint(equalTo: quoteBodyLabel.bottomAnchor, constant: 10),
+            quoteMediaHeightConstraint,
+            quoteMediaView.bottomAnchor.constraint(equalTo: quoteView.bottomAnchor, constant: -12),
+
+            statsLabel.leadingAnchor.constraint(equalTo: bodyLabel.leadingAnchor),
+            statsLabel.trailingAnchor.constraint(equalTo: bodyLabel.trailingAnchor),
+            statsLabel.topAnchor.constraint(equalTo: quoteView.bottomAnchor, constant: 12),
+
+            actionStack.leadingAnchor.constraint(equalTo: bodyLabel.leadingAnchor),
+            actionStack.trailingAnchor.constraint(equalTo: bodyLabel.trailingAnchor),
+            actionStack.topAnchor.constraint(equalTo: statsLabel.bottomAnchor, constant: 12),
+            actionStack.heightAnchor.constraint(equalToConstant: 24),
+            actionStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -16)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        repostLabel.isHidden = true
+        breakingLabel.isHidden = true
+        quoteView.isHidden = true
+        mediaView.isHidden = true
+        quoteMediaView.isHidden = true
+    }
+
+    func configure(with post: NativeFeedPost, avatarCache: NSCache<NSString, UIImage>, mediaCache: NSCache<NSString, UIImage>) {
+        repostLabel.text = post.reposted_by.map { "@\($0.username) reposted this" }
+        repostLabel.isHidden = post.reposted_by == nil
+        avatarView.configure(with: post.author, imageCache: avatarCache)
+        nameLabel.text = post.author.display_name
+        verifiedBadgeView.isHidden = !post.author.is_verified
+        usernameLabel.text = "@\(post.author.username)"
+        timeLabel.text = post.created_at_relative
+        breakingLabel.isHidden = !post.is_breaking
+        bodyLabel.text = post.body.isEmpty ? "Media post" : post.body
+        mediaHeightConstraint.constant = post.media_url.isEmpty ? 0 : 220
+        mediaView.configure(urlString: post.media_url, mediaType: post.media_type, cache: mediaCache)
+
+        if let quote = post.quote {
+            quoteView.isHidden = false
+            quoteView.layer.borderWidth = 1
+            quoteView.backgroundColor = UIColor(red: 247.0 / 255.0, green: 250.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+            quoteLabel.text = quote.author.map { "Quoted @\($0.username)" } ?? "Quoted post"
+            quoteBodyLabel.text = quote.body.isEmpty ? "Media post" : quote.body
+            quoteMediaHeightConstraint.constant = quote.media_url.isEmpty ? 0 : 116
+            quoteMediaView.configure(urlString: quote.media_url, mediaType: quote.media_type, cache: mediaCache)
+        } else {
+            quoteView.isHidden = false
+            quoteView.layer.borderWidth = 0
+            quoteView.backgroundColor = .clear
+            quoteLabel.text = ""
+            quoteBodyLabel.text = ""
+            quoteMediaHeightConstraint.constant = 0
+            quoteMediaView.configure(urlString: "", mediaType: "", cache: mediaCache)
+        }
+
+        statsLabel.text = "\(post.view_count) views  \(post.like_count) likes  \(post.comment_count) comments  \(post.repost_count) reposts  \(post.bookmark_count) saves"
+        if actionStack.arrangedSubviews.count == 4 {
+            actionStack.arrangedSubviews[0].tintColor = post.has_liked ? UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 1) : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+            actionStack.arrangedSubviews[1].tintColor = post.has_reposted ? UIColor(red: 11.0 / 255.0, green: 145.0 / 255.0, blue: 92.0 / 255.0, alpha: 1) : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+            actionStack.arrangedSubviews[3].tintColor = post.has_bookmarked ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1) : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+        }
     }
 }
 

@@ -1277,15 +1277,19 @@ def create_app():
     @app.route("/api/feed")
     @login_required
     def api_feed():
+        user = current_user()
         feed_mode = request.args.get("tab", "home").strip().lower()
         if feed_mode not in {"home", "fyp", "breaking"}:
             feed_mode = "home"
-        posts = get_feed_posts(current_user(), feed_mode=feed_mode)
-        register_visible_posts(posts, current_user())
+        posts = get_feed_posts(user, feed_mode=feed_mode)
+        register_visible_posts(posts, user)
         return jsonify(
             {
+                "ok": True,
+                "feed_mode": feed_mode,
                 "latest_post_id": max((post.id for post in posts), default=0),
                 "count": len(posts),
+                "posts": [serialized for serialized in (serialize_feed_post(post, user) for post in posts) if serialized],
                 "html": render_template("_feed_items.html", posts=posts),
             }
         )
@@ -1942,6 +1946,63 @@ def serialize_direct_message(message, viewer):
         "created_at_relative": timesince(message.created_at),
         "sender": serialize_user_brief(sender),
         "receiver": serialize_user_brief(receiver),
+    }
+
+
+def serialize_feed_post(post, viewer):
+    if not post or not post.author:
+        return None
+    timeline_created_at = getattr(post, "timeline_created_at", None) or post.created_at
+    media_path = post.media_path or ""
+    quote = None
+    if post.quote_post_id and post.quote_post and post.quote_post.author and viewer_can_see_post(viewer, post.quote_post):
+        quote_media_path = post.quote_post.media_path or ""
+        quote = {
+            "id": post.quote_post.id,
+            "body": post.quote_post.body or "",
+            "author": serialize_user_brief(post.quote_post.author),
+            "media_url": media_url(quote_media_path, external=True) if quote_media_path else "",
+            "media_type": post.quote_post.media_type or "",
+        }
+    elif post.quote_post_id:
+        quote = {
+            "id": post.quote_post_id,
+            "body": "This quoted post was deleted.",
+            "author": None,
+            "media_url": "",
+            "media_type": "",
+        }
+    reposted_by = getattr(post, "reposted_by", None)
+    reply_to = None
+    if post.reply_to_id:
+        reply_to = {
+            "id": post.reply_to_id,
+            "author_username": post.reply_to.author.username if post.reply_to and post.reply_to.author else "",
+        }
+    return {
+        "id": post.id,
+        "body": post.body or "",
+        "author": serialize_user_brief(post.author),
+        "created_at": post.created_at.isoformat() if post.created_at else "",
+        "created_at_relative": timesince(timeline_created_at),
+        "timeline_created_at": timeline_created_at.isoformat() if timeline_created_at else "",
+        "feed_tab": post.feed_tab or "home",
+        "media_url": media_url(media_path, external=True) if media_path else "",
+        "media_type": post.media_type or "",
+        "quote": quote,
+        "reply_to": reply_to,
+        "reposted_by": serialize_user_brief(reposted_by) if reposted_by else None,
+        "url": url_for("post_detail", post_id=post.id),
+        "view_count": post.view_count,
+        "like_count": post.like_count,
+        "comment_count": post.comment_count,
+        "repost_count": post.repost_count,
+        "bookmark_count": post.bookmark_count,
+        "has_liked": has_liked(viewer, post),
+        "has_reposted": has_reposted(viewer, post),
+        "has_bookmarked": has_bookmarked(viewer, post),
+        "can_edit": bool(viewer and (viewer.id == post.user_id or viewer.is_admin)),
+        "is_breaking": post.feed_tab == "breaking",
     }
 
 
