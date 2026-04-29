@@ -32,6 +32,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let composerPostButton = UIButton(type: .system)
     private let composeButton = UIButton(type: .system)
     private let nativeTabBar = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
+    private let nativeTabBarBackdrop = UIView()
     private let nativeTabStack = UIStackView()
     private let messagesTabButton = UIButton(type: .system)
     private let feedTabButton = UIButton(type: .system)
@@ -54,6 +55,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeThreadPlaceholder = UILabel()
     private let nativeThreadSendButton = UIButton(type: .system)
     private let nativeThreadLoadingView = UIActivityIndicatorView(style: .large)
+    private let nativeThreadEmptyLabel = UILabel()
 
     private var composerSheetBottomConstraint: NSLayoutConstraint?
     private var composeButtonBottomConstraint: NSLayoutConstraint?
@@ -333,11 +335,19 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func configureNativeTabBar() {
+        nativeTabBarBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        nativeTabBarBackdrop.backgroundColor = shellBackground
+        nativeTabBarBackdrop.alpha = 0
+        nativeTabBarBackdrop.isHidden = true
+        nativeTabBarBackdrop.layer.zPosition = 34
+        view.addSubview(nativeTabBarBackdrop)
+
         nativeTabBar.translatesAutoresizingMaskIntoConstraints = false
+        nativeTabBar.effect = nil
         nativeTabBar.layer.cornerRadius = 26
         nativeTabBar.layer.cornerCurve = .continuous
         nativeTabBar.clipsToBounds = true
-        nativeTabBar.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.9)
+        nativeTabBar.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.98)
         nativeTabBar.layer.borderWidth = 1
         nativeTabBar.layer.borderColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.1).cgColor
         nativeTabBar.layer.shadowColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.18).cgColor
@@ -365,6 +375,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         composeButtonBottomConstraint = composeButton.bottomAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -14)
 
         NSLayoutConstraint.activate([
+            nativeTabBarBackdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            nativeTabBarBackdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nativeTabBarBackdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            nativeTabBarBackdrop.topAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -14),
+
             nativeTabBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
             nativeTabBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
             nativeTabBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
@@ -521,6 +536,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadLoadingView.color = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.9)
         nativeMessagesContainer.addSubview(nativeThreadLoadingView)
 
+        nativeThreadEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeThreadEmptyLabel.text = "No messages yet."
+        nativeThreadEmptyLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        nativeThreadEmptyLabel.textColor = UIColor.white.withAlphaComponent(0.75)
+        nativeThreadEmptyLabel.textAlignment = .center
+        nativeThreadEmptyLabel.isHidden = true
+        nativeThreadContainer.addSubview(nativeThreadEmptyLabel)
+
         nativeThreadComposerBottomConstraint = nativeThreadComposerBar.bottomAnchor.constraint(equalTo: nativeThreadContainer.bottomAnchor, constant: -14)
 
         NSLayoutConstraint.activate([
@@ -597,7 +620,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeThreadSendButton.heightAnchor.constraint(equalToConstant: 38),
 
             nativeThreadLoadingView.centerXAnchor.constraint(equalTo: nativeMessagesContainer.centerXAnchor),
-            nativeThreadLoadingView.centerYAnchor.constraint(equalTo: nativeMessagesContainer.centerYAnchor)
+            nativeThreadLoadingView.centerYAnchor.constraint(equalTo: nativeMessagesContainer.centerYAnchor),
+
+            nativeThreadEmptyLabel.centerXAnchor.constraint(equalTo: nativeThreadTableView.centerXAnchor),
+            nativeThreadEmptyLabel.centerYAnchor.constraint(equalTo: nativeThreadTableView.centerYAnchor)
         ])
 
         let threadGradient = CAGradientLayer()
@@ -679,15 +705,21 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         let changes = {
             self.nativeTabBar.alpha = visible ? 1 : 0
+            self.nativeTabBarBackdrop.alpha = visible ? 1 : 0
         }
         let completion: (Bool) -> Void = { _ in
             if !visible {
                 self.nativeTabBar.isHidden = true
+                self.nativeTabBarBackdrop.isHidden = true
             }
         }
         if animated {
+            if visible {
+                self.nativeTabBarBackdrop.isHidden = false
+            }
             UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut], animations: changes, completion: completion)
         } else {
+            nativeTabBarBackdrop.isHidden = !visible
             changes()
             completion(true)
         }
@@ -1287,7 +1319,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadContainer.transform = .identity
         nativeThreadComposerBar.isHidden = false
         nativeThreadTableView.isHidden = false
+        nativeThreadEmptyLabel.isHidden = true
+        nativeThreadComposerBottomConstraint?.constant = -14
         updateNativeThreadComposeState()
+        view.layoutIfNeeded()
     }
 
     private func loadNativeThread(username: String, animate: Bool = true) {
@@ -1309,6 +1344,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         nativeThreadMessages = []
         nativeThreadTableView.reloadData()
+        nativeThreadEmptyLabel.isHidden = true
         nativeThreadLoadingView.startAnimating()
         performNativeJSONRequest(path: "/api/messages/thread?user=\(username.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? username)") { [weak self] result in
             DispatchQueue.main.async {
@@ -1327,6 +1363,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.lastRouteBySection[.messages] = "/messages?user=\(payload.target.username)"
                     self.currentRoute = self.lastRouteBySection[.messages] ?? "/messages"
                     self.nativeThreadTableView.reloadData()
+                    self.nativeThreadEmptyLabel.isHidden = !payload.messages.isEmpty
+                    self.nativeThreadComposerBottomConstraint?.constant = -14
+                    self.view.layoutIfNeeded()
                     self.nativeThreadTableView.layoutIfNeeded()
                     self.scrollNativeThreadToBottom(animated: animate)
                     if animate {
@@ -1469,6 +1508,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadContainer.isHidden = true
         nativeThreadMessages = []
         nativeThreadTableView.reloadData()
+        nativeThreadEmptyLabel.isHidden = true
+        nativeThreadComposerBottomConstraint?.constant = -14
         nativeMessageTarget = nil
         nativeMessagesSubtitle.isHidden = false
         nativeMessagesListTableView.isHidden = false
@@ -1768,18 +1809,18 @@ private final class NativeAvatarView: UIView {
 
     func configure(with user: NativeUserSummary, imageCache: NSCache<NSString, UIImage>) {
         currentAvatarKey = user.avatar_url
+        emojiLabel.text = user.avatar_emoji
+        emojiLabel.isHidden = false
         if user.use_emoji || user.avatar_url.isEmpty {
             imageView.isHidden = true
             imageView.image = nil
-            emojiLabel.isHidden = false
-            emojiLabel.text = user.avatar_emoji
             return
         }
-        emojiLabel.isHidden = true
         let cacheKey = NSString(string: user.avatar_url)
         if let cached = imageCache.object(forKey: cacheKey) {
             imageView.image = cached
             imageView.isHidden = false
+            emojiLabel.isHidden = true
             return
         }
         imageView.isHidden = true
@@ -1792,6 +1833,7 @@ private final class NativeAvatarView: UIView {
                 guard self.currentAvatarKey == user.avatar_url else { return }
                 self.imageView.image = image
                 self.imageView.isHidden = false
+                self.emojiLabel.isHidden = true
             }
         }.resume()
     }
