@@ -13,7 +13,7 @@ from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, current_app, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, current_app, flash, has_app_context, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from flask_sqlalchemy import SQLAlchemy
 from markupsafe import Markup, escape
 from sqlalchemy import and_, event, or_, text
@@ -295,11 +295,19 @@ def dispatch_pending_push_notifications(session):
     pending_notifications = session.info.pop(PUSH_QUEUE_KEY, [])
     if not pending_notifications:
         return
-    for payload in pending_notifications:
+    if not has_app_context():
+        return
+    app = current_app._get_current_object()
+    with app.app_context():
+        db.session.remove()
         try:
-            deliver_push_notification(payload)
-        except Exception:
-            continue
+            for payload in pending_notifications:
+                try:
+                    deliver_push_notification(payload)
+                except Exception:
+                    app.logger.exception("Push delivery failed for payload: %s", payload)
+        finally:
+            db.session.remove()
 
 
 @event.listens_for(Session, "after_rollback")
