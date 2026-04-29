@@ -1283,6 +1283,14 @@ def create_app():
             feed_mode = "home"
         posts = get_feed_posts(user, feed_mode=feed_mode)
         register_visible_posts(posts, user)
+        story_cutoff = datetime.now(timezone.utc)
+        followed_ids = [follow.followed_id for follow in Follow.query.filter_by(follower_id=user.id).all()]
+        stories = (
+            Story.query.filter(Story.expires_at > story_cutoff, Story.user_id.in_([user.id] + followed_ids))
+            .order_by(Story.created_at.desc())
+            .limit(12)
+            .all()
+        )
         return jsonify(
             {
                 "ok": True,
@@ -1290,6 +1298,9 @@ def create_app():
                 "latest_post_id": max((post.id for post in posts), default=0),
                 "count": len(posts),
                 "posts": [serialized for serialized in (serialize_feed_post(post, user) for post in posts) if serialized],
+                "stories": [serialized for serialized in (serialize_feed_story(story) for story in stories) if serialized],
+                "current_user": serialize_user_brief(user),
+                "current_user_story": story_owner_has_active_story(user),
                 "html": render_template("_feed_items.html", posts=posts),
             }
         )
@@ -1946,6 +1957,17 @@ def serialize_direct_message(message, viewer):
         "created_at_relative": timesince(message.created_at),
         "sender": serialize_user_brief(sender),
         "receiver": serialize_user_brief(receiver),
+    }
+
+
+def serialize_feed_story(story):
+    if not story or not story.author:
+        return None
+    return {
+        "id": story.id,
+        "author": serialize_user_brief(story.author),
+        "url": url_for("story_view", story_id=story.id),
+        "expires_at": story.expires_at.isoformat() if story.expires_at else "",
     }
 
 

@@ -62,6 +62,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeFeedTableView = UITableView(frame: .zero, style: .plain)
     private let nativeFeedEmptyLabel = UILabel()
     private let nativeFeedRefreshControl = UIRefreshControl()
+    private let nativeFeedStoriesHeader = NativeStoriesHeaderView()
 
     private var composerSheetBottomConstraint: NSLayoutConstraint?
     private var composeButtonBottomConstraint: NSLayoutConstraint?
@@ -101,6 +102,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var nativeMessageConversations: [NativeMessageConversation] = []
     private var nativeThreadMessages: [NativeThreadMessage] = []
     private var nativeFeedPosts: [NativeFeedPost] = []
+    private var nativeFeedStories: [NativeFeedStory] = []
     private var nativeFeedLatestPostID = 0
     private var nativeMessageTarget: NativeUserSummary?
     private var pendingNativeJSONRequests: [String: (Result<Data, Error>) -> Void] = [:]
@@ -146,6 +148,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         gradientLayer.frame = view.bounds
+        if nativeFeedTableView.tableHeaderView === nativeFeedStoriesHeader,
+           nativeFeedStoriesHeader.frame.width != nativeFeedTableView.bounds.width {
+            nativeFeedStoriesHeader.frame = CGRect(x: 0, y: 0, width: nativeFeedTableView.bounds.width, height: 120)
+            nativeFeedTableView.tableHeaderView = nativeFeedStoriesHeader
+        }
         if let threadGradient = nativeThreadContainer.layer.value(forKey: "threadGradientLayer") as? CAGradientLayer {
             threadGradient.frame = nativeThreadContainer.bounds
         }
@@ -715,6 +722,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeFeedTableView.register(NativeFeedPostCell.self, forCellReuseIdentifier: NativeFeedPostCell.reuseIdentifier)
         nativeFeedRefreshControl.addTarget(self, action: #selector(handleNativeFeedRefresh), for: .valueChanged)
         nativeFeedTableView.refreshControl = nativeFeedRefreshControl
+        nativeFeedStoriesHeader.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: 120)
+        nativeFeedStoriesHeader.onAddStory = { [weak self] in
+            self?.openNativeStoryComposer()
+        }
+        nativeFeedStoriesHeader.onOpenStory = { [weak self] story in
+            self?.openNativeStory(story)
+        }
+        nativeFeedTableView.tableHeaderView = nativeFeedStoriesHeader
         nativeFeedContainer.addSubview(nativeFeedTableView)
 
         nativeFeedEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1125,7 +1140,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeMessageConversations = []
             nativeThreadMessages = []
             nativeFeedPosts = []
+            nativeFeedStories = []
             nativeFeedLatestPostID = 0
+            nativeFeedStoriesHeader.configure(stories: [], currentUser: nil, hasCurrentUserStory: false, imageCache: nativeAvatarImageCache)
             lastRouteBySection = [
                 .messages: "/messages",
                 .feed: "/",
@@ -1772,9 +1789,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.currentFeedTab = payload.feed_mode
                     self.nativeFeedLatestPostID = payload.latest_post_id
                     self.nativeFeedPosts = payload.posts
+                    self.nativeFeedStories = payload.stories
+                    self.nativeFeedStoriesHeader.configure(
+                        stories: payload.stories,
+                        currentUser: payload.current_user,
+                        hasCurrentUserStory: payload.current_user_story,
+                        imageCache: self.nativeAvatarImageCache
+                    )
                     self.syncNativeFeedSegment()
                     self.nativeFeedTableView.reloadData()
                     self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(8)))
+                    self.prefetchNativeStoryImages(for: payload.stories)
                     self.nativeFeedEmptyLabel.text = "No posts yet."
                     self.nativeFeedEmptyLabel.isHidden = !payload.posts.isEmpty
                 case .failure(let error):
@@ -1808,6 +1833,36 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     preloadNativeImage(urlString: author.avatar_url, cache: nativeAvatarImageCache)
                 }
             }
+        }
+    }
+
+    private func prefetchNativeStoryImages(for stories: [NativeFeedStory]) {
+        stories.forEach { story in
+            preloadNativeImage(urlString: story.author.avatar_url, cache: nativeAvatarImageCache)
+        }
+    }
+
+    private func openNativeStory(_ story: NativeFeedStory) {
+        currentRoute = story.url
+        hideNativeFeedIfNeeded()
+        navigateWebView(to: story.url, replace: false)
+    }
+
+    private func openNativeStoryComposer() {
+        hideNativeFeedIfNeeded()
+        navigateWebView(to: "/", replace: false)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            let script = """
+            (function() {
+              const input = document.querySelector('.story-inline-add input[type="file"]');
+              if (input) {
+                input.click();
+                return true;
+              }
+              return false;
+            })();
+            """
+            self?.webView?.evaluateJavaScript(script, completionHandler: nil)
         }
     }
 
@@ -2269,6 +2324,35 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         loadNativeFeed(force: true)
     }
 
+    private func handleNativeFeedPostAction(_ post: NativeFeedPost, action: NativeFeedPostAction) {
+        switch action {
+        case .comment:
+            currentRoute = post.url
+            hideNativeFeedIfNeeded()
+            navigateWebView(to: post.url, replace: false)
+        case .like:
+            performNativeFeedPostAction(path: "/post/\(post.id)/like")
+        case .repost:
+            performNativeFeedPostAction(path: "/post/\(post.id)/repost")
+        case .bookmark:
+            performNativeFeedPostAction(path: "/post/\(post.id)/bookmark")
+        }
+    }
+
+    private func performNativeFeedPostAction(path: String) {
+        performNativeJSONRequest(path: path, method: "POST") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.loadNativeFeed(force: true)
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
     private func openPrimarySection(_ section: PrimarySection) {
         if section == .messages {
             currentPrimarySection = .messages
@@ -2437,6 +2521,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if tableView === nativeFeedTableView {
             let cell = tableView.dequeueReusableCell(withIdentifier: NativeFeedPostCell.reuseIdentifier, for: indexPath) as! NativeFeedPostCell
             cell.configure(with: nativeFeedPosts[indexPath.row], avatarCache: nativeAvatarImageCache, mediaCache: nativeFeedImageCache)
+            cell.onAction = { [weak self] post, action in
+                self?.handleNativeFeedPostAction(post, action: action)
+            }
             return cell
         }
         if tableView === nativeMessagesListTableView {
@@ -2532,6 +2619,37 @@ private struct NativeFeedResponse: Decodable {
     let feed_mode: String
     let latest_post_id: Int
     let posts: [NativeFeedPost]
+    let stories: [NativeFeedStory]
+    let current_user: NativeUserSummary?
+    let current_user_story: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case ok
+        case feed_mode
+        case latest_post_id
+        case posts
+        case stories
+        case current_user
+        case current_user_story
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decode(Bool.self, forKey: .ok)
+        feed_mode = try container.decode(String.self, forKey: .feed_mode)
+        latest_post_id = try container.decode(Int.self, forKey: .latest_post_id)
+        posts = try container.decode([NativeFeedPost].self, forKey: .posts)
+        stories = try container.decodeIfPresent([NativeFeedStory].self, forKey: .stories) ?? []
+        current_user = try container.decodeIfPresent(NativeUserSummary.self, forKey: .current_user)
+        current_user_story = try container.decodeIfPresent(Bool.self, forKey: .current_user_story) ?? false
+    }
+}
+
+private struct NativeFeedStory: Decodable {
+    let id: Int
+    let author: NativeUserSummary
+    let url: String
+    let expires_at: String
 }
 
 private struct NativeFeedPost: Decodable {
@@ -2768,6 +2886,165 @@ private final class NativeAvatarView: UIView {
     }
 }
 
+private final class NativeStoriesHeaderView: UIView {
+    private let titleLabel = UILabel()
+    private let discoverLabel = UILabel()
+    private let scrollView = UIScrollView()
+    private let stackView = UIStackView()
+    var onAddStory: (() -> Void)?
+    var onOpenStory: ((NativeFeedStory) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = "Stories"
+        titleLabel.font = .systemFont(ofSize: 18, weight: .bold)
+        titleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        addSubview(titleLabel)
+
+        discoverLabel.translatesAutoresizingMaskIntoConstraints = false
+        discoverLabel.text = "Discover"
+        discoverLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        discoverLabel.textColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.84)
+        addSubview(discoverLabel)
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.alwaysBounceHorizontal = true
+        addSubview(scrollView)
+
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        stackView.axis = .horizontal
+        stackView.alignment = .top
+        stackView.spacing = 12
+        scrollView.addSubview(stackView)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            discoverLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            discoverLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            scrollView.heightAnchor.constraint(equalToConstant: 78),
+            stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
+            stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
+            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            stackView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(stories: [NativeFeedStory], currentUser: NativeUserSummary?, hasCurrentUserStory: Bool, imageCache: NSCache<NSString, UIImage>) {
+        stackView.arrangedSubviews.forEach { view in
+            stackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        if let currentUser {
+            let addChip = NativeStoryChipView()
+            addChip.configure(user: currentUser, title: "Your Story", active: hasCurrentUserStory, showsAddBadge: true, imageCache: imageCache)
+            addChip.addTarget(self, action: #selector(handleAddStoryTap), for: .touchUpInside)
+            stackView.addArrangedSubview(addChip)
+        }
+
+        stories.forEach { story in
+            let chip = NativeStoryChipView()
+            chip.configure(user: story.author, title: "@\(story.author.username)", active: true, showsAddBadge: false, imageCache: imageCache)
+            chip.story = story
+            chip.addTarget(self, action: #selector(handleStoryTap(_:)), for: .touchUpInside)
+            stackView.addArrangedSubview(chip)
+        }
+
+        if stories.isEmpty {
+            let emptyLabel = UILabel()
+            emptyLabel.text = "Fresh stories will show here."
+            emptyLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+            emptyLabel.textColor = UIColor(red: 107.0 / 255.0, green: 119.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.82)
+            stackView.addArrangedSubview(emptyLabel)
+        }
+    }
+
+    @objc private func handleAddStoryTap() {
+        onAddStory?()
+    }
+
+    @objc private func handleStoryTap(_ sender: NativeStoryChipView) {
+        guard let story = sender.story else { return }
+        onOpenStory?(story)
+    }
+}
+
+private final class NativeStoryChipView: UIControl {
+    private let avatarView = NativeAvatarView()
+    private let titleLabel = UILabel()
+    private let addBadge = UILabel()
+    var story: NativeFeedStory?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.isUserInteractionEnabled = false
+        addSubview(avatarView)
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        titleLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.96)
+        titleLabel.textAlignment = .center
+        titleLabel.lineBreakMode = .byTruncatingTail
+        addSubview(titleLabel)
+
+        addBadge.translatesAutoresizingMaskIntoConstraints = false
+        addBadge.text = "+"
+        addBadge.textColor = .white
+        addBadge.font = .systemFont(ofSize: 16, weight: .bold)
+        addBadge.textAlignment = .center
+        addBadge.backgroundColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        addBadge.layer.cornerRadius = 12
+        addBadge.layer.cornerCurve = .continuous
+        addBadge.clipsToBounds = true
+        addSubview(addBadge)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 72),
+            avatarView.topAnchor.constraint(equalTo: topAnchor),
+            avatarView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            avatarView.widthAnchor.constraint(equalToConstant: 54),
+            avatarView.heightAnchor.constraint(equalToConstant: 54),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            titleLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 6),
+            addBadge.trailingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 2),
+            addBadge.bottomAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 2),
+            addBadge.widthAnchor.constraint(equalToConstant: 24),
+            addBadge.heightAnchor.constraint(equalToConstant: 24)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(user: NativeUserSummary, title: String, active: Bool, showsAddBadge: Bool, imageCache: NSCache<NSString, UIImage>) {
+        avatarView.configure(with: user, imageCache: imageCache)
+        avatarView.layer.cornerRadius = 27
+        avatarView.layer.cornerCurve = .continuous
+        avatarView.layer.borderWidth = active ? 2 : 0
+        avatarView.layer.borderColor = UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 0.84).cgColor
+        titleLabel.text = title
+        addBadge.isHidden = !showsAddBadge
+    }
+}
+
 private final class NativeFeedMediaView: UIView {
     private let imageView = UIImageView()
     private let videoBadge = UILabel()
@@ -2837,6 +3114,13 @@ private final class NativeFeedMediaView: UIView {
     }
 }
 
+private enum NativeFeedPostAction: Int {
+    case like = 0
+    case repost = 1
+    case comment = 2
+    case bookmark = 3
+}
+
 private final class NativeFeedPostCell: UITableViewCell {
     static let reuseIdentifier = "NativeFeedPostCell"
 
@@ -2858,6 +3142,10 @@ private final class NativeFeedPostCell: UITableViewCell {
     private let actionStack = UIStackView()
     private var mediaHeightConstraint: NSLayoutConstraint!
     private var quoteMediaHeightConstraint: NSLayoutConstraint!
+    private var bodyTopToAvatarConstraint: NSLayoutConstraint!
+    private var bodyTopToBreakingConstraint: NSLayoutConstraint!
+    private var currentPost: NativeFeedPost?
+    var onAction: ((NativeFeedPost, NativeFeedPostAction) -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -2955,16 +3243,22 @@ private final class NativeFeedPostCell: UITableViewCell {
         actionStack.axis = .horizontal
         actionStack.distribution = .fillEqually
         actionStack.spacing = 8
-        ["heart", "arrow.2.squarepath", "bubble.left", "bookmark"].forEach { symbol in
-            let imageView = UIImageView(image: UIImage(systemName: symbol))
-            imageView.contentMode = .scaleAspectFit
-            imageView.tintColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
-            actionStack.addArrangedSubview(imageView)
+        ["heart", "arrow.2.squarepath", "bubble.left", "bookmark"].enumerated().forEach { index, symbol in
+            let button = UIButton(type: .system)
+            button.setImage(UIImage(systemName: symbol), for: .normal)
+            button.tintColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+            button.tag = index
+            button.addTarget(self, action: #selector(handleActionTap(_:)), for: .touchUpInside)
+            button.imageView?.contentMode = .scaleAspectFit
+            button.accessibilityLabel = ["Like", "Repost", "Comment", "Save"][index]
+            actionStack.addArrangedSubview(button)
         }
         cardView.addSubview(actionStack)
 
         mediaHeightConstraint = mediaView.heightAnchor.constraint(equalToConstant: 220)
         quoteMediaHeightConstraint = quoteMediaView.heightAnchor.constraint(equalToConstant: 116)
+        bodyTopToAvatarConstraint = bodyLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 14)
+        bodyTopToBreakingConstraint = bodyLabel.topAnchor.constraint(equalTo: breakingLabel.bottomAnchor, constant: 8)
 
         NSLayoutConstraint.activate([
             cardView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 6),
@@ -3004,7 +3298,7 @@ private final class NativeFeedPostCell: UITableViewCell {
 
             bodyLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
             bodyLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -18),
-            bodyLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 14),
+            bodyTopToAvatarConstraint,
 
             mediaView.leadingAnchor.constraint(equalTo: bodyLabel.leadingAnchor),
             mediaView.trailingAnchor.constraint(equalTo: bodyLabel.trailingAnchor),
@@ -3050,9 +3344,11 @@ private final class NativeFeedPostCell: UITableViewCell {
         quoteView.isHidden = true
         mediaView.isHidden = true
         quoteMediaView.isHidden = true
+        currentPost = nil
     }
 
     func configure(with post: NativeFeedPost, avatarCache: NSCache<NSString, UIImage>, mediaCache: NSCache<NSString, UIImage>) {
+        currentPost = post
         repostLabel.text = post.reposted_by.map { "@\($0.username) reposted this" }
         repostLabel.isHidden = post.reposted_by == nil
         avatarView.configure(with: post.author, imageCache: avatarCache)
@@ -3061,6 +3357,8 @@ private final class NativeFeedPostCell: UITableViewCell {
         usernameLabel.text = "@\(post.author.username)"
         timeLabel.text = post.created_at_relative
         breakingLabel.isHidden = !post.is_breaking
+        bodyTopToAvatarConstraint.isActive = !post.is_breaking
+        bodyTopToBreakingConstraint.isActive = post.is_breaking
         bodyLabel.text = post.body.isEmpty ? "Media post" : post.body
         mediaHeightConstraint.constant = post.media_url.isEmpty ? 0 : 220
         mediaView.configure(urlString: post.media_url, mediaType: post.media_type, cache: mediaCache)
@@ -3089,6 +3387,12 @@ private final class NativeFeedPostCell: UITableViewCell {
             actionStack.arrangedSubviews[1].tintColor = post.has_reposted ? UIColor(red: 11.0 / 255.0, green: 145.0 / 255.0, blue: 92.0 / 255.0, alpha: 1) : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
             actionStack.arrangedSubviews[3].tintColor = post.has_bookmarked ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1) : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
         }
+    }
+
+    @objc private func handleActionTap(_ sender: UIButton) {
+        guard let currentPost, let action = NativeFeedPostAction(rawValue: sender.tag) else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        onAction?(currentPost, action)
     }
 }
 
