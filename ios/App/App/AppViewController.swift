@@ -46,6 +46,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeThreadBackButton = UIButton(type: .system)
     private let nativeThreadAvatarView = NativeAvatarView()
     private let nativeThreadTitleLabel = UILabel()
+    private let nativeThreadVerifiedBadgeView = UIImageView()
     private let nativeThreadSubtitleLabel = UILabel()
     private let nativeThreadTableView = UITableView(frame: .zero, style: .plain)
     private let nativeThreadComposerBar = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
@@ -382,7 +383,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeMessagesContainer.translatesAutoresizingMaskIntoConstraints = false
         nativeMessagesContainer.alpha = 0
         nativeMessagesContainer.isHidden = true
-        nativeMessagesContainer.backgroundColor = .clear
+        nativeMessagesContainer.backgroundColor = shellBackground
+        nativeMessagesContainer.layer.zPosition = 40
         view.addSubview(nativeMessagesContainer)
 
         nativeMessagesHeader.translatesAutoresizingMaskIntoConstraints = false
@@ -450,6 +452,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadTitleLabel.font = .systemFont(ofSize: 20, weight: .bold)
         nativeThreadTitleLabel.textColor = UIColor.white
         nativeThreadContainer.addSubview(nativeThreadTitleLabel)
+
+        nativeThreadVerifiedBadgeView.translatesAutoresizingMaskIntoConstraints = false
+        nativeThreadVerifiedBadgeView.image = UIImage(systemName: "checkmark.seal.fill")
+        nativeThreadVerifiedBadgeView.tintColor = UIColor(red: 62.0 / 255.0, green: 164.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+        nativeThreadVerifiedBadgeView.contentMode = .scaleAspectFit
+        nativeThreadVerifiedBadgeView.isHidden = true
+        nativeThreadContainer.addSubview(nativeThreadVerifiedBadgeView)
 
         nativeThreadSubtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         nativeThreadSubtitleLabel.font = .systemFont(ofSize: 15, weight: .medium)
@@ -549,8 +558,15 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeThreadAvatarView.heightAnchor.constraint(equalToConstant: 54),
 
             nativeThreadTitleLabel.leadingAnchor.constraint(equalTo: nativeThreadAvatarView.trailingAnchor, constant: 14),
-            nativeThreadTitleLabel.trailingAnchor.constraint(equalTo: nativeThreadContainer.trailingAnchor, constant: -18),
             nativeThreadTitleLabel.topAnchor.constraint(equalTo: nativeThreadAvatarView.topAnchor, constant: 2),
+
+            nativeThreadVerifiedBadgeView.leadingAnchor.constraint(equalTo: nativeThreadTitleLabel.trailingAnchor, constant: 6),
+            nativeThreadVerifiedBadgeView.centerYAnchor.constraint(equalTo: nativeThreadTitleLabel.centerYAnchor),
+            nativeThreadVerifiedBadgeView.widthAnchor.constraint(equalToConstant: 18),
+            nativeThreadVerifiedBadgeView.heightAnchor.constraint(equalToConstant: 18),
+
+            nativeThreadTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: nativeThreadVerifiedBadgeView.leadingAnchor, constant: -6),
+            nativeThreadVerifiedBadgeView.trailingAnchor.constraint(lessThanOrEqualTo: nativeThreadContainer.trailingAnchor, constant: -18),
 
             nativeThreadSubtitleLabel.leadingAnchor.constraint(equalTo: nativeThreadTitleLabel.leadingAnchor),
             nativeThreadSubtitleLabel.trailingAnchor.constraint(equalTo: nativeThreadTitleLabel.trailingAnchor),
@@ -694,10 +710,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         guard !isShowingNativeMessages else { return }
         isShowingNativeMessages = true
         nativeMessagesContainer.isHidden = false
+        nativeMessagesContainer.alpha = 1
         loadNativeInbox()
-        UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut]) {
-            self.nativeMessagesContainer.alpha = 1
-        }
     }
 
     private func hideNativeMessagesIfNeeded() {
@@ -1249,9 +1263,41 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
     }
 
+    private func presentNativeThreadShell(for target: NativeUserSummary) {
+        nativeMessageTarget = target
+        nativeThreadTitleLabel.text = target.display_name
+        nativeThreadVerifiedBadgeView.isHidden = !target.is_verified
+        nativeThreadSubtitleLabel.text = "@\(target.username)"
+        nativeThreadAvatarView.configure(with: target, imageCache: nativeAvatarImageCache)
+        nativeMessagesSubtitle.isHidden = true
+        nativeMessagesListTableView.isHidden = true
+        nativeMessagesEmptyLabel.isHidden = true
+        nativeThreadContainer.isHidden = false
+        nativeThreadContainer.alpha = 1
+        nativeThreadContainer.transform = .identity
+        nativeThreadComposerBar.isHidden = false
+        updateNativeThreadComposeState()
+    }
+
     private func loadNativeThread(username: String, animate: Bool = true) {
         guard isLoggedIntoWebApp, !isLoadingNativeThread else { return }
         isLoadingNativeThread = true
+        if let conversation = nativeMessageConversations.first(where: { $0.username == username }) {
+            presentNativeThreadShell(for: NativeUserSummary(
+                id: conversation.id,
+                username: conversation.username,
+                display_name: conversation.display_name,
+                avatar_url: conversation.avatar_url,
+                avatar_emoji: conversation.avatar_emoji,
+                use_emoji: conversation.use_emoji,
+                is_verified: conversation.is_verified,
+                is_creator: conversation.is_creator
+            ))
+        } else if let existingTarget = nativeMessageTarget, existingTarget.username == username {
+            presentNativeThreadShell(for: existingTarget)
+        }
+        nativeThreadMessages = []
+        nativeThreadTableView.reloadData()
         nativeThreadLoadingView.startAnimating()
         performNativeJSONRequest(path: "/api/messages/thread?user=\(username.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? username)") { [weak self] result in
             DispatchQueue.main.async {
@@ -1261,17 +1307,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 switch result {
                 case .success(let data):
                     guard let payload = try? JSONDecoder().decode(NativeThreadResponse.self, from: data), payload.ok else { return }
-                    self.nativeMessageTarget = payload.target
                     self.nativeThreadMessages = payload.messages
-                    self.nativeThreadTitleLabel.text = payload.target.display_name
-                    self.nativeThreadSubtitleLabel.text = "@\(payload.target.username)"
-                    self.nativeThreadAvatarView.configure(with: payload.target, imageCache: self.nativeAvatarImageCache)
-                    self.nativeMessagesEmptyLabel.isHidden = true
+                    self.presentNativeThreadShell(for: payload.target)
                     self.lastRouteBySection[.messages] = "/messages?user=\(payload.target.username)"
                     self.currentRoute = self.lastRouteBySection[.messages] ?? "/messages"
                     self.nativeThreadTableView.reloadData()
-                    self.nativeThreadContainer.isHidden = false
-                    self.nativeThreadComposerBar.isHidden = false
                     self.scrollNativeThreadToBottom(animated: animate)
                     if animate {
                         self.nativeThreadContainer.transform = CGAffineTransform(translationX: 18, y: 0)
@@ -1284,8 +1324,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                         self.nativeThreadContainer.alpha = 1
                         self.nativeThreadContainer.transform = .identity
                     }
-                case .failure:
-                    break
+                case .failure(let error):
+                    self.nativeThreadSubtitleLabel.text = "Couldn’t load conversation"
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
                 }
             }
         }
@@ -1375,6 +1416,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             if let routeTarget = nativeMessageUsername(from: lastRouteBySection[.messages] ?? "/messages") {
                 loadNativeThread(username: routeTarget, animate: false)
             } else {
+                nativeMessagesSubtitle.isHidden = false
+                nativeMessagesListTableView.isHidden = false
                 nativeThreadContainer.isHidden = true
                 nativeMessageTarget = nil
                 nativeThreadMessages = []
@@ -1411,6 +1454,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadMessages = []
         nativeThreadTableView.reloadData()
         nativeMessageTarget = nil
+        nativeMessagesSubtitle.isHidden = false
+        nativeMessagesListTableView.isHidden = false
         currentRoute = "/messages"
         lastRouteBySection[.messages] = "/messages"
         nativeMessagesEmptyLabel.isHidden = !nativeMessageConversations.isEmpty
@@ -1501,7 +1546,18 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         if tableView === nativeMessagesListTableView {
-            loadNativeThread(username: nativeMessageConversations[indexPath.row].username)
+            let conversation = nativeMessageConversations[indexPath.row]
+            presentNativeThreadShell(for: NativeUserSummary(
+                id: conversation.id,
+                username: conversation.username,
+                display_name: conversation.display_name,
+                avatar_url: conversation.avatar_url,
+                avatar_emoji: conversation.avatar_emoji,
+                use_emoji: conversation.use_emoji,
+                is_verified: conversation.is_verified,
+                is_creator: conversation.is_creator
+            ))
+            loadNativeThread(username: conversation.username)
         }
     }
 
@@ -1728,6 +1784,7 @@ private final class NativeConversationCell: UITableViewCell {
     private let cardView = UIView()
     private let avatarView = NativeAvatarView()
     private let nameLabel = UILabel()
+    private let verifiedBadgeView = UIImageView()
     private let usernameLabel = UILabel()
     private let previewLabel = UILabel()
     private let metaLabel = UILabel()
@@ -1754,6 +1811,13 @@ private final class NativeConversationCell: UITableViewCell {
         nameLabel.font = .systemFont(ofSize: 18, weight: .bold)
         nameLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
         cardView.addSubview(nameLabel)
+
+        verifiedBadgeView.translatesAutoresizingMaskIntoConstraints = false
+        verifiedBadgeView.image = UIImage(systemName: "checkmark.seal.fill")
+        verifiedBadgeView.tintColor = UIColor(red: 62.0 / 255.0, green: 164.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+        verifiedBadgeView.contentMode = .scaleAspectFit
+        verifiedBadgeView.isHidden = true
+        cardView.addSubview(verifiedBadgeView)
 
         usernameLabel.translatesAutoresizingMaskIntoConstraints = false
         usernameLabel.font = .systemFont(ofSize: 14, weight: .medium)
@@ -1798,8 +1862,13 @@ private final class NativeConversationCell: UITableViewCell {
             metaLabel.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 16),
 
             nameLabel.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 14),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: metaLabel.leadingAnchor, constant: -10),
             nameLabel.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 14),
+
+            verifiedBadgeView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 6),
+            verifiedBadgeView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            verifiedBadgeView.widthAnchor.constraint(equalToConstant: 18),
+            verifiedBadgeView.heightAnchor.constraint(equalToConstant: 18),
+            verifiedBadgeView.trailingAnchor.constraint(lessThanOrEqualTo: metaLabel.leadingAnchor, constant: -10),
 
             usernameLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
             usernameLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
@@ -1822,8 +1891,8 @@ private final class NativeConversationCell: UITableViewCell {
     }
 
     func configure(with conversation: NativeMessageConversation, imageCache: NSCache<NSString, UIImage>) {
-        let badge = conversation.is_verified ? " ✓" : ""
-        nameLabel.text = conversation.display_name + badge
+        nameLabel.text = conversation.display_name
+        verifiedBadgeView.isHidden = !conversation.is_verified
         usernameLabel.text = "@\(conversation.username)"
         previewLabel.text = conversation.latest_message.isEmpty ? "Start a conversation" : conversation.latest_message
         metaLabel.text = conversation.latest_message_relative
