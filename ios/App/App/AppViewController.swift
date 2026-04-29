@@ -1285,7 +1285,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func parseNativeUserSummary(from raw: [String: Any]) -> NativeUserSummary? {
-        guard let id = raw["id"] as? Int,
+        let id = (raw["id"] as? Int) ?? (raw["id"] as? NSNumber)?.intValue ?? 0
+        guard id >= 0,
               let username = raw["username"] as? String else { return nil }
         return NativeUserSummary(
             id: id,
@@ -1381,8 +1382,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func loadNativeThread(username: String, animate: Bool = true) {
         guard isLoggedIntoWebApp, !isLoadingNativeThread else { return }
         isLoadingNativeThread = true
+        var fallbackTarget: NativeUserSummary?
         if let conversation = nativeMessageConversations.first(where: { $0.username == username }) {
-            presentNativeThreadShell(for: NativeUserSummary(
+            let target = NativeUserSummary(
                 id: conversation.id,
                 username: conversation.username,
                 display_name: conversation.display_name,
@@ -1391,8 +1393,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 use_emoji: conversation.use_emoji,
                 is_verified: conversation.is_verified,
                 is_creator: conversation.is_creator
-            ))
+            )
+            fallbackTarget = target
+            presentNativeThreadShell(for: target)
         } else if let existingTarget = nativeMessageTarget, existingTarget.username == username {
+            fallbackTarget = existingTarget
             presentNativeThreadShell(for: existingTarget)
         }
         nativeThreadMessages = []
@@ -1414,12 +1419,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 self.nativeThreadLoadingView.stopAnimating()
                 switch result {
                 case .success(let data):
-                    guard let payload = self.parseNativeThreadPayload(from: data),
-                          payload.ok,
-                          let target = payload.target else {
+                    guard let payload = self.parseNativeThreadPayload(from: data), payload.ok else {
                         let errorMessage = self.parseNativeThreadPayload(from: data)?.error ?? "We couldn’t load that conversation yet."
-                        self.nativeThreadSubtitleLabel.text = "Couldn’t load conversation"
                         self.showNativeFlash(message: errorMessage, category: "error")
+                        return
+                    }
+                    let target = payload.target ?? fallbackTarget ?? self.nativeMessageTarget
+                    guard let target else {
+                        self.showNativeFlash(message: "We couldn’t load that conversation yet.", category: "error")
                         return
                     }
                     self.nativeThreadMessages = payload.messages
@@ -1435,7 +1442,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.nativeThreadContainer.alpha = 1
                     self.nativeThreadContainer.transform = .identity
                 case .failure(let error):
-                    self.nativeThreadSubtitleLabel.text = "Couldn’t load conversation"
                     self.showNativeFlash(message: error.localizedDescription, category: "error")
                 }
             }
