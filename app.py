@@ -516,6 +516,24 @@ class PollVote(db.Model, TimestampMixin):
     user = db.relationship("User", foreign_keys=[user_id])
 
 
+def timesince(value):
+    if not value:
+        return ""
+    now = datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    delta = now - value
+    if delta.days >= 1:
+        return f"{delta.days}d"
+    hours = delta.seconds // 3600
+    if hours:
+        return f"{hours}h"
+    minutes = delta.seconds // 60
+    if minutes:
+        return f"{minutes}m"
+    return "now"
+
+
 def create_app():
     ensure_persistent_storage_config()
     app = Flask(__name__, template_folder="app/templates", static_folder="app/static")
@@ -572,22 +590,8 @@ def create_app():
         }
 
     @app.template_filter("timesince")
-    def timesince(value):
-        if not value:
-            return ""
-        now = datetime.now(timezone.utc)
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        delta = now - value
-        if delta.days >= 1:
-            return f"{delta.days}d"
-        hours = delta.seconds // 3600
-        if hours:
-            return f"{hours}h"
-        minutes = delta.seconds // 60
-        if minutes:
-            return f"{minutes}m"
-        return "now"
+    def timesince_filter(value):
+        return timesince(value)
 
     @app.template_filter("render_post_text")
     def render_post_text_filter(value):
@@ -1636,16 +1640,24 @@ def login_required(view):
     def wrapped(*args, **kwargs):
         user = current_user()
         if not user:
+            if request.path.startswith("/api/") or wants_partial_response():
+                return jsonify({"ok": False, "error": "Sign in to continue."}), 401
             flash("Sign in to continue.", "error")
             return redirect(url_for("login"))
         allowed_without_terms = {"terms_agreement", "terms_of_use", "privacy", "logout"}
         if not user.accepted_terms_at and request.endpoint not in allowed_without_terms:
+            if request.path.startswith("/api/") or wants_partial_response():
+                return jsonify({"ok": False, "error": "Please accept the Terms of Use to continue."}), 403
             return redirect(url_for("terms_agreement"))
         if user.is_banned:
             session.clear()
+            if request.path.startswith("/api/") or wants_partial_response():
+                return jsonify({"ok": False, "error": "This account has been banned."}), 403
             flash("This account has been banned.", "error")
             return redirect(url_for("login"))
         if user.is_timed_out:
+            if request.path.startswith("/api/") or wants_partial_response():
+                return jsonify({"ok": False, "error": "This account is temporarily timed out."}), 403
             flash("This account is temporarily timed out.", "error")
             return redirect(url_for("index"))
         return view(*args, **kwargs)

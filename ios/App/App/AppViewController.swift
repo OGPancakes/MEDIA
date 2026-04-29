@@ -88,9 +88,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var nativeMessageConversations: [NativeMessageConversation] = []
     private var nativeThreadMessages: [NativeThreadMessage] = []
     private var nativeMessageTarget: NativeUserSummary?
+    private var pendingNativeJSONRequests: [String: (Result<Data, Error>) -> Void] = [:]
     private let nativeAvatarImageCache = NSCache<NSString, UIImage>()
 
     private let composerScriptMessageName = "nativeComposerState"
+    private let nativeJSONScriptMessageName = "nativeJSONResponse"
 
     public override func capacitorDidLoad() {
         super.capacitorDidLoad()
@@ -118,6 +120,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         NotificationCenter.default.removeObserver(self)
         stateSyncTimer?.invalidate()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: composerScriptMessageName)
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: nativeJSONScriptMessageName)
     }
 
     override func viewDidLayoutSubviews() {
@@ -869,6 +872,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         """
         webView.configuration.userContentController.removeScriptMessageHandler(forName: composerScriptMessageName)
         webView.configuration.userContentController.add(self, name: composerScriptMessageName)
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: nativeJSONScriptMessageName)
+        webView.configuration.userContentController.add(self, name: nativeJSONScriptMessageName)
         let script = WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         webView.configuration.userContentController.addUserScript(script)
         webView.evaluateJavaScript(source, completionHandler: nil)
@@ -1035,7 +1040,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func registerPushToken(_ token: String) {
         guard let targetURL = URL(string: "/push/register", relativeTo: webView?.url)?.absoluteURL else { return }
-        fetchCookieHeader { cookieHeader in
+        fetchCookieHeader(for: targetURL) { cookieHeader in
             var request = URLRequest(url: targetURL)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1184,7 +1189,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         textViewDidChange(composerTextView)
         dismissComposerSheet(animated: true)
 
-        fetchCookieHeader { [weak self] cookieHeader in
+        fetchCookieHeader(for: targetURL) { [weak self] cookieHeader in
             guard let self else { return }
             let boundary = "Boundary-\(UUID().uuidString)"
             var request = URLRequest(url: targetURL)
@@ -1241,14 +1246,22 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         webView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
-    private func fetchCookieHeader(completion: @escaping (String?) -> Void) {
+    private func cookie(_ cookie: HTTPCookie, matches targetURL: URL) -> Bool {
+        guard let host = targetURL.host?.lowercased(), !host.isEmpty else { return false }
+        let cookieDomain = cookie.domain.lowercased()
+        if cookieDomain.isEmpty { return true }
+        let normalizedDomain = cookieDomain.hasPrefix(".") ? String(cookieDomain.dropFirst()) : cookieDomain
+        return host == normalizedDomain || host.hasSuffix(".\(normalizedDomain)")
+    }
+
+    private func fetchCookieHeader(for targetURL: URL, completion: @escaping (String?) -> Void) {
         guard let cookieStore = webView?.configuration.websiteDataStore.httpCookieStore else {
             completion(nil)
             return
         }
         cookieStore.getAllCookies { cookies in
             let header = cookies
-                .filter { $0.domain.contains("railway.app") || $0.domain.contains("media-production-0abd.up.railway.app") || $0.domain.isEmpty }
+                .filter { self.cookie($0, matches: targetURL) }
                 .map { "\($0.name)=\($0.value)" }
                 .joined(separator: "; ")
             completion(header.isEmpty ? nil : header)
@@ -1260,27 +1273,78 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             completion(.failure(NSError(domain: "NativeMessages", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid request URL."])))
             return
         }
-        fetchCookieHeader { cookieHeader in
-            var request = URLRequest(url: targetURL)
-            request.httpMethod = method
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            request.setValue("fetch", forHTTPHeaderField: "X-Requested-With")
-            if method != "GET" {
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            }
-            if let cookieHeader, !cookieHeader.isEmpty {
-                request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
-            }
-            if let bodyObject {
-                request.httpBody = try? JSONSerialization.data(withJSONObject: bodyObject)
-            }
-            URLSession.shared.dataTask(with: request) { data, _, error in
+        let bodyJSON: String?
+        if let bodyObject,
+           let bodyData = try? JSONSerialization.data(withJSONObject: bodyObject),
+           let bodyString = String(data: bodyData, encoding: .utf8) {
+            bodyJSON = bodyString
+        } else {
+            bodyJSON = nil
+        }
+        let requestID = UUID().uuidString
+        let payload: [String: Any] = [
+            "id": requestID,
+            "url": path,
+            "method": method,
+            "body": bodyJSON ?? NSNull()
+        ]
+        guard let payloadData = try? JSONSerialization.data(withJSONObject: payload),
+              let payloadJSON = String(data: payloadData, encoding: .utf8) else {
+            completion(.failure(NSError(domain: "NativeMessages", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid request payload."])))
+            return
+        }
+        let script = """
+        (function() {
+          const request = \(payloadJSON);
+          const complete = function(payload) {
+            try {
+              window.webkit.messageHandlers.\(nativeJSONScriptMessageName).postMessage(payload);
+            } catch (e) {}
+          };
+          const headers = {
+            "Accept": "application/json",
+            "X-Requested-With": "fetch"
+          };
+          const options = {
+            method: request.method || "GET",
+            credentials: "include",
+            headers
+          };
+          if (request.body !== null && request.body !== undefined) {
+            headers["Content-Type"] = "application/json";
+            options.body = request.body;
+          }
+          fetch(request.url, options)
+            .then(async function(response) {
+              const text = await response.text();
+              complete({ id: request.id, status: response.status, text: text });
+            })
+            .catch(function(error) {
+              const message = error && error.message ? error.message : String(error);
+              complete({
+                id: request.id,
+                status: 0,
+                text: JSON.stringify({ ok: false, error: message || "Network request failed." })
+              });
+            });
+          return true;
+        })();
+        """
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingNativeJSONRequests[requestID] = completion
+            print("Native DM request \(method) \(targetURL.absoluteString)")
+            self.webView?.evaluateJavaScript(script) { _, error in
                 if let error {
-                    completion(.failure(error))
-                    return
+                    let pending = self.pendingNativeJSONRequests.removeValue(forKey: requestID)
+                    pending?(.failure(error))
                 }
-                completion(.success(data ?? Data()))
-            }.resume()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+                guard let self,
+                      let pending = self.pendingNativeJSONRequests.removeValue(forKey: requestID) else { return }
+                pending(.failure(NSError(domain: "NativeMessages", code: 4, userInfo: [NSLocalizedDescriptionKey: "Native DM request timed out."])))
+            }
         }
     }
 
@@ -1340,6 +1404,15 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let message = nativeDictionary(from: object["message"]).flatMap(parseNativeThreadMessage(from:))
         let error = object["error"] as? String
         return (ok, message, error)
+    }
+
+    private func nativeResponsePreview(from data: Data) -> String {
+        let raw = String(data: data, encoding: .utf8) ?? ""
+        let compact = raw.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        if compact.isEmpty {
+            return "empty response"
+        }
+        return String(compact.prefix(140))
     }
 
     private func nativeInt(from value: Any?) -> Int? {
@@ -1405,13 +1478,16 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 self.nativeThreadLoadingView.stopAnimating()
                 switch result {
                 case .success(let data):
-                    if let payload = try? JSONDecoder().decode(NativeInboxResponse.self, from: data) {
-                        self.nativeMessageConversations = payload.conversations
-                        self.nativeMessagesListTableView.reloadData()
-                        self.nativeMessagesEmptyLabel.isHidden = !payload.conversations.isEmpty || !self.nativeThreadContainer.isHidden
+                    guard let payload = try? JSONDecoder().decode(NativeInboxResponse.self, from: data) else {
+                        self.showNativeFlash(message: "Inbox error: \(self.nativeResponsePreview(from: data))", category: "error")
+                        self.nativeMessagesEmptyLabel.isHidden = false
+                        return
                     }
-                case .failure:
-                    break
+                    self.nativeMessageConversations = payload.conversations
+                    self.nativeMessagesListTableView.reloadData()
+                    self.nativeMessagesEmptyLabel.isHidden = !payload.conversations.isEmpty || !self.nativeThreadContainer.isHidden
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
                 }
             }
         }
@@ -1478,7 +1554,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 switch result {
                 case .success(let data):
                     guard let payload = self.parseNativeThreadPayload(from: data), payload.ok else {
-                        let errorMessage = self.parseNativeThreadPayload(from: data)?.error ?? "We couldn’t load that conversation yet."
+                        let errorMessage = self.parseNativeThreadPayload(from: data)?.error ?? "Thread error: \(self.nativeResponsePreview(from: data))"
                         self.showNativeFlash(message: errorMessage, category: "error")
                         return
                     }
@@ -1535,6 +1611,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == nativeJSONScriptMessageName {
+            guard let payload = message.body as? [String: Any],
+                  let id = payload["id"] as? String,
+                  let completion = pendingNativeJSONRequests.removeValue(forKey: id) else { return }
+            let responseText = payload["text"] as? String ?? ""
+            let status = nativeInt(from: payload["status"]) ?? 0
+            let preview = String(responseText.prefix(300)).replacingOccurrences(of: "\n", with: " ")
+            print("Native DM response status=\(status) body=\(preview)")
+            completion(.success(responseText.data(using: .utf8) ?? Data()))
+            return
+        }
         guard message.name == composerScriptMessageName,
               let payload = message.body as? [String: Any] else { return }
         let loggedIn = payload["loggedIn"] as? Bool ?? false
@@ -1653,6 +1740,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     guard let payload = self.parseNativeSendMessagePayload(from: data), payload.ok else {
                         if let payload = self.parseNativeSendMessagePayload(from: data), let error = payload.error, !error.isEmpty {
                             self.showNativeFlash(message: error, category: "error")
+                        } else {
+                            self.showNativeFlash(message: "Send error: \(self.nativeResponsePreview(from: data))", category: "error")
                         }
                         self.updateNativeThreadComposeState()
                         return
@@ -1834,6 +1923,17 @@ private struct NativeUserSummary: Decodable {
     let use_emoji: Bool
     let is_verified: Bool
     let is_creator: Bool
+
+    init(id: Int, username: String, display_name: String, avatar_url: String, avatar_emoji: String, use_emoji: Bool, is_verified: Bool, is_creator: Bool) {
+        self.id = id
+        self.username = username
+        self.display_name = display_name
+        self.avatar_url = avatar_url
+        self.avatar_emoji = avatar_emoji
+        self.use_emoji = use_emoji
+        self.is_verified = is_verified
+        self.is_creator = is_creator
+    }
 }
 
 private struct NativeMessageConversation: Decodable {
@@ -1906,6 +2006,17 @@ private struct NativeThreadMessage: Decodable {
     let created_at_relative: String
     let sender: NativeUserSummary
     let receiver: NativeUserSummary
+
+    init(id: Int, body: String, is_mine: Bool, is_read: Bool, created_at: String, created_at_relative: String, sender: NativeUserSummary, receiver: NativeUserSummary) {
+        self.id = id
+        self.body = body
+        self.is_mine = is_mine
+        self.is_read = is_read
+        self.created_at = created_at
+        self.created_at_relative = created_at_relative
+        self.sender = sender
+        self.receiver = receiver
+    }
 }
 
 private final class NativeAvatarView: UIView {
