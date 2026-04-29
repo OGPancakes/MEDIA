@@ -87,6 +87,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var nativeThreadMessages: [NativeThreadMessage] = []
     private var nativeMessageTarget: NativeUserSummary?
     private let nativeAvatarImageCache = NSCache<NSString, UIImage>()
+    private var webViewWasHiddenForNativeMessages = false
 
     private let composerScriptMessageName = "nativeComposerState"
 
@@ -421,7 +422,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeMessagesContainer.addSubview(nativeMessagesEmptyLabel)
 
         nativeThreadContainer.translatesAutoresizingMaskIntoConstraints = false
-        nativeThreadContainer.backgroundColor = UIColor.white.withAlphaComponent(0.88)
+        nativeThreadContainer.backgroundColor = shellBackground
         nativeThreadContainer.layer.cornerRadius = 28
         nativeThreadContainer.layer.cornerCurve = .continuous
         nativeThreadContainer.layer.borderWidth = 1
@@ -473,6 +474,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadTableView.rowHeight = UITableView.automaticDimension
         nativeThreadTableView.estimatedRowHeight = 92
         nativeThreadTableView.contentInset = UIEdgeInsets(top: 14, left: 0, bottom: 14, right: 0)
+        nativeThreadTableView.isScrollEnabled = true
         nativeThreadTableView.dataSource = self
         nativeThreadTableView.delegate = self
         nativeThreadTableView.register(NativeThreadMessageCell.self, forCellReuseIdentifier: NativeThreadMessageCell.reuseIdentifier)
@@ -524,12 +526,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         NSLayoutConstraint.activate([
             nativeMessagesContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             nativeMessagesContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            nativeMessagesContainer.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            nativeMessagesContainer.bottomAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -8),
+            nativeMessagesContainer.topAnchor.constraint(equalTo: view.topAnchor),
+            nativeMessagesContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
             nativeMessagesHeader.leadingAnchor.constraint(equalTo: nativeMessagesContainer.leadingAnchor, constant: 20),
             nativeMessagesHeader.trailingAnchor.constraint(equalTo: nativeMessagesContainer.trailingAnchor, constant: -20),
-            nativeMessagesHeader.topAnchor.constraint(equalTo: nativeMessagesContainer.topAnchor, constant: 10),
+            nativeMessagesHeader.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
 
             nativeMessagesSubtitle.leadingAnchor.constraint(equalTo: nativeMessagesHeader.leadingAnchor),
             nativeMessagesSubtitle.trailingAnchor.constraint(equalTo: nativeMessagesHeader.trailingAnchor),
@@ -538,7 +540,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeMessagesListTableView.leadingAnchor.constraint(equalTo: nativeMessagesContainer.leadingAnchor, constant: 12),
             nativeMessagesListTableView.trailingAnchor.constraint(equalTo: nativeMessagesContainer.trailingAnchor, constant: -12),
             nativeMessagesListTableView.topAnchor.constraint(equalTo: nativeMessagesSubtitle.bottomAnchor, constant: 12),
-            nativeMessagesListTableView.bottomAnchor.constraint(equalTo: nativeMessagesContainer.bottomAnchor),
+            nativeMessagesListTableView.bottomAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -16),
 
             nativeMessagesEmptyLabel.centerXAnchor.constraint(equalTo: nativeMessagesListTableView.centerXAnchor),
             nativeMessagesEmptyLabel.centerYAnchor.constraint(equalTo: nativeMessagesListTableView.centerYAnchor),
@@ -546,7 +548,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeThreadContainer.leadingAnchor.constraint(equalTo: nativeMessagesContainer.leadingAnchor, constant: 12),
             nativeThreadContainer.trailingAnchor.constraint(equalTo: nativeMessagesContainer.trailingAnchor, constant: -12),
             nativeThreadContainer.topAnchor.constraint(equalTo: nativeMessagesHeader.bottomAnchor, constant: 2),
-            nativeThreadContainer.bottomAnchor.constraint(equalTo: nativeMessagesContainer.bottomAnchor, constant: -6),
+            nativeThreadContainer.bottomAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -12),
 
             nativeThreadBackButton.leadingAnchor.constraint(equalTo: nativeThreadContainer.leadingAnchor, constant: 16),
             nativeThreadBackButton.topAnchor.constraint(equalTo: nativeThreadContainer.topAnchor, constant: 16),
@@ -709,6 +711,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func showNativeMessagesIfNeeded() {
         guard !isShowingNativeMessages else { return }
         isShowingNativeMessages = true
+        webViewWasHiddenForNativeMessages = !(webView?.isHidden == false)
+        webView?.isHidden = true
+        composeButton.isHidden = true
         nativeMessagesContainer.isHidden = false
         nativeMessagesContainer.alpha = 1
         loadNativeInbox()
@@ -721,6 +726,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             self.nativeMessagesContainer.alpha = 0
         } completion: { _ in
             self.nativeMessagesContainer.isHidden = true
+            self.webView?.isHidden = self.webViewWasHiddenForNativeMessages
+            if self.nativeComposerAvailable {
+                self.composeButton.isHidden = false
+                self.composeButton.alpha = 1
+            }
         }
     }
 
@@ -1276,6 +1286,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadContainer.alpha = 1
         nativeThreadContainer.transform = .identity
         nativeThreadComposerBar.isHidden = false
+        nativeThreadTableView.isHidden = false
         updateNativeThreadComposeState()
     }
 
@@ -1306,12 +1317,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 self.nativeThreadLoadingView.stopAnimating()
                 switch result {
                 case .success(let data):
-                    guard let payload = try? JSONDecoder().decode(NativeThreadResponse.self, from: data), payload.ok else { return }
+                    guard let payload = try? JSONDecoder().decode(NativeThreadResponse.self, from: data), payload.ok else {
+                        self.nativeThreadSubtitleLabel.text = "Couldn’t load conversation"
+                        self.showNativeFlash(message: "We couldn’t load that conversation yet.", category: "error")
+                        return
+                    }
                     self.nativeThreadMessages = payload.messages
                     self.presentNativeThreadShell(for: payload.target)
                     self.lastRouteBySection[.messages] = "/messages?user=\(payload.target.username)"
                     self.currentRoute = self.lastRouteBySection[.messages] ?? "/messages"
                     self.nativeThreadTableView.reloadData()
+                    self.nativeThreadTableView.layoutIfNeeded()
                     self.scrollNativeThreadToBottom(animated: animate)
                     if animate {
                         self.nativeThreadContainer.transform = CGAffineTransform(translationX: 18, y: 0)
@@ -1707,6 +1723,7 @@ private final class NativeAvatarView: UIView {
     private let backgroundCircle = UIView()
     private let imageView = UIImageView()
     private let emojiLabel = UILabel()
+    private var currentAvatarKey: String?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1750,6 +1767,7 @@ private final class NativeAvatarView: UIView {
     }
 
     func configure(with user: NativeUserSummary, imageCache: NSCache<NSString, UIImage>) {
+        currentAvatarKey = user.avatar_url
         if user.use_emoji || user.avatar_url.isEmpty {
             imageView.isHidden = true
             imageView.image = nil
@@ -1771,6 +1789,7 @@ private final class NativeAvatarView: UIView {
             guard let data, let image = UIImage(data: data) else { return }
             imageCache.setObject(image, forKey: cacheKey)
             DispatchQueue.main.async {
+                guard self.currentAvatarKey == user.avatar_url else { return }
                 self.imageView.image = image
                 self.imageView.isHidden = false
             }

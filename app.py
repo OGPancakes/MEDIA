@@ -1801,12 +1801,12 @@ def banner_background(user):
     return "linear-gradient(120deg, rgba(11,61,145,.96), rgba(191,10,48,.86))"
 
 
-def media_url(path):
+def media_url(path, external=False):
     if not path:
         return ""
     if path.startswith("uploads/"):
-        return url_for("media_file", filename=path.split("/", 1)[1])
-    return url_for("static", filename=path)
+        return url_for("media_file", filename=path.split("/", 1)[1], _external=external)
+    return url_for("static", filename=path, _external=external)
 
 
 def serialize_user_brief(user):
@@ -1814,7 +1814,7 @@ def serialize_user_brief(user):
         "id": user.id,
         "username": user.username,
         "display_name": user.display_name,
-        "avatar_url": media_url(user.avatar) if not should_use_emoji_avatar(user) else "",
+        "avatar_url": media_url(user.avatar, external=True) if not should_use_emoji_avatar(user) else "",
         "avatar_emoji": avatar_emoji_for(user),
         "use_emoji": should_use_emoji_avatar(user),
         "is_verified": bool(user.is_verified),
