@@ -89,7 +89,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var nativeThreadMessages: [NativeThreadMessage] = []
     private var nativeMessageTarget: NativeUserSummary?
     private let nativeAvatarImageCache = NSCache<NSString, UIImage>()
-    private var webViewWasHiddenForNativeMessages = false
 
     private let composerScriptMessageName = "nativeComposerState"
 
@@ -339,11 +338,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeTabBarBackdrop.backgroundColor = shellBackground
         nativeTabBarBackdrop.alpha = 0
         nativeTabBarBackdrop.isHidden = true
-        nativeTabBarBackdrop.layer.zPosition = 34
+        nativeTabBarBackdrop.layer.zPosition = 55
         view.addSubview(nativeTabBarBackdrop)
 
         nativeTabBar.translatesAutoresizingMaskIntoConstraints = false
         nativeTabBar.effect = nil
+        nativeTabBar.layer.zPosition = 60
         nativeTabBar.layer.cornerRadius = 26
         nativeTabBar.layer.cornerCurve = .continuous
         nativeTabBar.clipsToBounds = true
@@ -373,6 +373,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         [messagesTabButton, feedTabButton, searchTabButton, profileTabButton].forEach(nativeTabStack.addArrangedSubview)
 
         composeButtonBottomConstraint = composeButton.bottomAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -14)
+        composeButton.layer.zPosition = 62
 
         NSLayoutConstraint.activate([
             nativeTabBarBackdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -400,6 +401,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeMessagesContainer.alpha = 0
         nativeMessagesContainer.isHidden = true
         nativeMessagesContainer.backgroundColor = shellBackground
+        nativeMessagesContainer.isOpaque = true
         nativeMessagesContainer.layer.zPosition = 40
         view.addSubview(nativeMessagesContainer)
 
@@ -743,11 +745,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func showNativeMessagesIfNeeded() {
         guard !isShowingNativeMessages else { return }
         isShowingNativeMessages = true
-        webViewWasHiddenForNativeMessages = !(webView?.isHidden == false)
-        webView?.isHidden = true
         composeButton.isHidden = true
         nativeMessagesContainer.isHidden = false
         nativeMessagesContainer.alpha = 1
+        view.bringSubviewToFront(nativeMessagesContainer)
+        view.bringSubviewToFront(nativeTabBarBackdrop)
+        view.bringSubviewToFront(nativeTabBar)
         loadNativeInbox()
     }
 
@@ -758,7 +761,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             self.nativeMessagesContainer.alpha = 0
         } completion: { _ in
             self.nativeMessagesContainer.isHidden = true
-            self.webView?.isHidden = self.webViewWasHiddenForNativeMessages
             if self.nativeComposerAvailable {
                 self.composeButton.isHidden = false
                 self.composeButton.alpha = 1
