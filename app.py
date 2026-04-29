@@ -13,7 +13,7 @@ from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, current_app, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from flask_sqlalchemy import SQLAlchemy
 from markupsafe import Markup, escape
 from sqlalchemy import and_, event, or_, text
@@ -162,6 +162,7 @@ def build_push_message(note_type, message):
         "repost": "New repost",
         "follow": "New follower",
         "message": "New message",
+        "mention": "New mention",
     }
     return title_map.get(note_type, "New notification"), (message or "You have a new notification").strip()
 
@@ -182,6 +183,13 @@ def send_apns_push(subscription, title, body, link=None, note_type="notification
     token = (subscription.endpoint or "").removeprefix("apns:").strip()
     auth_token = generate_apns_auth_token()
     if not topic or not token or not auth_token:
+        current_app.logger.warning(
+            "APNs push skipped: topic=%s token_present=%s auth_token_present=%s subscription_id=%s",
+            topic or "<missing>",
+            bool(token),
+            bool(auth_token),
+            getattr(subscription, "id", None),
+        )
         return False
 
     payload = {
@@ -225,7 +233,8 @@ def send_apns_push(subscription, title, body, link=None, note_type="notification
             capture_output=True,
             text=True,
         )
-    except OSError:
+    except OSError as error:
+        current_app.logger.warning("APNs curl failed: %s", error)
         return False
 
     response_text = (result.stdout or "").strip()
@@ -237,7 +246,23 @@ def send_apns_push(subscription, title, body, link=None, note_type="notification
         status_code = 0
 
     if status_code == 200:
+        current_app.logger.info(
+            "APNs push accepted: subscription_id=%s type=%s link=%s sandbox=%s",
+            getattr(subscription, "id", None),
+            note_type,
+            link or "/notifications",
+            os.environ.get("APNS_USE_SANDBOX", ""),
+        )
         return True
+    current_app.logger.warning(
+        "APNs push rejected: status=%s body=%s subscription_id=%s type=%s topic=%s sandbox=%s",
+        status_code,
+        response_body or "<empty>",
+        getattr(subscription, "id", None),
+        note_type,
+        topic,
+        os.environ.get("APNS_USE_SANDBOX", ""),
+    )
     if should_remove_push_subscription(status_code, response_body):
         db.session.delete(subscription)
         db.session.commit()
@@ -251,6 +276,8 @@ def deliver_push_notification(payload):
         return
     title, body = build_push_message(payload.get("note_type"), payload.get("message"))
     subscriptions = PushSubscription.query.filter_by(user_id=user_id).order_by(PushSubscription.created_at.desc()).all()
+    if not subscriptions:
+        current_app.logger.warning("APNs push skipped: no push subscriptions for user_id=%s", user_id)
     for subscription in subscriptions:
         if not (subscription.endpoint or "").startswith("apns:"):
             continue
@@ -1587,6 +1614,11 @@ def create_app():
             if not current_subscription:
                 db.session.add(PushSubscription(user_id=current_user().id, endpoint=endpoint))
             db.session.commit()
+            current_app.logger.info(
+                "Push endpoint saved: user_id=%s endpoint_prefix=%s",
+                current_user().id,
+                endpoint[:16],
+            )
             if wants_partial_response():
                 return jsonify({"ok": True, "saved": True})
             flash("Push endpoint saved.", "success")
