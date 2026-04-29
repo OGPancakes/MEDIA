@@ -178,19 +178,26 @@ def should_remove_push_subscription(status_code, response_body):
     return False
 
 
-def send_apns_push(subscription, title, body, link=None, note_type="notification"):
+def send_apns_push_result(subscription, title, body, link=None, note_type="notification"):
     topic = os.environ.get("APNS_BUNDLE_ID", "").strip() or os.environ.get("IOS_BUNDLE_ID", "").strip()
     token = (subscription.endpoint or "").removeprefix("apns:").strip()
     auth_token = generate_apns_auth_token()
+    sandbox = os.environ.get("APNS_USE_SANDBOX", "").strip().lower() in {"1", "true", "yes"}
+    result_info = {
+        "ok": False,
+        "status": 0,
+        "body": "",
+        "topic": topic,
+        "sandbox": sandbox,
+        "subscription_id": getattr(subscription, "id", None),
+        "token_present": bool(token),
+        "auth_token_present": bool(auth_token),
+        "link": link or "/notifications",
+        "type": note_type,
+    }
     if not topic or not token or not auth_token:
-        current_app.logger.warning(
-            "APNs push skipped: topic=%s token_present=%s auth_token_present=%s subscription_id=%s",
-            topic or "<missing>",
-            bool(token),
-            bool(auth_token),
-            getattr(subscription, "id", None),
-        )
-        return False
+        result_info["error"] = "missing_apns_configuration"
+        return result_info
 
     payload = {
         "aps": {
@@ -201,7 +208,7 @@ def send_apns_push(subscription, title, body, link=None, note_type="notification
         "link": link or "/notifications",
         "type": note_type,
     }
-    host = "https://api.sandbox.push.apple.com" if os.environ.get("APNS_USE_SANDBOX", "").strip().lower() in {"1", "true", "yes"} else "https://api.push.apple.com"
+    host = "https://api.sandbox.push.apple.com" if sandbox else "https://api.push.apple.com"
     target_url = f"{host}/3/device/{token}"
 
     try:
@@ -234,8 +241,8 @@ def send_apns_push(subscription, title, body, link=None, note_type="notification
             text=True,
         )
     except OSError as error:
-        current_app.logger.warning("APNs curl failed: %s", error)
-        return False
+        result_info["error"] = str(error)
+        return result_info
 
     response_text = (result.stdout or "").strip()
     response_lines = response_text.rsplit("\n", 1)
@@ -244,11 +251,31 @@ def send_apns_push(subscription, title, body, link=None, note_type="notification
         status_code = int(response_lines[-1]) if response_lines else 0
     except ValueError:
         status_code = 0
+    result_info.update({"ok": status_code == 200, "status": status_code, "body": response_body})
+    if result.stderr:
+        result_info["stderr"] = result.stderr.strip()
+    return result_info
 
-    if status_code == 200:
+
+def send_apns_push(subscription, title, body, link=None, note_type="notification"):
+    result_info = send_apns_push_result(subscription, title, body, link, note_type)
+    if result_info.get("error") == "missing_apns_configuration":
+        current_app.logger.warning(
+            "APNs push skipped: topic=%s token_present=%s auth_token_present=%s subscription_id=%s",
+            result_info.get("topic") or "<missing>",
+            result_info.get("token_present"),
+            result_info.get("auth_token_present"),
+            result_info.get("subscription_id"),
+        )
+        return False
+    if result_info.get("error"):
+        current_app.logger.warning("APNs curl failed: %s", result_info.get("error"))
+        return False
+
+    if result_info.get("ok"):
         current_app.logger.info(
             "APNs push accepted: subscription_id=%s type=%s link=%s sandbox=%s",
-            getattr(subscription, "id", None),
+            result_info.get("subscription_id"),
             note_type,
             link or "/notifications",
             os.environ.get("APNS_USE_SANDBOX", ""),
@@ -256,14 +283,14 @@ def send_apns_push(subscription, title, body, link=None, note_type="notification
         return True
     current_app.logger.warning(
         "APNs push rejected: status=%s body=%s subscription_id=%s type=%s topic=%s sandbox=%s",
-        status_code,
-        response_body or "<empty>",
-        getattr(subscription, "id", None),
+        result_info.get("status"),
+        result_info.get("body") or "<empty>",
+        result_info.get("subscription_id"),
         note_type,
-        topic,
+        result_info.get("topic"),
         os.environ.get("APNS_USE_SANDBOX", ""),
     )
-    if should_remove_push_subscription(status_code, response_body):
+    if should_remove_push_subscription(result_info.get("status"), result_info.get("body")):
         db.session.delete(subscription)
         db.session.commit()
     return False
@@ -1626,6 +1653,35 @@ def create_app():
         if wants_partial_response():
             return jsonify({"ok": False, "saved": False}), 400
         return redirect(url_for("settings"))
+
+    @app.route("/push/test")
+    @login_required
+    def test_push():
+        subscriptions = (
+            PushSubscription.query.filter_by(user_id=current_user().id)
+            .order_by(PushSubscription.created_at.desc())
+            .all()
+        )
+        apns_subscriptions = [item for item in subscriptions if (item.endpoint or "").startswith("apns:")]
+        results = [
+            send_apns_push_result(
+                subscription,
+                "PIA Social test",
+                "If this appears, APNs delivery is working.",
+                "/notifications",
+                "notification",
+            )
+            for subscription in apns_subscriptions
+        ]
+        return jsonify(
+            {
+                "ok": any(item.get("ok") for item in results),
+                "push_enabled": current_user().push_enabled,
+                "subscriptions": len(subscriptions),
+                "apns_subscriptions": len(apns_subscriptions),
+                "results": results,
+            }
+        )
 
     @app.route("/account/delete", methods=["POST"])
     @login_required
