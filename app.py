@@ -212,48 +212,27 @@ def send_apns_push_result(subscription, title, body, link=None, note_type="notif
     target_url = f"{host}/3/device/{token}"
 
     try:
-        result = subprocess.run(
-            [
-                "curl",
-                "--silent",
-                "--show-error",
-                "--http2",
-                "--write-out",
-                "\n%{http_code}",
-                "-X",
-                "POST",
+        import httpx
+
+        with httpx.Client(http2=True, timeout=10.0) as client:
+            response = client.post(
                 target_url,
-                "-H",
-                f"authorization: bearer {auth_token}",
-                "-H",
-                f"apns-topic: {topic}",
-                "-H",
-                "apns-push-type: alert",
-                "-H",
-                "apns-priority: 10",
-                "-H",
-                "content-type: application/json",
-                "-d",
-                json.dumps(payload, separators=(",", ":")),
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except OSError as error:
+                headers={
+                    "authorization": f"bearer {auth_token}",
+                    "apns-topic": topic,
+                    "apns-push-type": "alert",
+                    "apns-priority": "10",
+                    "content-type": "application/json",
+                },
+                content=json.dumps(payload, separators=(",", ":")),
+            )
+    except Exception as error:
         result_info["error"] = str(error)
         return result_info
 
-    response_text = (result.stdout or "").strip()
-    response_lines = response_text.rsplit("\n", 1)
-    response_body = response_lines[0] if len(response_lines) == 2 else ""
-    try:
-        status_code = int(response_lines[-1]) if response_lines else 0
-    except ValueError:
-        status_code = 0
+    status_code = response.status_code
+    response_body = (response.text or "").strip()
     result_info.update({"ok": status_code == 200, "status": status_code, "body": response_body})
-    if result.stderr:
-        result_info["stderr"] = result.stderr.strip()
     return result_info
 
 
