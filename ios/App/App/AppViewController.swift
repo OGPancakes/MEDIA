@@ -1305,10 +1305,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let id = nativeInt(from: raw["id"]) ?? 0
         guard id >= 0,
               let bodyValue = raw["body"],
-              let senderRaw = raw["sender"] as? [String: Any],
-              let receiverRaw = raw["receiver"] as? [String: Any],
-              let sender = parseNativeUserSummary(from: senderRaw),
-              let receiver = parseNativeUserSummary(from: receiverRaw) else { return nil }
+              let sender = nativeDictionary(from: raw["sender"]).flatMap(parseNativeUserSummary(from:)),
+              let receiver = nativeDictionary(from: raw["receiver"]).flatMap(parseNativeUserSummary(from:)) else { return nil }
         let body = (bodyValue as? String) ?? String(describing: bodyValue)
         return NativeThreadMessage(
             id: id,
@@ -1324,17 +1322,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func parseNativeThreadPayload(from data: Data) -> (ok: Bool, target: NativeUserSummary?, messages: [NativeThreadMessage], error: String?)? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        let ok = object["ok"] as? Bool ?? false
-        let target = (object["target"] as? [String: Any]).flatMap(parseNativeUserSummary(from:))
-        let messages = ((object["messages"] as? [[String: Any]]) ?? []).compactMap(parseNativeThreadMessage(from:))
+        let ok = nativeBool(from: object["ok"]) ?? false
+        let target = nativeDictionary(from: object["target"]).flatMap(parseNativeUserSummary(from:))
+        let messages = nativeArrayOfDictionaries(from: object["messages"]).compactMap(parseNativeThreadMessage(from:))
         let error = object["error"] as? String
         return (ok, target, messages, error)
     }
 
     private func parseNativeSendMessagePayload(from data: Data) -> (ok: Bool, message: NativeThreadMessage?, error: String?)? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        let ok = object["ok"] as? Bool ?? false
-        let message = (object["message"] as? [String: Any]).flatMap(parseNativeThreadMessage(from:))
+        let ok = nativeBool(from: object["ok"]) ?? false
+        let message = nativeDictionary(from: object["message"]).flatMap(parseNativeThreadMessage(from:))
         let error = object["error"] as? String
         return (ok, message, error)
     }
@@ -1360,6 +1358,35 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             }
         }
         return nil
+    }
+
+    private func nativeDictionary(from value: Any?) -> [String: Any]? {
+        if let dictionary = value as? [String: Any] {
+            return dictionary
+        }
+        if let dictionary = value as? NSDictionary {
+            var bridged: [String: Any] = [:]
+            for (key, value) in dictionary {
+                if let key = key as? String {
+                    bridged[key] = value
+                }
+            }
+            return bridged.isEmpty ? nil : bridged
+        }
+        return nil
+    }
+
+    private func nativeArrayOfDictionaries(from value: Any?) -> [[String: Any]] {
+        if let dictionaries = value as? [[String: Any]] {
+            return dictionaries
+        }
+        if let array = value as? [NSDictionary] {
+            return array.compactMap(nativeDictionary(from:))
+        }
+        if let array = value as? [Any] {
+            return array.compactMap(nativeDictionary(from:))
+        }
+        return []
     }
 
     private func loadNativeInbox() {
@@ -2080,13 +2107,17 @@ private final class NativeConversationCell: UITableViewCell {
 private final class NativeThreadMessageCell: UITableViewCell {
     static let reuseIdentifier = "NativeThreadMessageCell"
 
-    private let stack = UIStackView()
-    private let row = UIStackView()
     private let avatarView = NativeAvatarView()
     private let bubbleView = UIView()
     private let bodyLabel = UILabel()
     private let metaLabel = UILabel()
-    private let spacer = UIView()
+    private var avatarLeadingConstraint: NSLayoutConstraint!
+    private var bubbleLeadingToAvatarConstraint: NSLayoutConstraint!
+    private var bubbleLeadingConstraint: NSLayoutConstraint!
+    private var bubbleTrailingConstraint: NSLayoutConstraint!
+    private var bubbleTrailingToContentConstraint: NSLayoutConstraint!
+    private var metaLeadingConstraint: NSLayoutConstraint!
+    private var metaTrailingConstraint: NSLayoutConstraint!
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -2094,52 +2125,52 @@ private final class NativeThreadMessageCell: UITableViewCell {
         selectionStyle = .none
         contentView.backgroundColor = .clear
 
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.spacing = 6
-        contentView.addSubview(stack)
-
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.axis = .horizontal
-        row.alignment = .bottom
-        row.spacing = 10
-        stack.addArrangedSubview(row)
-
         avatarView.translatesAutoresizingMaskIntoConstraints = false
-        row.addArrangedSubview(avatarView)
-        avatarView.widthAnchor.constraint(equalToConstant: 36).isActive = true
-        avatarView.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        contentView.addSubview(avatarView)
 
         bubbleView.translatesAutoresizingMaskIntoConstraints = false
         bubbleView.layer.cornerRadius = 20
         bubbleView.layer.cornerCurve = .continuous
-        row.addArrangedSubview(bubbleView)
+        contentView.addSubview(bubbleView)
 
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
         bodyLabel.font = .systemFont(ofSize: 17, weight: .medium)
         bodyLabel.numberOfLines = 0
         bubbleView.addSubview(bodyLabel)
 
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        row.addArrangedSubview(spacer)
-
         metaLabel.translatesAutoresizingMaskIntoConstraints = false
         metaLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         metaLabel.textColor = UIColor(red: 107.0 / 255.0, green: 119.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.84)
-        stack.addArrangedSubview(metaLabel)
+        contentView.addSubview(metaLabel)
+
+        avatarLeadingConstraint = avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8)
+        bubbleLeadingToAvatarConstraint = bubbleView.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 10)
+        bubbleLeadingConstraint = bubbleView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 72)
+        bubbleTrailingConstraint = bubbleView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -58)
+        bubbleTrailingToContentConstraint = bubbleView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8)
+        metaLeadingConstraint = metaLabel.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 6)
+        metaTrailingConstraint = metaLabel.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -6)
 
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
-            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
-            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
+            avatarLeadingConstraint,
+            avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
+            avatarView.widthAnchor.constraint(equalToConstant: 36),
+            avatarView.heightAnchor.constraint(equalToConstant: 36),
 
             bodyLabel.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 14),
             bodyLabel.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -14),
             bodyLabel.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: 12),
             bodyLabel.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -12),
 
-            bubbleView.widthAnchor.constraint(lessThanOrEqualToConstant: 260)
+            bubbleView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
+            bubbleView.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
+            bubbleLeadingToAvatarConstraint,
+            bubbleTrailingConstraint,
+
+            metaLabel.topAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: 6),
+            metaLeadingConstraint,
+            metaTrailingConstraint,
+            metaLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6)
         ])
     }
 
@@ -2150,23 +2181,31 @@ private final class NativeThreadMessageCell: UITableViewCell {
     func configure(with message: NativeThreadMessage, imageCache: NSCache<NSString, UIImage>) {
         avatarView.configure(with: message.sender, imageCache: imageCache)
         bodyLabel.text = message.body
-        metaLabel.text = message.created_at_relative
+        metaLabel.text = message.created_at_relative.isEmpty ? "now" : message.created_at_relative
         if message.is_mine {
-            row.semanticContentAttribute = .forceRightToLeft
-            stack.alignment = .trailing
+            avatarView.isHidden = true
+            avatarLeadingConstraint.isActive = false
+            bubbleLeadingToAvatarConstraint.isActive = false
+            bubbleTrailingConstraint.isActive = false
+            bubbleLeadingConstraint.isActive = true
+            bubbleTrailingToContentConstraint.isActive = true
+            metaLeadingConstraint.isActive = false
+            metaTrailingConstraint.isActive = true
             bubbleView.backgroundColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.95)
             bodyLabel.textColor = .white
             metaLabel.textAlignment = .right
-            avatarView.isHidden = true
-            spacer.isHidden = false
         } else {
-            row.semanticContentAttribute = .forceLeftToRight
-            stack.alignment = .leading
+            avatarView.isHidden = false
+            avatarLeadingConstraint.isActive = true
+            bubbleLeadingConstraint.isActive = false
+            bubbleTrailingToContentConstraint.isActive = false
+            bubbleLeadingToAvatarConstraint.isActive = true
+            bubbleTrailingConstraint.isActive = true
+            metaTrailingConstraint.isActive = false
+            metaLeadingConstraint.isActive = true
             bubbleView.backgroundColor = UIColor(red: 241.0 / 255.0, green: 245.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
             bodyLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
             metaLabel.textAlignment = .left
-            avatarView.isHidden = false
-            spacer.isHidden = true
         }
     }
 }
