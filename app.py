@@ -1617,6 +1617,17 @@ def create_app():
                     current_subscription = subscription
                     continue
                 db.session.delete(subscription)
+            if endpoint.startswith("apns:"):
+                stale_apns_subscriptions = (
+                    PushSubscription.query.filter(
+                        PushSubscription.user_id == current_user().id,
+                        PushSubscription.endpoint.like("apns:%"),
+                        PushSubscription.endpoint != endpoint,
+                    )
+                    .all()
+                )
+                for subscription in stale_apns_subscriptions:
+                    db.session.delete(subscription)
             if not current_subscription:
                 db.session.add(PushSubscription(user_id=current_user().id, endpoint=endpoint))
             db.session.commit()
