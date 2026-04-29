@@ -25,6 +25,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let composerCloseButton = UIButton(type: .system)
     private let composerTextView = UITextView()
     private let composerPlaceholder = UILabel()
+    private let composerMentionsContainer = UIView()
+    private let composerMentionsStack = UIStackView()
     private let composerAttachButton = UIButton(type: .system)
     private let composerPreviewContainer = UIView()
     private let composerPreviewImageView = UIImageView()
@@ -63,6 +65,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeFeedEmptyLabel = UILabel()
     private let nativeFeedRefreshControl = UIRefreshControl()
     private let nativeFeedStoriesHeader = NativeStoriesHeaderView()
+    private let nativeProfileAvatarView = NativeAvatarView()
 
     private var composerSheetBottomConstraint: NSLayoutConstraint?
     private var composeButtonBottomConstraint: NSLayoutConstraint?
@@ -76,6 +79,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var isLoggedIntoWebApp = false
     private var isShowingNativeFeed = false
     private var isLoadingNativeFeed = false
+    private var isLoadingMentionSuggestions = false
     private var isShowingNativeMessages = false
     private var isLoadingNativeInbox = false
     private var isLoadingNativeThread = false
@@ -103,7 +107,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var nativeThreadMessages: [NativeThreadMessage] = []
     private var nativeFeedPosts: [NativeFeedPost] = []
     private var nativeFeedStories: [NativeFeedStory] = []
+    private var nativeFeedPolls: [NativeFeedPoll] = []
     private var nativeFeedLatestPostID = 0
+    private var nativeCurrentUser: NativeUserSummary?
+    private var currentMentionSuggestions: [NativeMentionUser] = []
+    private var activeMentionQuery = ""
+    private var isApplyingComposerTextAttributes = false
     private var nativeMessageTarget: NativeUserSummary?
     private var pendingNativeJSONRequests: [String: (Result<Data, Error>) -> Void] = [:]
     private let nativeAvatarImageCache = NSCache<NSString, UIImage>()
@@ -150,8 +159,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         gradientLayer.frame = view.bounds
         if nativeFeedTableView.tableHeaderView === nativeFeedStoriesHeader,
            nativeFeedStoriesHeader.frame.width != nativeFeedTableView.bounds.width {
-            nativeFeedStoriesHeader.frame = CGRect(x: 0, y: 0, width: nativeFeedTableView.bounds.width, height: 120)
-            nativeFeedTableView.tableHeaderView = nativeFeedStoriesHeader
+            resizeNativeFeedHeader()
         }
         if let threadGradient = nativeThreadContainer.layer.value(forKey: "threadGradientLayer") as? CAGradientLayer {
             threadGradient.frame = nativeThreadContainer.bounds
@@ -236,6 +244,20 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         composerPlaceholder.font = .systemFont(ofSize: 18)
         composerPlaceholder.textColor = UIColor(red: 91.0 / 255.0, green: 107.0 / 255.0, blue: 138.0 / 255.0, alpha: 0.72)
         sheetContent.addSubview(composerPlaceholder)
+
+        composerMentionsContainer.translatesAutoresizingMaskIntoConstraints = false
+        composerMentionsContainer.backgroundColor = UIColor(red: 245.0 / 255.0, green: 248.0 / 255.0, blue: 255.0 / 255.0, alpha: 0.95)
+        composerMentionsContainer.layer.cornerRadius = 16
+        composerMentionsContainer.layer.cornerCurve = .continuous
+        composerMentionsContainer.layer.borderWidth = 1
+        composerMentionsContainer.layer.borderColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.1).cgColor
+        composerMentionsContainer.isHidden = true
+        sheetContent.addSubview(composerMentionsContainer)
+
+        composerMentionsStack.translatesAutoresizingMaskIntoConstraints = false
+        composerMentionsStack.axis = .vertical
+        composerMentionsStack.spacing = 4
+        composerMentionsContainer.addSubview(composerMentionsStack)
 
         composerPreviewContainer.translatesAutoresizingMaskIntoConstraints = false
         composerPreviewContainer.layer.cornerRadius = 18
@@ -328,7 +350,15 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             composerPlaceholder.topAnchor.constraint(equalTo: composerTextView.topAnchor, constant: 14),
             composerPlaceholder.leadingAnchor.constraint(equalTo: composerTextView.leadingAnchor),
 
-            composerPreviewContainer.topAnchor.constraint(equalTo: composerTextView.bottomAnchor, constant: 6),
+            composerMentionsContainer.topAnchor.constraint(equalTo: composerTextView.bottomAnchor, constant: 6),
+            composerMentionsContainer.leadingAnchor.constraint(equalTo: sheetContent.leadingAnchor, constant: 18),
+            composerMentionsContainer.trailingAnchor.constraint(equalTo: sheetContent.trailingAnchor, constant: -18),
+            composerMentionsStack.leadingAnchor.constraint(equalTo: composerMentionsContainer.leadingAnchor, constant: 8),
+            composerMentionsStack.trailingAnchor.constraint(equalTo: composerMentionsContainer.trailingAnchor, constant: -8),
+            composerMentionsStack.topAnchor.constraint(equalTo: composerMentionsContainer.topAnchor, constant: 8),
+            composerMentionsStack.bottomAnchor.constraint(equalTo: composerMentionsContainer.bottomAnchor, constant: -8),
+
+            composerPreviewContainer.topAnchor.constraint(equalTo: composerMentionsContainer.bottomAnchor, constant: 6),
             composerPreviewContainer.leadingAnchor.constraint(equalTo: sheetContent.leadingAnchor, constant: 18),
             composerPreviewContainer.trailingAnchor.constraint(equalTo: sheetContent.trailingAnchor, constant: -18),
             composerPreviewHeightConstraint!,
@@ -399,6 +429,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         configureTabButton(feedTabButton, title: "Feed", section: .feed)
         configureTabButton(searchTabButton, title: "Search", section: .search)
         configureTabButton(profileTabButton, title: "Profile", section: .profile)
+        configureNativeProfileTabAvatar()
 
         [messagesTabButton, feedTabButton, searchTabButton, profileTabButton].forEach(nativeTabStack.addArrangedSubview)
 
@@ -424,6 +455,20 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         ])
 
         updateNativeTabSelection(animated: false)
+    }
+
+    private func configureNativeProfileTabAvatar() {
+        profileTabButton.setTitle("", for: .normal)
+        profileTabButton.accessibilityLabel = "Profile"
+        nativeProfileAvatarView.translatesAutoresizingMaskIntoConstraints = false
+        nativeProfileAvatarView.isUserInteractionEnabled = false
+        profileTabButton.addSubview(nativeProfileAvatarView)
+        NSLayoutConstraint.activate([
+            nativeProfileAvatarView.centerXAnchor.constraint(equalTo: profileTabButton.centerXAnchor),
+            nativeProfileAvatarView.centerYAnchor.constraint(equalTo: profileTabButton.centerYAnchor),
+            nativeProfileAvatarView.widthAnchor.constraint(equalToConstant: 38),
+            nativeProfileAvatarView.heightAnchor.constraint(equalToConstant: 38)
+        ])
     }
 
     private func configureNativeMessages() {
@@ -729,6 +774,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeFeedStoriesHeader.onOpenStory = { [weak self] story in
             self?.openNativeStory(story)
         }
+        nativeFeedStoriesHeader.onVotePoll = { [weak self] poll, option in
+            self?.voteNativePoll(poll: poll, option: option)
+        }
         nativeFeedTableView.tableHeaderView = nativeFeedStoriesHeader
         nativeFeedContainer.addSubview(nativeFeedTableView)
 
@@ -791,9 +839,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     ? UIColor(red: 240.0 / 255.0, green: 244.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
                     : UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.06)
                 button.setTitleColor(
-                    isActive
+                    (section == .profile)
+                        ? .clear
+                        : (isActive
                         ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
-                        : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 1),
+                        : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 1)),
                     for: .normal
                 )
                 button.transform = isActive ? CGAffineTransform(scaleX: 1.02, y: 1.02) : .identity
@@ -951,6 +1001,107 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadSendButton.backgroundColor = canSend
             ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
             : UIColor(red: 123.0 / 255.0, green: 145.0 / 255.0, blue: 189.0 / 255.0, alpha: 0.88)
+    }
+
+    private func activeMentionInfo(in textView: UITextView) -> (query: String, range: NSRange)? {
+        let cursor = textView.selectedRange.location
+        let text = textView.text as NSString
+        guard cursor <= text.length else { return nil }
+        var index = cursor
+        while index > 0 {
+            let character = text.substring(with: NSRange(location: index - 1, length: 1))
+            if character == "@" {
+                let range = NSRange(location: index - 1, length: cursor - index + 1)
+                let query = text.substring(with: NSRange(location: index, length: cursor - index))
+                guard !query.contains(" "), !query.contains("\n") else { return nil }
+                return (query, range)
+            }
+            if character == " " || character == "\n" {
+                return nil
+            }
+            index -= 1
+        }
+        return nil
+    }
+
+    private func updateComposerMentionSuggestions() {
+        guard let mention = activeMentionInfo(in: composerTextView) else {
+            activeMentionQuery = ""
+            renderComposerMentionSuggestions([])
+            return
+        }
+        guard mention.query != activeMentionQuery else { return }
+        activeMentionQuery = mention.query
+        fetchComposerMentionSuggestions(query: mention.query)
+    }
+
+    private func fetchComposerMentionSuggestions(query: String) {
+        guard !isLoadingMentionSuggestions else { return }
+        isLoadingMentionSuggestions = true
+        performNativeJSONRequest(path: "/api/users/mentions?q=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query)") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isLoadingMentionSuggestions = false
+                guard case .success(let data) = result,
+                      let payload = try? JSONDecoder().decode(NativeMentionResponse.self, from: data),
+                      self.activeMentionQuery == query else { return }
+                self.currentMentionSuggestions = Array(payload.users.prefix(5))
+                self.renderComposerMentionSuggestions(self.currentMentionSuggestions)
+            }
+        }
+    }
+
+    private func renderComposerMentionSuggestions(_ users: [NativeMentionUser]) {
+        composerMentionsStack.arrangedSubviews.forEach { view in
+            composerMentionsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        composerMentionsContainer.isHidden = users.isEmpty
+        users.forEach { user in
+            let button = NativeMentionSuggestionButton(user: user, imageCache: nativeAvatarImageCache)
+            button.addTarget(self, action: #selector(handleMentionSuggestionTap(_:)), for: .touchUpInside)
+            composerMentionsStack.addArrangedSubview(button)
+        }
+    }
+
+    @objc private func handleMentionSuggestionTap(_ sender: NativeMentionSuggestionButton) {
+        guard let mention = activeMentionInfo(in: composerTextView) else { return }
+        let text = composerTextView.text as NSString
+        let replacement = "@\(sender.user.username) "
+        composerTextView.text = text.replacingCharacters(in: mention.range, with: replacement)
+        composerTextView.selectedRange = NSRange(location: mention.range.location + replacement.count, length: 0)
+        activeMentionQuery = ""
+        renderComposerMentionSuggestions([])
+        updateComposerTextStyling()
+        textViewDidChange(composerTextView)
+    }
+
+    private func updateComposerTextStyling() {
+        guard !isApplyingComposerTextAttributes else { return }
+        isApplyingComposerTextAttributes = true
+        let selectedRange = composerTextView.selectedRange
+        let text = composerTextView.text ?? ""
+        let attributed = NSMutableAttributedString(
+            string: text,
+            attributes: [
+                .font: composerTextView.font ?? UIFont.systemFont(ofSize: 18),
+                .foregroundColor: UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+            ]
+        )
+        let regex = try? NSRegularExpression(pattern: "@[A-Za-z0-9_.]+")
+        regex?.matches(in: text, range: NSRange(location: 0, length: (text as NSString).length)).forEach { match in
+            attributed.addAttributes([
+                .foregroundColor: UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1),
+                .font: UIFont.systemFont(ofSize: 18, weight: .semibold)
+            ], range: match.range)
+        }
+        composerTextView.attributedText = attributed
+        composerTextView.selectedRange = selectedRange
+        composerTextView.typingAttributes = [
+            .font: composerTextView.font ?? UIFont.systemFont(ofSize: 18),
+            .foregroundColor: UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        ]
+        isApplyingComposerTextAttributes = false
     }
 
     private func installComposerBridge() {
@@ -1141,8 +1292,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeThreadMessages = []
             nativeFeedPosts = []
             nativeFeedStories = []
+            nativeFeedPolls = []
             nativeFeedLatestPostID = 0
-            nativeFeedStoriesHeader.configure(stories: [], currentUser: nil, hasCurrentUserStory: false, imageCache: nativeAvatarImageCache)
+            nativeCurrentUser = nil
+            nativeFeedStoriesHeader.configure(stories: [], polls: [], currentUser: nil, hasCurrentUserStory: false, imageCache: nativeAvatarImageCache)
             lastRouteBySection = [
                 .messages: "/messages",
                 .feed: "/",
@@ -1393,6 +1546,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func dismissComposerSheet(animated: Bool) {
         composerTextView.resignFirstResponder()
+        renderComposerMentionSuggestions([])
         let reset = {
             self.composerDimView.alpha = 0
             self.composerSheet.alpha = 0
@@ -1790,12 +1944,19 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.nativeFeedLatestPostID = payload.latest_post_id
                     self.nativeFeedPosts = payload.posts
                     self.nativeFeedStories = payload.stories
+                    self.nativeFeedPolls = payload.polls
+                    self.nativeCurrentUser = payload.current_user
                     self.nativeFeedStoriesHeader.configure(
                         stories: payload.stories,
+                        polls: payload.polls,
                         currentUser: payload.current_user,
                         hasCurrentUserStory: payload.current_user_story,
                         imageCache: self.nativeAvatarImageCache
                     )
+                    self.resizeNativeFeedHeader()
+                    if let currentUser = payload.current_user {
+                        self.nativeProfileAvatarView.configure(with: currentUser, imageCache: self.nativeAvatarImageCache)
+                    }
                     self.syncNativeFeedSegment()
                     self.nativeFeedTableView.reloadData()
                     self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(8)))
@@ -1842,6 +2003,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
     }
 
+    private func resizeNativeFeedHeader() {
+        guard nativeFeedTableView.tableHeaderView === nativeFeedStoriesHeader else { return }
+        let height = nativeFeedStoriesHeader.preferredHeight
+        nativeFeedStoriesHeader.frame = CGRect(x: 0, y: 0, width: nativeFeedTableView.bounds.width, height: height)
+        nativeFeedTableView.tableHeaderView = nativeFeedStoriesHeader
+    }
+
     private func openNativeStory(_ story: NativeFeedStory) {
         currentRoute = story.url
         hideNativeFeedIfNeeded()
@@ -1863,6 +2031,20 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             })();
             """
             self?.webView?.evaluateJavaScript(script, completionHandler: nil)
+        }
+    }
+
+    private func voteNativePoll(poll: NativeFeedPoll, option: NativeFeedPollOption) {
+        performNativeJSONRequest(path: "/polls/\(poll.id)/vote", method: "POST", bodyObject: ["option_id": option.id]) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.loadNativeFeed(force: true)
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
         }
     }
 
@@ -2492,6 +2674,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             return
         }
         composerPlaceholder.isHidden = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        updateComposerTextStyling()
+        updateComposerMentionSuggestions()
         let targetHeight = min(max(textView.contentSize.height, 92), 180)
         composerTextViewHeightConstraint?.constant = targetHeight
         composerPostButton.isEnabled = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedImageData != nil
@@ -2620,6 +2804,7 @@ private struct NativeFeedResponse: Decodable {
     let latest_post_id: Int
     let posts: [NativeFeedPost]
     let stories: [NativeFeedStory]
+    let polls: [NativeFeedPoll]
     let current_user: NativeUserSummary?
     let current_user_story: Bool
 
@@ -2629,6 +2814,7 @@ private struct NativeFeedResponse: Decodable {
         case latest_post_id
         case posts
         case stories
+        case polls
         case current_user
         case current_user_story
     }
@@ -2640,6 +2826,7 @@ private struct NativeFeedResponse: Decodable {
         latest_post_id = try container.decode(Int.self, forKey: .latest_post_id)
         posts = try container.decode([NativeFeedPost].self, forKey: .posts)
         stories = try container.decodeIfPresent([NativeFeedStory].self, forKey: .stories) ?? []
+        polls = try container.decodeIfPresent([NativeFeedPoll].self, forKey: .polls) ?? []
         current_user = try container.decodeIfPresent(NativeUserSummary.self, forKey: .current_user)
         current_user_story = try container.decodeIfPresent(Bool.self, forKey: .current_user_story) ?? false
     }
@@ -2650,6 +2837,46 @@ private struct NativeFeedStory: Decodable {
     let author: NativeUserSummary
     let url: String
     let expires_at: String
+}
+
+private struct NativeFeedPoll: Decodable {
+    let id: Int
+    let question: String
+    let is_hidden_results: Bool
+    let results_visible: Bool
+    let selected_option_id: Int?
+    let options: [NativeFeedPollOption]
+}
+
+private struct NativeFeedPollOption: Decodable {
+    let id: Int
+    let label: String
+    let votes: Int
+}
+
+private struct NativeMentionResponse: Decodable {
+    let users: [NativeMentionUser]
+}
+
+private struct NativeMentionUser: Decodable {
+    let username: String
+    let display_name: String
+    let avatar_url: String
+    let avatar_emoji: String
+    let use_emoji: Bool
+
+    var summary: NativeUserSummary {
+        NativeUserSummary(
+            id: 0,
+            username: username,
+            display_name: display_name,
+            avatar_url: avatar_url,
+            avatar_emoji: avatar_emoji,
+            use_emoji: use_emoji,
+            is_verified: false,
+            is_creator: false
+        )
+    }
 }
 
 private struct NativeFeedPost: Decodable {
@@ -2891,8 +3118,14 @@ private final class NativeStoriesHeaderView: UIView {
     private let discoverLabel = UILabel()
     private let scrollView = UIScrollView()
     private let stackView = UIStackView()
+    private let pollsStack = UIStackView()
     var onAddStory: (() -> Void)?
     var onOpenStory: ((NativeFeedStory) -> Void)?
+    var onVotePoll: ((NativeFeedPoll, NativeFeedPollOption) -> Void)?
+    private var polls: [NativeFeedPoll] = []
+    var preferredHeight: CGFloat {
+        120 + CGFloat(min(polls.count, 3)) * 128
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -2921,6 +3154,11 @@ private final class NativeStoriesHeaderView: UIView {
         stackView.spacing = 12
         scrollView.addSubview(stackView)
 
+        pollsStack.translatesAutoresizingMaskIntoConstraints = false
+        pollsStack.axis = .vertical
+        pollsStack.spacing = 10
+        addSubview(pollsStack)
+
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
@@ -2934,7 +3172,10 @@ private final class NativeStoriesHeaderView: UIView {
             stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
             stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            stackView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
+            stackView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
+            pollsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            pollsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            pollsStack.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 8)
         ])
     }
 
@@ -2942,9 +3183,14 @@ private final class NativeStoriesHeaderView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(stories: [NativeFeedStory], currentUser: NativeUserSummary?, hasCurrentUserStory: Bool, imageCache: NSCache<NSString, UIImage>) {
+    func configure(stories: [NativeFeedStory], polls: [NativeFeedPoll], currentUser: NativeUserSummary?, hasCurrentUserStory: Bool, imageCache: NSCache<NSString, UIImage>) {
+        self.polls = polls
         stackView.arrangedSubviews.forEach { view in
             stackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        pollsStack.arrangedSubviews.forEach { view in
+            pollsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
 
@@ -2969,6 +3215,15 @@ private final class NativeStoriesHeaderView: UIView {
             emptyLabel.font = .systemFont(ofSize: 14, weight: .semibold)
             emptyLabel.textColor = UIColor(red: 107.0 / 255.0, green: 119.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.82)
             stackView.addArrangedSubview(emptyLabel)
+        }
+
+        polls.prefix(3).forEach { poll in
+            let pollView = NativePollCardView()
+            pollView.configure(with: poll)
+            pollView.onVote = { [weak self] option in
+                self?.onVotePoll?(poll, option)
+            }
+            pollsStack.addArrangedSubview(pollView)
         }
     }
 
@@ -3042,6 +3297,148 @@ private final class NativeStoryChipView: UIControl {
         avatarView.layer.borderColor = UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 0.84).cgColor
         titleLabel.text = title
         addBadge.isHidden = !showsAddBadge
+    }
+}
+
+private final class NativePollCardView: UIView {
+    private let titleLabel = UILabel()
+    private let pillLabel = UILabel()
+    private let optionsStack = UIStackView()
+    private var poll: NativeFeedPoll?
+    var onVote: ((NativeFeedPollOption) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        backgroundColor = UIColor.white.withAlphaComponent(0.92)
+        layer.cornerRadius = 18
+        layer.cornerCurve = .continuous
+        layer.borderWidth = 1
+        layer.borderColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.08).cgColor
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = .systemFont(ofSize: 16, weight: .bold)
+        titleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        titleLabel.numberOfLines = 2
+        addSubview(titleLabel)
+
+        pillLabel.translatesAutoresizingMaskIntoConstraints = false
+        pillLabel.text = "Poll"
+        pillLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        pillLabel.textAlignment = .center
+        pillLabel.textColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        pillLabel.backgroundColor = UIColor(red: 235.0 / 255.0, green: 241.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
+        pillLabel.layer.cornerRadius = 10
+        pillLabel.layer.cornerCurve = .continuous
+        pillLabel.clipsToBounds = true
+        addSubview(pillLabel)
+
+        optionsStack.translatesAutoresizingMaskIntoConstraints = false
+        optionsStack.axis = .vertical
+        optionsStack.spacing = 6
+        addSubview(optionsStack)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(greaterThanOrEqualToConstant: 118),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: pillLabel.leadingAnchor, constant: -8),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            pillLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            pillLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            pillLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 54),
+            pillLabel.heightAnchor.constraint(equalToConstant: 22),
+            optionsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            optionsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            optionsStack.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 10),
+            optionsStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(with poll: NativeFeedPoll) {
+        self.poll = poll
+        titleLabel.text = poll.question
+        pillLabel.text = poll.is_hidden_results && !poll.results_visible ? "Hidden" : "Poll"
+        optionsStack.arrangedSubviews.forEach { view in
+            optionsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        poll.options.prefix(4).forEach { option in
+            let button = UIButton(type: .system)
+            button.contentHorizontalAlignment = .left
+            button.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+            button.layer.cornerRadius = 12
+            button.layer.cornerCurve = .continuous
+            button.contentEdgeInsets = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
+            let selected = poll.selected_option_id == option.id
+            let suffix = poll.results_visible ? "  \(option.votes)" : ""
+            button.setTitle("\(selected ? "✓ " : "")\(option.label)\(suffix)", for: .normal)
+            button.setTitleColor(selected ? .white : UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1), for: .normal)
+            button.backgroundColor = selected ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1) : UIColor(red: 245.0 / 255.0, green: 248.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+            button.tag = option.id
+            button.addTarget(self, action: #selector(handleOptionTap(_:)), for: .touchUpInside)
+            optionsStack.addArrangedSubview(button)
+        }
+    }
+
+    @objc private func handleOptionTap(_ sender: UIButton) {
+        guard let option = poll?.options.first(where: { $0.id == sender.tag }) else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        onVote?(option)
+    }
+}
+
+private final class NativeMentionSuggestionButton: UIControl {
+    let user: NativeMentionUser
+    private let avatarView = NativeAvatarView()
+    private let nameLabel = UILabel()
+    private let usernameLabel = UILabel()
+
+    init(user: NativeMentionUser, imageCache: NSCache<NSString, UIImage>) {
+        self.user = user
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        layer.cornerRadius = 12
+        layer.cornerCurve = .continuous
+        backgroundColor = .white.withAlphaComponent(0.85)
+
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.isUserInteractionEnabled = false
+        avatarView.configure(with: user.summary, imageCache: imageCache)
+        addSubview(avatarView)
+
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.text = user.display_name
+        nameLabel.font = .systemFont(ofSize: 14, weight: .bold)
+        nameLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        addSubview(nameLabel)
+
+        usernameLabel.translatesAutoresizingMaskIntoConstraints = false
+        usernameLabel.text = "@\(user.username)"
+        usernameLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        usernameLabel.textColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.86)
+        addSubview(usernameLabel)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 48),
+            avatarView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            avatarView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            avatarView.widthAnchor.constraint(equalToConstant: 34),
+            avatarView.heightAnchor.constraint(equalToConstant: 34),
+            nameLabel.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 10),
+            nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            usernameLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            usernameLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
+            usernameLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 }
 

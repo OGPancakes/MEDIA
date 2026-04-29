@@ -1299,6 +1299,7 @@ def create_app():
                 "count": len(posts),
                 "posts": [serialized for serialized in (serialize_feed_post(post, user) for post in posts) if serialized],
                 "stories": [serialized for serialized in (serialize_feed_story(story) for story in stories) if serialized],
+                "polls": [serialized for serialized in (serialize_feed_poll(poll, user) for poll in get_active_polls(user)) if serialized],
                 "current_user": serialize_user_brief(user),
                 "current_user_story": story_owner_has_active_story(user),
                 "html": render_template("_feed_items.html", posts=posts),
@@ -1450,7 +1451,8 @@ def create_app():
         if not poll.is_active:
             flash("That poll is closed.", "error")
             return redirect(request.referrer or url_for("index"))
-        option_id = int(request.form.get("option_id", 0))
+        payload = request.get_json(silent=True) or request.form
+        option_id = int(payload.get("option_id", 0))
         option = PollOption.query.filter_by(id=option_id, poll_id=poll.id).first()
         if not option:
             flash("Choose a valid option.", "error")
@@ -1968,6 +1970,28 @@ def serialize_feed_story(story):
         "author": serialize_user_brief(story.author),
         "url": url_for("story_view", story_id=story.id),
         "expires_at": story.expires_at.isoformat() if story.expires_at else "",
+    }
+
+
+def serialize_feed_poll(poll, viewer):
+    if not poll:
+        return None
+    my_vote = poll_vote_for_user(poll, viewer)
+    show_results = poll_results_visible(poll, viewer)
+    return {
+        "id": poll.id,
+        "question": poll.question,
+        "is_hidden_results": bool(poll.is_hidden_results),
+        "results_visible": show_results,
+        "selected_option_id": my_vote.option_id if my_vote else None,
+        "options": [
+            {
+                "id": option.id,
+                "label": option.label,
+                "votes": poll_option_votes(option) if show_results else 0,
+            }
+            for option in poll.options
+        ],
     }
 
 
