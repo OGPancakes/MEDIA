@@ -1301,7 +1301,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func parseNativeThreadMessage(from raw: [String: Any]) -> NativeThreadMessage? {
-        guard let id = raw["id"] as? Int,
+        let id = (raw["id"] as? Int) ?? (raw["id"] as? NSNumber)?.intValue ?? 0
+        guard id >= 0,
               let body = raw["body"] as? String,
               let senderRaw = raw["sender"] as? [String: Any],
               let receiverRaw = raw["receiver"] as? [String: Any],
@@ -1546,14 +1547,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let escapedUsername = targetUsername
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        let preferredRoute = lastRouteBySection[section] ?? {
+        let preferredRoute = section == .feed ? "/" : (lastRouteBySection[section] ?? {
             switch section {
             case .messages: return "/messages"
             case .feed: return "/"
             case .search: return "/search"
             case .profile: return targetUsername.isEmpty ? "/" : "/users/\(targetUsername)"
             }
-        }()
+        }())
         let escapedRoute = preferredRoute
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
