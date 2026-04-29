@@ -1284,6 +1284,57 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
     }
 
+    private func parseNativeUserSummary(from raw: [String: Any]) -> NativeUserSummary? {
+        guard let id = raw["id"] as? Int,
+              let username = raw["username"] as? String else { return nil }
+        return NativeUserSummary(
+            id: id,
+            username: username,
+            display_name: raw["display_name"] as? String ?? username,
+            avatar_url: raw["avatar_url"] as? String ?? "",
+            avatar_emoji: raw["avatar_emoji"] as? String ?? "🦅",
+            use_emoji: raw["use_emoji"] as? Bool ?? true,
+            is_verified: raw["is_verified"] as? Bool ?? false,
+            is_creator: raw["is_creator"] as? Bool ?? false
+        )
+    }
+
+    private func parseNativeThreadMessage(from raw: [String: Any]) -> NativeThreadMessage? {
+        guard let id = raw["id"] as? Int,
+              let body = raw["body"] as? String,
+              let senderRaw = raw["sender"] as? [String: Any],
+              let receiverRaw = raw["receiver"] as? [String: Any],
+              let sender = parseNativeUserSummary(from: senderRaw),
+              let receiver = parseNativeUserSummary(from: receiverRaw) else { return nil }
+        return NativeThreadMessage(
+            id: id,
+            body: body,
+            is_mine: raw["is_mine"] as? Bool ?? false,
+            is_read: raw["is_read"] as? Bool ?? false,
+            created_at: raw["created_at"] as? String ?? "",
+            created_at_relative: raw["created_at_relative"] as? String ?? "",
+            sender: sender,
+            receiver: receiver
+        )
+    }
+
+    private func parseNativeThreadPayload(from data: Data) -> (ok: Bool, target: NativeUserSummary?, messages: [NativeThreadMessage], error: String?)? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let ok = object["ok"] as? Bool ?? false
+        let target = (object["target"] as? [String: Any]).flatMap(parseNativeUserSummary(from:))
+        let messages = ((object["messages"] as? [[String: Any]]) ?? []).compactMap(parseNativeThreadMessage(from:))
+        let error = object["error"] as? String
+        return (ok, target, messages, error)
+    }
+
+    private func parseNativeSendMessagePayload(from data: Data) -> (ok: Bool, message: NativeThreadMessage?, error: String?)? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let ok = object["ok"] as? Bool ?? false
+        let message = (object["message"] as? [String: Any]).flatMap(parseNativeThreadMessage(from:))
+        let error = object["error"] as? String
+        return (ok, message, error)
+    }
+
     private func loadNativeInbox() {
         guard isLoggedIntoWebApp, !isLoadingNativeInbox else { return }
         isLoadingNativeInbox = true
@@ -1348,6 +1399,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadTableView.reloadData()
         nativeThreadEmptyLabel.isHidden = true
         nativeThreadLoadingView.startAnimating()
+        if animate {
+            nativeThreadContainer.transform = CGAffineTransform(translationX: 16, y: 0)
+            nativeThreadContainer.alpha = 0.35
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut]) {
+                self.nativeThreadContainer.alpha = 1
+                self.nativeThreadContainer.transform = .identity
+            }
+        }
         performNativeJSONRequest(path: "/api/messages/thread?user=\(username.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? username)") { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -1355,14 +1414,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 self.nativeThreadLoadingView.stopAnimating()
                 switch result {
                 case .success(let data):
-                    guard let payload = try? JSONDecoder().decode(NativeThreadResponse.self, from: data), payload.ok else {
+                    guard let payload = self.parseNativeThreadPayload(from: data),
+                          payload.ok,
+                          let target = payload.target else {
+                        let errorMessage = self.parseNativeThreadPayload(from: data)?.error ?? "We couldn’t load that conversation yet."
                         self.nativeThreadSubtitleLabel.text = "Couldn’t load conversation"
-                        self.showNativeFlash(message: "We couldn’t load that conversation yet.", category: "error")
+                        self.showNativeFlash(message: errorMessage, category: "error")
                         return
                     }
                     self.nativeThreadMessages = payload.messages
-                    self.presentNativeThreadShell(for: payload.target)
-                    self.lastRouteBySection[.messages] = "/messages?user=\(payload.target.username)"
+                    self.presentNativeThreadShell(for: target)
+                    self.lastRouteBySection[.messages] = "/messages?user=\(target.username)"
                     self.currentRoute = self.lastRouteBySection[.messages] ?? "/messages"
                     self.nativeThreadTableView.reloadData()
                     self.nativeThreadEmptyLabel.isHidden = !payload.messages.isEmpty
@@ -1370,17 +1432,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.view.layoutIfNeeded()
                     self.nativeThreadTableView.layoutIfNeeded()
                     self.scrollNativeThreadToBottom(animated: animate)
-                    if animate {
-                        self.nativeThreadContainer.transform = CGAffineTransform(translationX: 18, y: 0)
-                        self.nativeThreadContainer.alpha = 0
-                        UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut]) {
-                            self.nativeThreadContainer.alpha = 1
-                            self.nativeThreadContainer.transform = .identity
-                        }
-                    } else {
-                        self.nativeThreadContainer.alpha = 1
-                        self.nativeThreadContainer.transform = .identity
-                    }
+                    self.nativeThreadContainer.alpha = 1
+                    self.nativeThreadContainer.transform = .identity
                 case .failure(let error):
                     self.nativeThreadSubtitleLabel.text = "Couldn’t load conversation"
                     self.showNativeFlash(message: error.localizedDescription, category: "error")
@@ -1533,7 +1586,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 self.isSendingNativeMessage = false
                 switch result {
                 case .success(let data):
-                    guard let payload = try? JSONDecoder().decode(NativeSendMessageResponse.self, from: data), payload.ok, let message = payload.message else {
+                    guard let payload = self.parseNativeSendMessagePayload(from: data), payload.ok, let message = payload.message else {
+                        if let payload = self.parseNativeSendMessagePayload(from: data), let error = payload.error, !error.isEmpty {
+                            self.showNativeFlash(message: error, category: "error")
+                        }
                         self.updateNativeThreadComposeState()
                         return
                     }

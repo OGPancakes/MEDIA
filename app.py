@@ -1191,11 +1191,16 @@ def create_app():
                 did_mark_read = True
         if did_mark_read:
             db.session.commit()
+        serialized_messages = []
+        for message in convo:
+            serialized = serialize_direct_message(message, user)
+            if serialized:
+                serialized_messages.append(serialized)
         return jsonify(
             {
                 "ok": True,
                 "target": serialize_user_brief(target),
-                "messages": [serialize_direct_message(message, user) for message in convo],
+                "messages": serialized_messages,
             }
         )
 
@@ -1219,7 +1224,10 @@ def create_app():
         db.session.add(message)
         create_notification(target.id, user.id, "message", f"New message from {user.username}", url_for("messages", user=user.username))
         db.session.commit()
-        return jsonify({"ok": True, "message": serialize_direct_message(message, user)})
+        serialized_message = serialize_direct_message(message, user)
+        if not serialized_message:
+            return jsonify({"ok": False, "error": "We couldn’t load that message yet."}), 500
+        return jsonify({"ok": True, "message": serialized_message})
 
     @app.route("/api/feed")
     @login_required
@@ -1823,6 +1831,10 @@ def serialize_user_brief(user):
 
 
 def serialize_direct_message(message, viewer):
+    sender = message.sender
+    receiver = message.receiver
+    if not sender or not receiver:
+        return None
     return {
         "id": message.id,
         "body": message.body,
@@ -1830,8 +1842,8 @@ def serialize_direct_message(message, viewer):
         "is_read": bool(message.is_read),
         "created_at": message.created_at.isoformat() if message.created_at else "",
         "created_at_relative": timesince(message.created_at),
-        "sender": serialize_user_brief(message.sender),
-        "receiver": serialize_user_brief(message.receiver),
+        "sender": serialize_user_brief(sender),
+        "receiver": serialize_user_brief(receiver),
     }
 
 
