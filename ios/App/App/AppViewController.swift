@@ -978,8 +978,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func registerPushToken(_ token: String) {
         guard let targetURL = URL(string: "/push/register", relativeTo: webView?.url)?.absoluteURL else { return }
-        fetchCookieHeader { [weak self] cookieHeader in
-            guard let self else { return }
+        fetchCookieHeader { cookieHeader in
             var request = URLRequest(url: targetURL)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1589,6 +1588,21 @@ private struct NativeMessageConversation: Decodable {
     var latest_message_relative: String
     var latest_message_at: String
     var unread_count: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case username
+        case display_name
+        case avatar_url
+        case avatar_emoji
+        case use_emoji
+        case is_verified
+        case is_creator
+        case latest_message
+        case latest_message_relative
+        case latest_message_at
+        case unread_count
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
