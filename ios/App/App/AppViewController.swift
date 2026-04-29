@@ -488,12 +488,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadTableView.separatorStyle = .none
         nativeThreadTableView.showsVerticalScrollIndicator = false
         nativeThreadTableView.keyboardDismissMode = .interactive
-        nativeThreadTableView.rowHeight = UITableView.automaticDimension
-        nativeThreadTableView.estimatedRowHeight = 92
         nativeThreadTableView.contentInset = UIEdgeInsets(top: 14, left: 0, bottom: 14, right: 0)
-        nativeThreadTableView.isScrollEnabled = true
         nativeThreadTableView.dataSource = self
         nativeThreadTableView.delegate = self
+        nativeThreadTableView.rowHeight = UITableView.automaticDimension
+        nativeThreadTableView.estimatedRowHeight = 76
         nativeThreadTableView.register(NativeThreadMessageCell.self, forCellReuseIdentifier: NativeThreadMessageCell.reuseIdentifier)
         nativeThreadContainer.addSubview(nativeThreadTableView)
 
@@ -976,7 +975,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 .search: "/search"
             ]
             nativeMessagesListTableView.reloadData()
-            nativeThreadTableView.reloadData()
+            renderNativeThreadMessages()
             hideNativeMessagesIfNeeded()
             return
         }
@@ -1321,6 +1320,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func parseNativeThreadPayload(from data: Data) -> (ok: Bool, target: NativeUserSummary?, messages: [NativeThreadMessage], error: String?)? {
+        if let decoded = try? JSONDecoder().decode(NativeThreadResponse.self, from: data) {
+            return (decoded.ok, decoded.target, decoded.messages, nil)
+        }
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         let ok = nativeBool(from: object["ok"]) ?? false
         let target = nativeDictionary(from: object["target"]).flatMap(parseNativeUserSummary(from:))
@@ -1330,6 +1332,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func parseNativeSendMessagePayload(from data: Data) -> (ok: Bool, message: NativeThreadMessage?, error: String?)? {
+        if let decoded = try? JSONDecoder().decode(NativeSendMessageResponse.self, from: data) {
+            return (decoded.ok, decoded.message, nil)
+        }
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         let ok = nativeBool(from: object["ok"]) ?? false
         let message = nativeDictionary(from: object["message"]).flatMap(parseNativeThreadMessage(from:))
@@ -1454,7 +1459,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             presentNativeThreadShell(for: existingTarget)
         }
         nativeThreadMessages = []
-        nativeThreadTableView.reloadData()
+        renderNativeThreadMessages()
         nativeThreadEmptyLabel.isHidden = true
         nativeThreadLoadingView.startAnimating()
         if animate {
@@ -1486,11 +1491,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.presentNativeThreadShell(for: target)
                     self.lastRouteBySection[.messages] = "/messages?user=\(target.username)"
                     self.currentRoute = self.lastRouteBySection[.messages] ?? "/messages"
-                    self.nativeThreadTableView.reloadData()
+                    self.renderNativeThreadMessages()
                     self.nativeThreadEmptyLabel.isHidden = !payload.messages.isEmpty
                     self.nativeThreadComposerBottomConstraint?.constant = -14
                     self.view.layoutIfNeeded()
-                    self.nativeThreadTableView.layoutIfNeeded()
                     self.scrollNativeThreadToBottom(animated: animate)
                     self.nativeThreadContainer.alpha = 1
                     self.nativeThreadContainer.transform = .identity
@@ -1503,8 +1507,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func scrollNativeThreadToBottom(animated: Bool) {
         guard !nativeThreadMessages.isEmpty else { return }
-        let lastRow = nativeThreadMessages.count - 1
         nativeThreadTableView.layoutIfNeeded()
+        let lastRow = nativeThreadMessages.count - 1
+        guard lastRow >= 0 else { return }
         nativeThreadTableView.scrollToRow(at: IndexPath(row: lastRow, section: 0), at: .bottom, animated: animated)
     }
 
@@ -1590,7 +1595,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 nativeThreadContainer.isHidden = true
                 nativeMessageTarget = nil
                 nativeThreadMessages = []
-                nativeThreadTableView.reloadData()
+                renderNativeThreadMessages()
                 loadNativeInbox()
             }
             return
@@ -1621,7 +1626,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeThreadTextView.resignFirstResponder()
         nativeThreadContainer.isHidden = true
         nativeThreadMessages = []
-        nativeThreadTableView.reloadData()
+        renderNativeThreadMessages()
         nativeThreadEmptyLabel.isHidden = true
         nativeThreadComposerBottomConstraint?.constant = -14
         nativeMessageTarget = nil
@@ -1673,7 +1678,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     )
                     self.nativeThreadTextView.text = ""
                     self.nativeThreadMessages.append(message)
-                    self.nativeThreadTableView.reloadData()
+                    self.renderNativeThreadMessages()
                     self.nativeThreadEmptyLabel.isHidden = true
                     self.scrollNativeThreadToBottom(animated: true)
                     if let convoIndex = self.nativeMessageConversations.firstIndex(where: { $0.username == target.username }) {
@@ -1717,6 +1722,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         UIView.animate(withDuration: 0.14) {
             self.view.layoutIfNeeded()
         }
+    }
+
+    private func renderNativeThreadMessages() {
+        nativeThreadTableView.reloadData()
+        nativeThreadTableView.layoutIfNeeded()
+        nativeThreadEmptyLabel.isHidden = !nativeThreadMessages.isEmpty
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
@@ -2104,6 +2115,110 @@ private final class NativeConversationCell: UITableViewCell {
     }
 }
 
+private final class NativeThreadMessageBubbleView: UIView {
+    private let avatarView = NativeAvatarView()
+    private let bubbleView = UIView()
+    private let bodyLabel = UILabel()
+    private let metaLabel = UILabel()
+    private var avatarLeadingConstraint: NSLayoutConstraint!
+    private var bubbleLeadingToAvatarConstraint: NSLayoutConstraint!
+    private var bubbleLeadingConstraint: NSLayoutConstraint!
+    private var bubbleTrailingConstraint: NSLayoutConstraint!
+    private var bubbleTrailingToContentConstraint: NSLayoutConstraint!
+    private var metaLeadingConstraint: NSLayoutConstraint!
+    private var metaTrailingConstraint: NSLayoutConstraint!
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        backgroundColor = .clear
+
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(avatarView)
+
+        bubbleView.translatesAutoresizingMaskIntoConstraints = false
+        bubbleView.layer.cornerRadius = 20
+        bubbleView.layer.cornerCurve = .continuous
+        addSubview(bubbleView)
+
+        bodyLabel.translatesAutoresizingMaskIntoConstraints = false
+        bodyLabel.font = .systemFont(ofSize: 17, weight: .medium)
+        bodyLabel.numberOfLines = 0
+        bubbleView.addSubview(bodyLabel)
+
+        metaLabel.translatesAutoresizingMaskIntoConstraints = false
+        metaLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        metaLabel.textColor = UIColor(red: 107.0 / 255.0, green: 119.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.84)
+        addSubview(metaLabel)
+
+        avatarLeadingConstraint = avatarView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8)
+        bubbleLeadingToAvatarConstraint = bubbleView.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 10)
+        bubbleLeadingConstraint = bubbleView.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 72)
+        bubbleTrailingConstraint = bubbleView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -58)
+        bubbleTrailingToContentConstraint = bubbleView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8)
+        metaLeadingConstraint = metaLabel.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 6)
+        metaTrailingConstraint = metaLabel.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -6)
+
+        NSLayoutConstraint.activate([
+            avatarLeadingConstraint,
+            avatarView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            avatarView.widthAnchor.constraint(equalToConstant: 36),
+            avatarView.heightAnchor.constraint(equalToConstant: 36),
+
+            bubbleView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            bubbleView.widthAnchor.constraint(lessThanOrEqualToConstant: 260),
+            bubbleLeadingToAvatarConstraint,
+            bubbleTrailingConstraint,
+
+            bodyLabel.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 14),
+            bodyLabel.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -14),
+            bodyLabel.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: 12),
+            bodyLabel.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -12),
+
+            metaLabel.topAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: 6),
+            metaLeadingConstraint,
+            metaTrailingConstraint,
+            metaLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(with message: NativeThreadMessage, imageCache: NSCache<NSString, UIImage>) {
+        avatarView.configure(with: message.sender, imageCache: imageCache)
+        bodyLabel.text = message.body
+        metaLabel.text = message.created_at_relative.isEmpty ? "now" : message.created_at_relative
+
+        if message.is_mine {
+            avatarView.isHidden = true
+            avatarLeadingConstraint.isActive = false
+            bubbleLeadingToAvatarConstraint.isActive = false
+            bubbleTrailingConstraint.isActive = false
+            bubbleLeadingConstraint.isActive = true
+            bubbleTrailingToContentConstraint.isActive = true
+            metaLeadingConstraint.isActive = false
+            metaTrailingConstraint.isActive = true
+            bubbleView.backgroundColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.95)
+            bodyLabel.textColor = .white
+            metaLabel.textAlignment = .right
+        } else {
+            avatarView.isHidden = false
+            avatarLeadingConstraint.isActive = true
+            bubbleLeadingConstraint.isActive = false
+            bubbleTrailingToContentConstraint.isActive = false
+            bubbleLeadingToAvatarConstraint.isActive = true
+            bubbleTrailingConstraint.isActive = true
+            metaTrailingConstraint.isActive = false
+            metaLeadingConstraint.isActive = true
+            bubbleView.backgroundColor = UIColor(red: 241.0 / 255.0, green: 245.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
+            bodyLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+            metaLabel.textAlignment = .left
+        }
+    }
+}
+
 private final class NativeThreadMessageCell: UITableViewCell {
     static let reuseIdentifier = "NativeThreadMessageCell"
 
@@ -2154,6 +2269,7 @@ private final class NativeThreadMessageCell: UITableViewCell {
         NSLayoutConstraint.activate([
             avatarLeadingConstraint,
             avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
+
             avatarView.widthAnchor.constraint(equalToConstant: 36),
             avatarView.heightAnchor.constraint(equalToConstant: 36),
 
