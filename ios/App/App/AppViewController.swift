@@ -1052,25 +1052,26 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func setComposeButtonVisible(_ visible: Bool, animated: Bool) {
         nativeComposerAvailable = visible
-        if visible {
+        let shouldShowCompose = visible && !isShowingNativeMessages && currentPrimarySection != .messages
+        if shouldShowCompose {
             composeButton.isHidden = false
         }
         let changes = {
-            self.composeButton.alpha = visible ? 1 : 0
+            self.composeButton.alpha = shouldShowCompose ? 1 : 0
         }
         if animated {
             UIView.animate(withDuration: 0.22, animations: changes) { _ in
-                if !visible {
+                if !shouldShowCompose {
                     self.composeButton.isHidden = true
                 }
             }
         } else {
             changes()
-            if !visible {
+            if !shouldShowCompose {
                 composeButton.isHidden = true
             }
         }
-        if !visible {
+        if !shouldShowCompose {
             dismissComposerSheet(animated: false)
         }
     }
@@ -1285,7 +1286,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func parseNativeUserSummary(from raw: [String: Any]) -> NativeUserSummary? {
-        let id = (raw["id"] as? Int) ?? (raw["id"] as? NSNumber)?.intValue ?? 0
+        let id = nativeInt(from: raw["id"]) ?? 0
         guard id >= 0,
               let username = raw["username"] as? String else { return nil }
         return NativeUserSummary(
@@ -1294,25 +1295,26 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             display_name: raw["display_name"] as? String ?? username,
             avatar_url: raw["avatar_url"] as? String ?? "",
             avatar_emoji: raw["avatar_emoji"] as? String ?? "🦅",
-            use_emoji: raw["use_emoji"] as? Bool ?? true,
-            is_verified: raw["is_verified"] as? Bool ?? false,
-            is_creator: raw["is_creator"] as? Bool ?? false
+            use_emoji: nativeBool(from: raw["use_emoji"]) ?? true,
+            is_verified: nativeBool(from: raw["is_verified"]) ?? false,
+            is_creator: nativeBool(from: raw["is_creator"]) ?? false
         )
     }
 
     private func parseNativeThreadMessage(from raw: [String: Any]) -> NativeThreadMessage? {
-        let id = (raw["id"] as? Int) ?? (raw["id"] as? NSNumber)?.intValue ?? 0
+        let id = nativeInt(from: raw["id"]) ?? 0
         guard id >= 0,
-              let body = raw["body"] as? String,
+              let bodyValue = raw["body"],
               let senderRaw = raw["sender"] as? [String: Any],
               let receiverRaw = raw["receiver"] as? [String: Any],
               let sender = parseNativeUserSummary(from: senderRaw),
               let receiver = parseNativeUserSummary(from: receiverRaw) else { return nil }
+        let body = (bodyValue as? String) ?? String(describing: bodyValue)
         return NativeThreadMessage(
             id: id,
             body: body,
-            is_mine: raw["is_mine"] as? Bool ?? false,
-            is_read: raw["is_read"] as? Bool ?? false,
+            is_mine: nativeBool(from: raw["is_mine"]) ?? false,
+            is_read: nativeBool(from: raw["is_read"]) ?? false,
             created_at: raw["created_at"] as? String ?? "",
             created_at_relative: raw["created_at_relative"] as? String ?? "",
             sender: sender,
@@ -1335,6 +1337,29 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let message = (object["message"] as? [String: Any]).flatMap(parseNativeThreadMessage(from:))
         let error = object["error"] as? String
         return (ok, message, error)
+    }
+
+    private func nativeInt(from value: Any?) -> Int? {
+        if let intValue = value as? Int { return intValue }
+        if let numberValue = value as? NSNumber { return numberValue.intValue }
+        if let stringValue = value as? String { return Int(stringValue) }
+        return nil
+    }
+
+    private func nativeBool(from value: Any?) -> Bool? {
+        if let boolValue = value as? Bool { return boolValue }
+        if let numberValue = value as? NSNumber { return numberValue.boolValue }
+        if let stringValue = value as? String {
+            switch stringValue.lowercased() {
+            case "true", "1", "yes":
+                return true
+            case "false", "0", "no":
+                return false
+            default:
+                return nil
+            }
+        }
+        return nil
     }
 
     private func loadNativeInbox() {
@@ -1593,16 +1618,36 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 self.isSendingNativeMessage = false
                 switch result {
                 case .success(let data):
-                    guard let payload = self.parseNativeSendMessagePayload(from: data), payload.ok, let message = payload.message else {
+                    guard let payload = self.parseNativeSendMessagePayload(from: data), payload.ok else {
                         if let payload = self.parseNativeSendMessagePayload(from: data), let error = payload.error, !error.isEmpty {
                             self.showNativeFlash(message: error, category: "error")
                         }
                         self.updateNativeThreadComposeState()
                         return
                     }
+                    let message = payload.message ?? NativeThreadMessage(
+                        id: Int(Date().timeIntervalSince1970),
+                        body: body,
+                        is_mine: true,
+                        is_read: true,
+                        created_at: "",
+                        created_at_relative: "now",
+                        sender: NativeUserSummary(
+                            id: 0,
+                            username: self.currentUsername,
+                            display_name: self.currentUsername.isEmpty ? "You" : self.currentUsername,
+                            avatar_url: "",
+                            avatar_emoji: "🦅",
+                            use_emoji: true,
+                            is_verified: false,
+                            is_creator: false
+                        ),
+                        receiver: target
+                    )
                     self.nativeThreadTextView.text = ""
                     self.nativeThreadMessages.append(message)
                     self.nativeThreadTableView.reloadData()
+                    self.nativeThreadEmptyLabel.isHidden = true
                     self.scrollNativeThreadToBottom(animated: true)
                     if let convoIndex = self.nativeMessageConversations.firstIndex(where: { $0.username == target.username }) {
                         self.nativeMessageConversations[convoIndex].latest_message = message.body
