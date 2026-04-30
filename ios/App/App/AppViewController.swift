@@ -13,6 +13,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         case profile
     }
 
+    private enum NativePhotoPickerPurpose {
+        case post
+        case story
+    }
+
     private let shellBackground = UIColor(red: 238.0 / 255.0, green: 244.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
     private let topGradient = UIColor(red: 247.0 / 255.0, green: 250.0 / 255.0, blue: 255.0 / 255.0, alpha: 1).cgColor
     private let bottomGradient = UIColor(red: 255.0 / 255.0, green: 247.0 / 255.0, blue: 239.0 / 255.0, alpha: 1).cgColor
@@ -91,6 +96,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var selectedImageData: Data?
     private var selectedImageName: String?
     private var selectedImageMimeType = "image/jpeg"
+    private var photoPickerPurpose: NativePhotoPickerPurpose = .post
     private var currentFeedTab = "home"
     private var currentUsername = ""
     private var currentRoute = "/"
@@ -193,6 +199,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         composerDimView.backgroundColor = UIColor.black.withAlphaComponent(0.1)
         composerDimView.alpha = 0
         composerDimView.isHidden = true
+        composerDimView.layer.zPosition = 70
         composerDimView.addTarget(self, action: #selector(dismissComposer), for: .touchUpInside)
         view.addSubview(composerDimView)
 
@@ -203,6 +210,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         composerSheet.clipsToBounds = true
         composerSheet.isHidden = true
         composerSheet.alpha = 0
+        composerSheet.layer.zPosition = 72
         view.addSubview(composerSheet)
 
         let sheetContent = composerSheet.contentView
@@ -765,6 +773,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeFeedTableView.delegate = self
         nativeFeedTableView.prefetchDataSource = self
         nativeFeedTableView.register(NativeFeedPostCell.self, forCellReuseIdentifier: NativeFeedPostCell.reuseIdentifier)
+        nativeFeedTableView.register(NativeFeedPollCell.self, forCellReuseIdentifier: NativeFeedPollCell.reuseIdentifier)
         nativeFeedRefreshControl.addTarget(self, action: #selector(handleNativeFeedRefresh), for: .valueChanged)
         nativeFeedTableView.refreshControl = nativeFeedRefreshControl
         nativeFeedStoriesHeader.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: 120)
@@ -924,7 +933,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         view.bringSubviewToFront(composeButton)
         view.bringSubviewToFront(nativeTabBarBackdrop)
         view.bringSubviewToFront(nativeTabBar)
-        if nativeFeedPosts.isEmpty {
+        if nativeFeedPosts.isEmpty && nativeFeedPolls.isEmpty {
             loadNativeFeed(force: false)
         }
     }
@@ -1526,6 +1535,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         composerDimView.isHidden = false
         composerSheet.isHidden = false
         composerPlaceholder.isHidden = !composerTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        view.bringSubviewToFront(composerDimView)
+        view.bringSubviewToFront(composerSheet)
         view.layoutIfNeeded()
         composerSheetBottomConstraint?.constant = 0
         UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseOut]) {
@@ -1958,10 +1969,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(8)))
                     self.prefetchNativeStoryImages(for: payload.stories)
                     self.nativeFeedEmptyLabel.text = "No posts yet."
-                    self.nativeFeedEmptyLabel.isHidden = !payload.posts.isEmpty
+                    self.nativeFeedEmptyLabel.isHidden = !(payload.posts.isEmpty && payload.polls.isEmpty)
                 case .failure(let error):
                     self.nativeFeedEmptyLabel.text = "Feed couldn't load."
-                    self.nativeFeedEmptyLabel.isHidden = !self.nativeFeedPosts.isEmpty
+                    self.nativeFeedEmptyLabel.isHidden = !(self.nativeFeedPosts.isEmpty && self.nativeFeedPolls.isEmpty)
                     self.showNativeFlash(message: error.localizedDescription, category: "error")
                 }
             }
@@ -2013,21 +2024,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func openNativeStoryComposer() {
-        hideNativeFeedIfNeeded()
-        navigateWebView(to: "/", replace: false)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            let script = """
-            (function() {
-              const input = document.querySelector('.story-inline-add input[type="file"]');
-              if (input) {
-                input.click();
-                return true;
-              }
-              return false;
-            })();
-            """
-            self?.webView?.evaluateJavaScript(script, completionHandler: nil)
-        }
+        presentPhotoPicker(purpose: .story)
     }
 
     private func preloadNativeImage(urlString: String, cache: NSCache<NSString, UIImage>) {
@@ -2405,6 +2402,21 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         return data
     }
 
+    private func storyMultipartBody(boundary: String, imageData: Data, imageName: String, mimeType: String) -> Data {
+        var data = Data()
+        let lineBreak = "\r\n"
+        data.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+        data.append("Content-Disposition: form-data; name=\"body\"\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+        data.append(lineBreak.data(using: .utf8)!)
+        data.append("--\(boundary)\(lineBreak)".data(using: .utf8)!)
+        data.append("Content-Disposition: form-data; name=\"media\"; filename=\"\(imageName)\"\(lineBreak)".data(using: .utf8)!)
+        data.append("Content-Type: \(mimeType)\(lineBreak)\(lineBreak)".data(using: .utf8)!)
+        data.append(imageData)
+        data.append(lineBreak.data(using: .utf8)!)
+        data.append("--\(boundary)--\(lineBreak)".data(using: .utf8)!)
+        return data
+    }
+
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == nativeJSONScriptMessageName {
             guard let payload = message.body as? [String: Any],
@@ -2481,6 +2493,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         currentRoute = route
         lastRouteBySection[.feed] = route
         nativeFeedPosts = []
+        nativeFeedPolls = []
         nativeFeedTableView.reloadData()
         nativeFeedEmptyLabel.text = "Loading posts..."
         nativeFeedEmptyLabel.isHidden = false
@@ -2531,10 +2544,25 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
     }
 
+    private func voteNativePoll(_ poll: NativeFeedPoll, option: NativeFeedPollOption) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        performNativeJSONRequest(path: "/polls/\(poll.id)/vote", method: "POST", bodyObject: ["option_id": option.id]) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.loadNativeFeed(force: true)
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
     private func updateNativeFeedPost(id: Int, mutate: (inout NativeFeedPost) -> Void) {
         guard let index = nativeFeedPosts.firstIndex(where: { $0.id == id }) else { return }
         mutate(&nativeFeedPosts[index])
-        let indexPath = IndexPath(row: index, section: 0)
+        let indexPath = IndexPath(row: nativeFeedPolls.count + index, section: 0)
         if nativeFeedTableView.indexPathsForVisibleRows?.contains(indexPath) == true {
             nativeFeedTableView.reloadRows(at: [indexPath], with: .none)
         }
@@ -2698,7 +2726,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         if tableView === nativeFeedTableView {
-            return nativeFeedPosts.count
+            return nativeFeedPolls.count + nativeFeedPosts.count
         }
         if tableView === nativeMessagesListTableView {
             return nativeMessageConversations.count
@@ -2708,8 +2736,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         if tableView === nativeFeedTableView {
+            if indexPath.row < nativeFeedPolls.count {
+                let cell = tableView.dequeueReusableCell(withIdentifier: NativeFeedPollCell.reuseIdentifier, for: indexPath) as! NativeFeedPollCell
+                cell.configure(with: nativeFeedPolls[indexPath.row])
+                cell.onVote = { [weak self] poll, option in
+                    self?.voteNativePoll(poll, option: option)
+                }
+                return cell
+            }
             let cell = tableView.dequeueReusableCell(withIdentifier: NativeFeedPostCell.reuseIdentifier, for: indexPath) as! NativeFeedPostCell
-            cell.configure(with: nativeFeedPosts[indexPath.row], avatarCache: nativeAvatarImageCache, mediaCache: nativeFeedImageCache)
+            let postIndex = indexPath.row - nativeFeedPolls.count
+            cell.configure(with: nativeFeedPosts[postIndex], avatarCache: nativeAvatarImageCache, mediaCache: nativeFeedImageCache)
             cell.onAction = { [weak self] post, action in
                 self?.handleNativeFeedPostAction(post, action: action)
             }
@@ -2728,7 +2765,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         if tableView === nativeFeedTableView {
-            let post = nativeFeedPosts[indexPath.row]
+            guard indexPath.row >= nativeFeedPolls.count else { return }
+            let post = nativeFeedPosts[indexPath.row - nativeFeedPolls.count]
             currentRoute = post.url
             lastRouteBySection[.feed] = "/"
             hideNativeFeedIfNeeded()
@@ -2754,12 +2792,18 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
         guard tableView === nativeFeedTableView else { return }
         let posts = indexPaths.compactMap { indexPath in
-            indexPath.row < nativeFeedPosts.count ? nativeFeedPosts[indexPath.row] : nil
+            let postIndex = indexPath.row - nativeFeedPolls.count
+            return postIndex >= 0 && postIndex < nativeFeedPosts.count ? nativeFeedPosts[postIndex] : nil
         }
         prefetchNativeFeedImages(for: posts)
     }
 
     @objc private func openPhotoPicker() {
+        presentPhotoPicker(purpose: .post)
+    }
+
+    private func presentPhotoPicker(purpose: NativePhotoPickerPurpose) {
+        photoPickerPurpose = purpose
         var configuration = PHPickerConfiguration(photoLibrary: .shared())
         configuration.filter = .images
         configuration.selectionLimit = 1
@@ -2784,12 +2828,21 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        let purpose = photoPickerPurpose
         picker.dismiss(animated: true)
         guard let provider = results.first?.itemProvider else { return }
         if provider.canLoadObject(ofClass: UIImage.self) {
             provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
                 guard let self, let image = object as? UIImage else { return }
                 DispatchQueue.main.async {
+                    if purpose == .story {
+                        guard let imageData = image.jpegData(compressionQuality: 0.88) else {
+                            self.showNativeFlash(message: "Story upload failed. Try again.", category: "error")
+                            return
+                        }
+                        self.uploadNativeStory(imageData: imageData, imageName: "story.jpg", mimeType: "image/jpeg")
+                        return
+                    }
                     self.composerPreviewImageView.image = image
                     self.composerPreviewContainer.isHidden = false
                     self.composerPreviewHeightConstraint?.constant = 140
@@ -2799,6 +2852,40 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.textViewDidChange(self.composerTextView)
                 }
             }
+        }
+    }
+
+    private func uploadNativeStory(imageData: Data, imageName: String, mimeType: String) {
+        guard let targetURL = URL(string: "/story/create", relativeTo: webView?.url)?.absoluteURL else { return }
+        showNativeFlash(message: "Uploading story...", category: "success")
+        fetchCookieHeader(for: targetURL) { [weak self] cookieHeader in
+            guard let self else { return }
+            let boundary = "Boundary-\(UUID().uuidString)"
+            var request = URLRequest(url: targetURL)
+            request.httpMethod = "POST"
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            request.setValue("fetch", forHTTPHeaderField: "X-Requested-With")
+            if let cookieHeader, !cookieHeader.isEmpty {
+                request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+            }
+            request.httpBody = self.storyMultipartBody(boundary: boundary, imageData: imageData, imageName: imageName, mimeType: mimeType)
+
+            URLSession.shared.dataTask(with: request) { _, response, error in
+                DispatchQueue.main.async {
+                    if error != nil {
+                        self.showNativeFlash(message: "Story upload failed. Try again.", category: "error")
+                        return
+                    }
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    guard status == 0 || (200..<400).contains(status) else {
+                        self.showNativeFlash(message: "Story upload failed. Try again.", category: "error")
+                        return
+                    }
+                    self.loadNativeFeed(force: true)
+                    self.showNativeFlash(message: "Story posted.", category: "success")
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                }
+            }.resume()
         }
     }
 }
@@ -3406,6 +3493,136 @@ private enum NativeFeedPostAction: Int {
     case repost = 1
     case comment = 2
     case bookmark = 3
+}
+
+private final class NativeFeedPollCell: UITableViewCell {
+    static let reuseIdentifier = "NativeFeedPollCell"
+
+    private let cardView = UIView()
+    private let eyebrowLabel = UILabel()
+    private let questionLabel = UILabel()
+    private let optionsStack = UIStackView()
+    private let footerLabel = UILabel()
+    private var currentPoll: NativeFeedPoll?
+    var onVote: ((NativeFeedPoll, NativeFeedPollOption) -> Void)?
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = .clear
+        selectionStyle = .none
+        contentView.backgroundColor = .clear
+
+        cardView.translatesAutoresizingMaskIntoConstraints = false
+        cardView.backgroundColor = UIColor.white.withAlphaComponent(0.92)
+        cardView.layer.cornerRadius = 22
+        cardView.layer.cornerCurve = .continuous
+        cardView.layer.borderWidth = 1
+        cardView.layer.borderColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.08).cgColor
+        contentView.addSubview(cardView)
+
+        eyebrowLabel.translatesAutoresizingMaskIntoConstraints = false
+        eyebrowLabel.text = "Poll"
+        eyebrowLabel.font = .systemFont(ofSize: 13, weight: .bold)
+        eyebrowLabel.textColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.78)
+        cardView.addSubview(eyebrowLabel)
+
+        questionLabel.translatesAutoresizingMaskIntoConstraints = false
+        questionLabel.font = .systemFont(ofSize: 18, weight: .bold)
+        questionLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        questionLabel.numberOfLines = 0
+        cardView.addSubview(questionLabel)
+
+        optionsStack.translatesAutoresizingMaskIntoConstraints = false
+        optionsStack.axis = .vertical
+        optionsStack.spacing = 8
+        cardView.addSubview(optionsStack)
+
+        footerLabel.translatesAutoresizingMaskIntoConstraints = false
+        footerLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        footerLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.78)
+        footerLabel.numberOfLines = 0
+        cardView.addSubview(footerLabel)
+
+        NSLayoutConstraint.activate([
+            cardView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            cardView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            cardView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            cardView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+
+            eyebrowLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
+            eyebrowLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -18),
+            eyebrowLabel.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 16),
+
+            questionLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
+            questionLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -18),
+            questionLabel.topAnchor.constraint(equalTo: eyebrowLabel.bottomAnchor, constant: 6),
+
+            optionsStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
+            optionsStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -18),
+            optionsStack.topAnchor.constraint(equalTo: questionLabel.bottomAnchor, constant: 14),
+
+            footerLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
+            footerLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -18),
+            footerLabel.topAnchor.constraint(equalTo: optionsStack.bottomAnchor, constant: 12),
+            footerLabel.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -16)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        currentPoll = nil
+        onVote = nil
+        optionsStack.arrangedSubviews.forEach { view in
+            optionsStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+    }
+
+    func configure(with poll: NativeFeedPoll) {
+        currentPoll = poll
+        questionLabel.text = poll.question
+        let totalVotes = poll.options.reduce(0) { $0 + $1.votes }
+        footerLabel.text = poll.results_visible ? "\(totalVotes) votes" : "Results hidden until you vote"
+
+        poll.options.enumerated().forEach { index, option in
+            let button = UIButton(type: .system)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.tag = index
+            button.contentHorizontalAlignment = .leading
+            button.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+            button.titleLabel?.numberOfLines = 0
+            button.setTitle(optionTitle(option, totalVotes: totalVotes, poll: poll), for: .normal)
+            button.setTitleColor(UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1), for: .normal)
+            button.backgroundColor = option.id == poll.selected_option_id
+                ? UIColor(red: 219.0 / 255.0, green: 235.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+                : UIColor(red: 245.0 / 255.0, green: 248.0 / 255.0, blue: 255.0 / 255.0, alpha: 0.95)
+            button.layer.cornerRadius = 15
+            button.layer.cornerCurve = .continuous
+            button.layer.borderWidth = 1
+            button.layer.borderColor = option.id == poll.selected_option_id
+                ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.25).cgColor
+                : UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.08).cgColor
+            button.contentEdgeInsets = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+            button.addTarget(self, action: #selector(handleOptionTap(_:)), for: .touchUpInside)
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 46).isActive = true
+            optionsStack.addArrangedSubview(button)
+        }
+    }
+
+    private func optionTitle(_ option: NativeFeedPollOption, totalVotes: Int, poll: NativeFeedPoll) -> String {
+        guard poll.results_visible else { return option.label }
+        let percentage = totalVotes > 0 ? Int(round((Double(option.votes) / Double(totalVotes)) * 100)) : 0
+        return "\(option.label)  \(percentage)%"
+    }
+
+    @objc private func handleOptionTap(_ sender: UIButton) {
+        guard let poll = currentPoll, sender.tag >= 0, sender.tag < poll.options.count else { return }
+        onVote?(poll, poll.options[sender.tag])
+    }
 }
 
 private final class NativeFeedPostCell: UITableViewCell {
