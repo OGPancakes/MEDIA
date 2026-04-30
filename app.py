@@ -2248,6 +2248,7 @@ def serialize_feed_post(post, viewer):
         "has_reposted": has_reposted(viewer, post),
         "has_bookmarked": has_bookmarked(viewer, post),
         "can_edit": bool(viewer and (viewer.id == post.user_id or viewer.is_admin)),
+        "is_mine": bool(viewer and viewer.id == post.user_id),
         "is_breaking": post.feed_tab == "breaking",
     }
 

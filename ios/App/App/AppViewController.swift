@@ -72,6 +72,15 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeFeedRefreshControl = UIRefreshControl()
     private let nativeFeedStoriesHeader = NativeStoriesHeaderView()
     private let nativeProfileAvatarView = NativeAvatarView()
+    private let nativeAccountButton = UIButton(type: .system)
+    private let nativeAccountAvatarView = NativeAvatarView()
+    private let nativeAccountDimView = UIControl()
+    private let nativeAccountSheet = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
+    private let nativeAccountHandle = UIView()
+    private let nativeAccountAvatarLargeView = NativeAvatarView()
+    private let nativeAccountNameLabel = UILabel()
+    private let nativeAccountUsernameLabel = UILabel()
+    private let nativeAccountStack = UIStackView()
     private let nativePostDetailContainer = UIView()
     private let nativePostDetailBackButton = UIButton(type: .system)
     private let nativePostDetailTitleLabel = UILabel()
@@ -202,6 +211,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         configureNativeSearch()
         configureNativeStoryViewer()
         configureNativeConnections()
+        configureNativeAccountMenu()
         configureNativeComments()
         configureNativeMessages()
         installKeyboardObservers()
@@ -1175,6 +1185,197 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         ])
     }
 
+    private func configureNativeAccountMenu() {
+        nativeAccountButton.translatesAutoresizingMaskIntoConstraints = false
+        nativeAccountButton.backgroundColor = UIColor.white.withAlphaComponent(0.84)
+        nativeAccountButton.layer.cornerRadius = 22
+        nativeAccountButton.layer.cornerCurve = .continuous
+        nativeAccountButton.layer.borderWidth = 1
+        nativeAccountButton.layer.borderColor = UIColor(red: 207.0 / 255.0, green: 218.0 / 255.0, blue: 236.0 / 255.0, alpha: 0.85).cgColor
+        nativeAccountButton.layer.shadowColor = UIColor.black.cgColor
+        nativeAccountButton.layer.shadowOpacity = 0.08
+        nativeAccountButton.layer.shadowRadius = 12
+        nativeAccountButton.layer.shadowOffset = CGSize(width: 0, height: 4)
+        nativeAccountButton.alpha = 0
+        nativeAccountButton.isHidden = true
+        nativeAccountButton.layer.zPosition = 70
+        nativeAccountButton.addTarget(self, action: #selector(presentNativeAccountMenu), for: .touchUpInside)
+        view.addSubview(nativeAccountButton)
+
+        nativeAccountAvatarView.translatesAutoresizingMaskIntoConstraints = false
+        nativeAccountAvatarView.isUserInteractionEnabled = false
+        nativeAccountButton.addSubview(nativeAccountAvatarView)
+
+        nativeAccountDimView.translatesAutoresizingMaskIntoConstraints = false
+        nativeAccountDimView.backgroundColor = UIColor.black.withAlphaComponent(0.18)
+        nativeAccountDimView.alpha = 0
+        nativeAccountDimView.isHidden = true
+        nativeAccountDimView.layer.zPosition = 86
+        nativeAccountDimView.addTarget(self, action: #selector(dismissNativeAccountMenu), for: .touchUpInside)
+        view.addSubview(nativeAccountDimView)
+
+        nativeAccountSheet.translatesAutoresizingMaskIntoConstraints = false
+        nativeAccountSheet.layer.cornerRadius = 28
+        nativeAccountSheet.layer.cornerCurve = .continuous
+        nativeAccountSheet.clipsToBounds = true
+        nativeAccountSheet.alpha = 0
+        nativeAccountSheet.isHidden = true
+        nativeAccountSheet.layer.zPosition = 88
+        view.addSubview(nativeAccountSheet)
+
+        let content = nativeAccountSheet.contentView
+        content.backgroundColor = UIColor.white.withAlphaComponent(0.96)
+
+        nativeAccountHandle.translatesAutoresizingMaskIntoConstraints = false
+        nativeAccountHandle.backgroundColor = UIColor(red: 16.0 / 255.0, green: 24.0 / 255.0, blue: 40.0 / 255.0, alpha: 0.16)
+        nativeAccountHandle.layer.cornerRadius = 2.5
+        nativeAccountHandle.layer.cornerCurve = .continuous
+        content.addSubview(nativeAccountHandle)
+
+        nativeAccountAvatarLargeView.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(nativeAccountAvatarLargeView)
+
+        nativeAccountNameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeAccountNameLabel.font = .systemFont(ofSize: 20, weight: .bold)
+        nativeAccountNameLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        content.addSubview(nativeAccountNameLabel)
+
+        nativeAccountUsernameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeAccountUsernameLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        nativeAccountUsernameLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+        content.addSubview(nativeAccountUsernameLabel)
+
+        nativeAccountStack.translatesAutoresizingMaskIntoConstraints = false
+        nativeAccountStack.axis = .vertical
+        nativeAccountStack.spacing = 10
+        content.addSubview(nativeAccountStack)
+
+        addNativeAccountMenuButton(title: "View Profile", symbol: "person.crop.circle", route: nil)
+        addNativeAccountMenuButton(title: "Settings", symbol: "gearshape.fill", route: "/settings")
+        addNativeAccountMenuButton(title: "Saved", symbol: "bookmark.fill", route: "/saved")
+        addNativeAccountMenuButton(title: "Admin", symbol: "shield.lefthalf.filled", route: "/admin")
+        addNativeAccountMenuButton(title: "Log Out", symbol: "rectangle.portrait.and.arrow.right", route: "/logout")
+
+        NSLayoutConstraint.activate([
+            nativeAccountButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -18),
+            nativeAccountButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            nativeAccountButton.widthAnchor.constraint(equalToConstant: 44),
+            nativeAccountButton.heightAnchor.constraint(equalToConstant: 44),
+            nativeAccountAvatarView.centerXAnchor.constraint(equalTo: nativeAccountButton.centerXAnchor),
+            nativeAccountAvatarView.centerYAnchor.constraint(equalTo: nativeAccountButton.centerYAnchor),
+            nativeAccountAvatarView.widthAnchor.constraint(equalToConstant: 34),
+            nativeAccountAvatarView.heightAnchor.constraint(equalToConstant: 34),
+            nativeAccountDimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            nativeAccountDimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nativeAccountDimView.topAnchor.constraint(equalTo: view.topAnchor),
+            nativeAccountDimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            nativeAccountSheet.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+            nativeAccountSheet.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
+            nativeAccountSheet.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -14),
+            nativeAccountSheet.heightAnchor.constraint(equalToConstant: 390),
+            nativeAccountHandle.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            nativeAccountHandle.topAnchor.constraint(equalTo: content.topAnchor, constant: 10),
+            nativeAccountHandle.widthAnchor.constraint(equalToConstant: 44),
+            nativeAccountHandle.heightAnchor.constraint(equalToConstant: 5),
+            nativeAccountAvatarLargeView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 22),
+            nativeAccountAvatarLargeView.topAnchor.constraint(equalTo: nativeAccountHandle.bottomAnchor, constant: 22),
+            nativeAccountAvatarLargeView.widthAnchor.constraint(equalToConstant: 58),
+            nativeAccountAvatarLargeView.heightAnchor.constraint(equalToConstant: 58),
+            nativeAccountNameLabel.leadingAnchor.constraint(equalTo: nativeAccountAvatarLargeView.trailingAnchor, constant: 14),
+            nativeAccountNameLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -22),
+            nativeAccountNameLabel.topAnchor.constraint(equalTo: nativeAccountAvatarLargeView.topAnchor, constant: 4),
+            nativeAccountUsernameLabel.leadingAnchor.constraint(equalTo: nativeAccountNameLabel.leadingAnchor),
+            nativeAccountUsernameLabel.trailingAnchor.constraint(equalTo: nativeAccountNameLabel.trailingAnchor),
+            nativeAccountUsernameLabel.topAnchor.constraint(equalTo: nativeAccountNameLabel.bottomAnchor, constant: 3),
+            nativeAccountStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
+            nativeAccountStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
+            nativeAccountStack.topAnchor.constraint(equalTo: nativeAccountAvatarLargeView.bottomAnchor, constant: 20)
+        ])
+    }
+
+    private func addNativeAccountMenuButton(title: String, symbol: String, route: String?) {
+        let button = UIButton(type: .system)
+        button.setTitle(title, for: .normal)
+        button.setImage(UIImage(systemName: symbol), for: .normal)
+        button.tintColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        button.setTitleColor(UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1), for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 16, weight: .bold)
+        button.backgroundColor = UIColor(red: 242.0 / 255.0, green: 247.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+        button.layer.cornerRadius = 18
+        button.layer.cornerCurve = .continuous
+        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: -10)
+        button.contentHorizontalAlignment = .leading
+        button.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        button.addAction(UIAction { [weak self] _ in
+            self?.handleNativeAccountMenuSelection(route: route)
+        }, for: .touchUpInside)
+        nativeAccountStack.addArrangedSubview(button)
+    }
+
+    private func updateNativeAccountAvatar() {
+        guard let currentUser = nativeCurrentUser else { return }
+        nativeAccountAvatarView.configure(with: currentUser, imageCache: nativeAvatarImageCache)
+        nativeAccountAvatarLargeView.configure(with: currentUser, imageCache: nativeAvatarImageCache)
+        nativeAccountNameLabel.text = currentUser.display_name
+        nativeAccountUsernameLabel.text = "@\(currentUser.username)"
+    }
+
+    private func setNativeAccountButtonVisible(_ visible: Bool, animated: Bool) {
+        let changes = {
+            self.nativeAccountButton.alpha = visible ? 1 : 0
+        }
+        let completion: (Bool) -> Void = { _ in
+            self.nativeAccountButton.isHidden = !visible
+        }
+        if animated {
+            if visible { nativeAccountButton.isHidden = false }
+            UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseOut], animations: changes, completion: completion)
+        } else {
+            nativeAccountButton.isHidden = !visible
+            changes()
+        }
+    }
+
+    @objc private func presentNativeAccountMenu() {
+        updateNativeAccountAvatar()
+        nativeAccountDimView.isHidden = false
+        nativeAccountSheet.isHidden = false
+        view.bringSubviewToFront(nativeAccountDimView)
+        view.bringSubviewToFront(nativeAccountSheet)
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut]) {
+            self.nativeAccountDimView.alpha = 1
+            self.nativeAccountSheet.alpha = 1
+        }
+    }
+
+    @objc private func dismissNativeAccountMenu() {
+        UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
+            self.nativeAccountDimView.alpha = 0
+            self.nativeAccountSheet.alpha = 0
+        } completion: { _ in
+            self.nativeAccountDimView.isHidden = true
+            self.nativeAccountSheet.isHidden = true
+        }
+    }
+
+    private func handleNativeAccountMenuSelection(route: String?) {
+        dismissNativeAccountMenu()
+        if let route {
+            currentRoute = route
+            if route == "/logout" {
+                setNativeAccountButtonVisible(false, animated: true)
+            }
+            hideNativeFeedIfNeeded()
+            hideNativeProfileIfNeeded()
+            hideNativeSearchIfNeeded()
+            hideNativeMessagesIfNeeded()
+            navigateWebView(to: route, replace: false)
+            return
+        }
+        openPrimarySection(.profile)
+    }
+
     private func configureNativeComments() {
         nativeCommentsDimView.translatesAutoresizingMaskIntoConstraints = false
         nativeCommentsDimView.backgroundColor = UIColor.black.withAlphaComponent(0.12)
@@ -1410,7 +1611,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func updateNativeSectionPresentation() {
-        let shouldShowFeed = isLoggedIntoWebApp && currentPrimarySection == .feed && routeSupportsNativeFeed(currentRoute)
+        let shouldShowFeed = isLoggedIntoWebApp && currentPrimarySection == .feed
         if shouldShowFeed {
             showNativeFeedIfNeeded()
         } else {
@@ -1442,6 +1643,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         } else {
             hideNativeSearchIfNeeded()
         }
+        setNativeAccountButtonVisible(isLoggedIntoWebApp && currentPrimarySection != .messages, animated: true)
     }
 
     private func routeSupportsNativeFeed(_ route: String) -> Bool {
@@ -1463,10 +1665,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeFeedContainer.alpha = 1
         view.bringSubviewToFront(nativeFeedContainer)
         view.bringSubviewToFront(composeButton)
+        view.bringSubviewToFront(nativeAccountButton)
         view.bringSubviewToFront(nativeTabBarBackdrop)
         view.bringSubviewToFront(nativeTabBar)
         if nativeFeedPosts.isEmpty && nativeFeedPolls.isEmpty {
             loadNativeFeed(force: false)
+        }
+        if webView?.isHidden == true {
+            webView?.isHidden = false
         }
     }
 
@@ -1518,6 +1724,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeProfileContainer.isHidden = false
         nativeProfileContainer.alpha = 1
         view.bringSubviewToFront(nativeProfileContainer)
+        view.bringSubviewToFront(nativeAccountButton)
         view.bringSubviewToFront(nativeTabBarBackdrop)
         view.bringSubviewToFront(nativeTabBar)
         loadNativeProfile(username: username, force: nativeProfileUser?.username != username)
@@ -1539,6 +1746,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeSearchContainer.isHidden = false
         nativeSearchContainer.alpha = 1
         view.bringSubviewToFront(nativeSearchContainer)
+        view.bringSubviewToFront(nativeAccountButton)
         view.bringSubviewToFront(nativeTabBarBackdrop)
         view.bringSubviewToFront(nativeTabBar)
         if nativeSearchUsers.isEmpty && nativeSearchPosts.isEmpty {
@@ -1928,6 +2136,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             renderNativeThreadMessages()
             hideNativeFeedIfNeeded()
             hideNativeMessagesIfNeeded()
+            hideNativeProfileIfNeeded()
+            hideNativeSearchIfNeeded()
+            setNativeAccountButtonVisible(false, animated: true)
             return
         }
         if !wasLoggedIn {
@@ -1936,6 +2147,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if !username.isEmpty {
             lastRouteBySection[.profile] = "/users/\(username)"
         }
+        updateNativeAccountAvatar()
+        setNativeAccountButtonVisible(currentPrimarySection != .messages, animated: true)
         openPendingPushRouteIfPossible()
     }
 
@@ -2095,9 +2308,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
 
         hideNativeMessagesIfNeeded()
-        if section == .feed && routeSupportsNativeFeed(route) {
+        if section == .feed || section == .search || section == .profile {
             updateNativeSectionPresentation()
-            loadNativeFeed(force: false)
+            if section == .feed {
+                loadNativeFeed(force: false)
+            }
         } else {
             hideNativeFeedIfNeeded()
         }
@@ -2590,6 +2805,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.resizeNativeFeedHeader()
                     if let currentUser = payload.current_user {
                         self.nativeProfileAvatarView.configure(with: currentUser, imageCache: self.nativeAvatarImageCache)
+                        self.updateNativeAccountAvatar()
                     }
                     self.syncNativeFeedSegment()
                     self.nativeFeedTableView.reloadData()
@@ -3327,12 +3543,20 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         case .comment:
             presentNativeComments(for: post)
         case .like:
+            guard !post.is_mine else {
+                showNativeFlash(message: "You can't like your own post.", category: "error")
+                return
+            }
             updateNativeFeedPost(id: post.id) { item in
                 item.has_liked.toggle()
                 item.like_count = max(0, item.like_count + (item.has_liked ? 1 : -1))
             }
             performNativeFeedPostAction(path: "/post/\(post.id)/like")
         case .repost:
+            guard !post.is_mine else {
+                showNativeFlash(message: "You can't repost your own post.", category: "error")
+                return
+            }
             updateNativeFeedPost(id: post.id) { item in
                 item.has_reposted.toggle()
                 item.repost_count = max(0, item.repost_count + (item.has_reposted ? 1 : -1))
@@ -4130,6 +4354,7 @@ private struct NativeFeedPost: Decodable {
     var has_liked: Bool
     var has_reposted: Bool
     var has_bookmarked: Bool
+    let is_mine: Bool
     let is_breaking: Bool
 }
 
@@ -4457,7 +4682,7 @@ private final class NativeProfileHeaderView: UIView {
     var onFollowTap: (() -> Void)?
     var onFollowersTap: (() -> Void)?
     var onFollowingTap: (() -> Void)?
-    var preferredHeight: CGFloat { 328 }
+    var preferredHeight: CGFloat { 374 }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -4518,7 +4743,7 @@ private final class NativeProfileHeaderView: UIView {
         bioLabel.translatesAutoresizingMaskIntoConstraints = false
         bioLabel.font = .systemFont(ofSize: 15)
         bioLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.94)
-        bioLabel.numberOfLines = 3
+        bioLabel.numberOfLines = 2
         cardView.addSubview(bioLabel)
 
         metaLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -4591,7 +4816,8 @@ private final class NativeProfileHeaderView: UIView {
             statsStack.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
             statsStack.trailingAnchor.constraint(equalTo: usernameLabel.trailingAnchor),
             statsStack.topAnchor.constraint(equalTo: metaLabel.bottomAnchor, constant: 12),
-            statsStack.heightAnchor.constraint(equalToConstant: 58)
+            statsStack.heightAnchor.constraint(equalToConstant: 64),
+            statsStack.bottomAnchor.constraint(lessThanOrEqualTo: cardView.bottomAnchor, constant: -18)
         ])
     }
 
@@ -5512,9 +5738,13 @@ private final class NativeFeedPostCell: UITableViewCell {
 
         statsLabel.text = "\(post.view_count) views  \(post.like_count) likes  \(post.comment_count) comments  \(post.repost_count) reposts  \(post.bookmark_count) saves"
         if actionStack.arrangedSubviews.count == 4 {
-            actionStack.arrangedSubviews[0].tintColor = post.has_liked ? UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 1) : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
-            actionStack.arrangedSubviews[1].tintColor = post.has_reposted ? UIColor(red: 11.0 / 255.0, green: 145.0 / 255.0, blue: 92.0 / 255.0, alpha: 1) : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+            let disabledColor = UIColor(red: 145.0 / 255.0, green: 155.0 / 255.0, blue: 178.0 / 255.0, alpha: 0.38)
+            let defaultColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+            actionStack.arrangedSubviews[0].tintColor = post.is_mine ? disabledColor : (post.has_liked ? UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 1) : defaultColor)
+            actionStack.arrangedSubviews[1].tintColor = post.is_mine ? disabledColor : (post.has_reposted ? UIColor(red: 11.0 / 255.0, green: 145.0 / 255.0, blue: 92.0 / 255.0, alpha: 1) : defaultColor)
             actionStack.arrangedSubviews[3].tintColor = post.has_bookmarked ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1) : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+            actionStack.arrangedSubviews[0].alpha = post.is_mine ? 0.55 : 1
+            actionStack.arrangedSubviews[1].alpha = post.is_mine ? 0.55 : 1
         }
     }
 
