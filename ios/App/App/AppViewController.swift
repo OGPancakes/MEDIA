@@ -2832,14 +2832,14 @@ private struct NativeFeedResponse: Decodable {
     }
 }
 
-private struct NativeFeedStory: Decodable {
+fileprivate struct NativeFeedStory: Decodable {
     let id: Int
     let author: NativeUserSummary
     let url: String
     let expires_at: String
 }
 
-private struct NativeFeedPoll: Decodable {
+fileprivate struct NativeFeedPoll: Decodable {
     let id: Int
     let question: String
     let is_hidden_results: Bool
@@ -2848,17 +2848,17 @@ private struct NativeFeedPoll: Decodable {
     let options: [NativeFeedPollOption]
 }
 
-private struct NativeFeedPollOption: Decodable {
+fileprivate struct NativeFeedPollOption: Decodable {
     let id: Int
     let label: String
     let votes: Int
 }
 
-private struct NativeMentionResponse: Decodable {
+fileprivate struct NativeMentionResponse: Decodable {
     let users: [NativeMentionUser]
 }
 
-private struct NativeMentionUser: Decodable {
+fileprivate struct NativeMentionUser: Decodable {
     let username: String
     let display_name: String
     let avatar_url: String
@@ -3116,7 +3116,7 @@ private final class NativeAvatarView: UIView {
 private final class NativeStoriesHeaderView: UIView {
     private let titleLabel = UILabel()
     private let discoverLabel = UILabel()
-    private let scrollView = UIScrollView()
+    private let storiesScrollView = UIScrollView()
     private let stackView = UIStackView()
     private let pollsStack = UIStackView()
     var onAddStory: (() -> Void)?
@@ -3143,16 +3143,16 @@ private final class NativeStoriesHeaderView: UIView {
         discoverLabel.textColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.84)
         addSubview(discoverLabel)
 
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.showsHorizontalScrollIndicator = false
-        scrollView.alwaysBounceHorizontal = true
-        addSubview(scrollView)
+        storiesScrollView.translatesAutoresizingMaskIntoConstraints = false
+        storiesScrollView.showsHorizontalScrollIndicator = false
+        storiesScrollView.alwaysBounceHorizontal = true
+        addSubview(storiesScrollView)
 
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .horizontal
         stackView.alignment = .top
         stackView.spacing = 12
-        scrollView.addSubview(stackView)
+        storiesScrollView.addSubview(stackView)
 
         pollsStack.translatesAutoresizingMaskIntoConstraints = false
         pollsStack.axis = .vertical
@@ -3164,18 +3164,18 @@ private final class NativeStoriesHeaderView: UIView {
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             discoverLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             discoverLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
-            scrollView.heightAnchor.constraint(equalToConstant: 78),
-            stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
-            stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
-            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            stackView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
+            storiesScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            storiesScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            storiesScrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            storiesScrollView.heightAnchor.constraint(equalToConstant: 78),
+            stackView.leadingAnchor.constraint(equalTo: storiesScrollView.contentLayoutGuide.leadingAnchor, constant: 16),
+            stackView.trailingAnchor.constraint(equalTo: storiesScrollView.contentLayoutGuide.trailingAnchor, constant: -16),
+            stackView.topAnchor.constraint(equalTo: storiesScrollView.contentLayoutGuide.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: storiesScrollView.contentLayoutGuide.bottomAnchor),
+            stackView.heightAnchor.constraint(equalTo: storiesScrollView.frameLayoutGuide.heightAnchor),
             pollsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             pollsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            pollsStack.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 8)
+            pollsStack.topAnchor.constraint(equalTo: storiesScrollView.bottomAnchor, constant: 8)
         ])
     }
 
