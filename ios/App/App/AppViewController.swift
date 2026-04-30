@@ -71,9 +71,22 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeFeedRefreshControl = UIRefreshControl()
     private let nativeFeedStoriesHeader = NativeStoriesHeaderView()
     private let nativeProfileAvatarView = NativeAvatarView()
+    private let nativeCommentsDimView = UIControl()
+    private let nativeCommentsSheet = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
+    private let nativeCommentsTitleLabel = UILabel()
+    private let nativeCommentsSubtitleLabel = UILabel()
+    private let nativeCommentsCloseButton = UIButton(type: .system)
+    private let nativeCommentsFullPostButton = UIButton(type: .system)
+    private let nativeCommentsTableView = UITableView(frame: .zero, style: .plain)
+    private let nativeCommentsComposerBar = UIView()
+    private let nativeCommentsTextView = UITextView()
+    private let nativeCommentsPlaceholder = UILabel()
+    private let nativeCommentsSendButton = UIButton(type: .system)
 
     private var composerSheetBottomConstraint: NSLayoutConstraint?
     private var composeButtonBottomConstraint: NSLayoutConstraint?
+    private var nativeCommentsSheetBottomConstraint: NSLayoutConstraint?
+    private var nativeCommentsTextViewHeightConstraint: NSLayoutConstraint?
     private var composerTextViewHeightConstraint: NSLayoutConstraint?
     private var composerPreviewHeightConstraint: NSLayoutConstraint?
     private var nativeThreadComposerBottomConstraint: NSLayoutConstraint?
@@ -114,6 +127,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var nativeFeedPosts: [NativeFeedPost] = []
     private var nativeFeedStories: [NativeFeedStory] = []
     private var nativeFeedPolls: [NativeFeedPoll] = []
+    private var nativeCommentsPost: NativeFeedPost?
+    private var nativeComments: [NativeComment] = []
     private var nativeFeedLatestPostID = 0
     private var nativeCurrentUser: NativeUserSummary?
     private var currentMentionSuggestions: [NativeMentionUser] = []
@@ -143,6 +158,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         configureNativeComposer()
         configureNativeTabBar()
         configureNativeFeed()
+        configureNativeComments()
         configureNativeMessages()
         installKeyboardObservers()
         observePushToken()
@@ -783,6 +799,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeFeedStoriesHeader.onOpenStory = { [weak self] story in
             self?.openNativeStory(story)
         }
+        nativeFeedStoriesHeader.onDiscover = { [weak self] in
+            self?.openPrimarySection(.search)
+        }
         nativeFeedTableView.tableHeaderView = nativeFeedStoriesHeader
         nativeFeedContainer.addSubview(nativeFeedTableView)
 
@@ -815,6 +834,144 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeFeedEmptyLabel.centerXAnchor.constraint(equalTo: nativeFeedTableView.centerXAnchor),
             nativeFeedEmptyLabel.centerYAnchor.constraint(equalTo: nativeFeedTableView.centerYAnchor)
         ])
+    }
+
+    private func configureNativeComments() {
+        nativeCommentsDimView.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsDimView.backgroundColor = UIColor.black.withAlphaComponent(0.12)
+        nativeCommentsDimView.alpha = 0
+        nativeCommentsDimView.isHidden = true
+        nativeCommentsDimView.layer.zPosition = 76
+        nativeCommentsDimView.addTarget(self, action: #selector(dismissNativeComments), for: .touchUpInside)
+        view.addSubview(nativeCommentsDimView)
+
+        nativeCommentsSheet.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsSheet.layer.cornerRadius = 30
+        nativeCommentsSheet.layer.cornerCurve = .continuous
+        nativeCommentsSheet.clipsToBounds = true
+        nativeCommentsSheet.alpha = 0
+        nativeCommentsSheet.isHidden = true
+        nativeCommentsSheet.layer.zPosition = 78
+        view.addSubview(nativeCommentsSheet)
+
+        let content = nativeCommentsSheet.contentView
+        content.backgroundColor = UIColor.white.withAlphaComponent(0.78)
+
+        nativeCommentsTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsTitleLabel.text = "Comments"
+        nativeCommentsTitleLabel.font = .systemFont(ofSize: 20, weight: .bold)
+        nativeCommentsTitleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        content.addSubview(nativeCommentsTitleLabel)
+
+        nativeCommentsSubtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsSubtitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        nativeCommentsSubtitleLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.82)
+        content.addSubview(nativeCommentsSubtitleLabel)
+
+        nativeCommentsCloseButton.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsCloseButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        nativeCommentsCloseButton.tintColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.72)
+        nativeCommentsCloseButton.addTarget(self, action: #selector(dismissNativeComments), for: .touchUpInside)
+        content.addSubview(nativeCommentsCloseButton)
+
+        nativeCommentsFullPostButton.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsFullPostButton.setTitle("Open Post", for: .normal)
+        nativeCommentsFullPostButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+        nativeCommentsFullPostButton.setTitleColor(UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1), for: .normal)
+        nativeCommentsFullPostButton.addTarget(self, action: #selector(openNativeCommentsFullPost), for: .touchUpInside)
+        content.addSubview(nativeCommentsFullPostButton)
+
+        nativeCommentsTableView.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsTableView.backgroundColor = .clear
+        nativeCommentsTableView.separatorStyle = .none
+        nativeCommentsTableView.rowHeight = UITableView.automaticDimension
+        nativeCommentsTableView.estimatedRowHeight = 88
+        nativeCommentsTableView.keyboardDismissMode = .interactive
+        nativeCommentsTableView.dataSource = self
+        nativeCommentsTableView.delegate = self
+        nativeCommentsTableView.register(NativeCommentCell.self, forCellReuseIdentifier: NativeCommentCell.reuseIdentifier)
+        content.addSubview(nativeCommentsTableView)
+
+        nativeCommentsComposerBar.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsComposerBar.backgroundColor = UIColor(red: 245.0 / 255.0, green: 248.0 / 255.0, blue: 255.0 / 255.0, alpha: 0.96)
+        nativeCommentsComposerBar.layer.cornerRadius = 22
+        nativeCommentsComposerBar.layer.cornerCurve = .continuous
+        content.addSubview(nativeCommentsComposerBar)
+
+        nativeCommentsTextView.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsTextView.backgroundColor = .clear
+        nativeCommentsTextView.font = .systemFont(ofSize: 16)
+        nativeCommentsTextView.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nativeCommentsTextView.delegate = self
+        nativeCommentsTextView.textContainerInset = UIEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
+        nativeCommentsTextView.textContainer.lineFragmentPadding = 0
+        nativeCommentsComposerBar.addSubview(nativeCommentsTextView)
+
+        nativeCommentsPlaceholder.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsPlaceholder.text = "Add a comment..."
+        nativeCommentsPlaceholder.font = .systemFont(ofSize: 16)
+        nativeCommentsPlaceholder.textColor = UIColor(red: 91.0 / 255.0, green: 107.0 / 255.0, blue: 138.0 / 255.0, alpha: 0.66)
+        nativeCommentsComposerBar.addSubview(nativeCommentsPlaceholder)
+
+        nativeCommentsSendButton.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsSendButton.setTitle("Send", for: .normal)
+        nativeCommentsSendButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .bold)
+        nativeCommentsSendButton.layer.cornerRadius = 17
+        nativeCommentsSendButton.layer.cornerCurve = .continuous
+        nativeCommentsSendButton.addTarget(self, action: #selector(sendNativeComment), for: .touchUpInside)
+        nativeCommentsComposerBar.addSubview(nativeCommentsSendButton)
+
+        nativeCommentsSheetBottomConstraint = nativeCommentsSheet.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: 520)
+        nativeCommentsTextViewHeightConstraint = nativeCommentsTextView.heightAnchor.constraint(equalToConstant: 44)
+
+        NSLayoutConstraint.activate([
+            nativeCommentsDimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            nativeCommentsDimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nativeCommentsDimView.topAnchor.constraint(equalTo: view.topAnchor),
+            nativeCommentsDimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+
+            nativeCommentsSheet.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
+            nativeCommentsSheet.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            nativeCommentsSheet.heightAnchor.constraint(equalTo: view.heightAnchor, multiplier: 0.72),
+            nativeCommentsSheetBottomConstraint!,
+
+            nativeCommentsTitleLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            nativeCommentsTitleLabel.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
+            nativeCommentsFullPostButton.trailingAnchor.constraint(equalTo: nativeCommentsCloseButton.leadingAnchor, constant: -8),
+            nativeCommentsFullPostButton.centerYAnchor.constraint(equalTo: nativeCommentsCloseButton.centerYAnchor),
+            nativeCommentsCloseButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
+            nativeCommentsCloseButton.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
+            nativeCommentsCloseButton.widthAnchor.constraint(equalToConstant: 30),
+            nativeCommentsCloseButton.heightAnchor.constraint(equalToConstant: 30),
+
+            nativeCommentsSubtitleLabel.leadingAnchor.constraint(equalTo: nativeCommentsTitleLabel.leadingAnchor),
+            nativeCommentsSubtitleLabel.trailingAnchor.constraint(equalTo: nativeCommentsFullPostButton.leadingAnchor, constant: -8),
+            nativeCommentsSubtitleLabel.topAnchor.constraint(equalTo: nativeCommentsTitleLabel.bottomAnchor, constant: 2),
+
+            nativeCommentsTableView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            nativeCommentsTableView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            nativeCommentsTableView.topAnchor.constraint(equalTo: nativeCommentsSubtitleLabel.bottomAnchor, constant: 10),
+            nativeCommentsTableView.bottomAnchor.constraint(equalTo: nativeCommentsComposerBar.topAnchor, constant: -10),
+
+            nativeCommentsComposerBar.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
+            nativeCommentsComposerBar.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            nativeCommentsComposerBar.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
+
+            nativeCommentsTextView.leadingAnchor.constraint(equalTo: nativeCommentsComposerBar.leadingAnchor, constant: 14),
+            nativeCommentsTextView.topAnchor.constraint(equalTo: nativeCommentsComposerBar.topAnchor, constant: 6),
+            nativeCommentsTextView.bottomAnchor.constraint(equalTo: nativeCommentsComposerBar.bottomAnchor, constant: -6),
+            nativeCommentsTextViewHeightConstraint!,
+
+            nativeCommentsPlaceholder.leadingAnchor.constraint(equalTo: nativeCommentsTextView.leadingAnchor),
+            nativeCommentsPlaceholder.centerYAnchor.constraint(equalTo: nativeCommentsTextView.centerYAnchor),
+
+            nativeCommentsSendButton.leadingAnchor.constraint(equalTo: nativeCommentsTextView.trailingAnchor, constant: 10),
+            nativeCommentsSendButton.trailingAnchor.constraint(equalTo: nativeCommentsComposerBar.trailingAnchor, constant: -8),
+            nativeCommentsSendButton.centerYAnchor.constraint(equalTo: nativeCommentsComposerBar.centerYAnchor),
+            nativeCommentsSendButton.widthAnchor.constraint(equalToConstant: 64),
+            nativeCommentsSendButton.heightAnchor.constraint(equalToConstant: 34)
+        ])
+        updateNativeCommentsComposeState()
     }
 
     private func tabTag(for section: PrimarySection) -> Int {
@@ -1597,6 +1754,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             composerSheetBottomConstraint?.constant = max(0, -view.safeAreaInsets.bottom) - overlap + view.safeAreaInsets.bottom
             shouldAnimate = true
         }
+        if !nativeCommentsSheet.isHidden,
+           let frameValue = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue {
+            let keyboardFrame = view.convert(frameValue.cgRectValue, from: nil)
+            let overlap = max(0, view.bounds.maxY - keyboardFrame.minY)
+            nativeCommentsSheetBottomConstraint?.constant = max(0, -view.safeAreaInsets.bottom) - overlap + view.safeAreaInsets.bottom
+            shouldAnimate = true
+        }
         if shouldAnimate {
             animateWithKeyboard(note)
         }
@@ -1612,6 +1776,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         if !composerSheet.isHidden {
             composerSheetBottomConstraint?.constant = 0
+            shouldAnimate = true
+        }
+        if !nativeCommentsSheet.isHidden {
+            nativeCommentsSheetBottomConstraint?.constant = 0
             shouldAnimate = true
         }
         if shouldAnimate {
@@ -2504,9 +2672,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func handleNativeFeedPostAction(_ post: NativeFeedPost, action: NativeFeedPostAction) {
         switch action {
         case .comment:
-            currentRoute = post.url
-            hideNativeFeedIfNeeded()
-            navigateWebView(to: post.url, replace: false)
+            presentNativeComments(for: post)
         case .like:
             updateNativeFeedPost(id: post.id) { item in
                 item.has_liked.toggle()
@@ -2526,6 +2692,135 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             }
             performNativeFeedPostAction(path: "/post/\(post.id)/bookmark")
         }
+    }
+
+    private func presentNativeComments(for post: NativeFeedPost) {
+        nativeCommentsPost = post
+        nativeComments = []
+        nativeCommentsTitleLabel.text = "Comments"
+        nativeCommentsSubtitleLabel.text = post.comment_count == 1 ? "1 comment" : "\(post.comment_count) comments"
+        nativeCommentsTextView.text = ""
+        updateNativeCommentsComposeState()
+        nativeCommentsTableView.reloadData()
+        nativeCommentsDimView.isHidden = false
+        nativeCommentsSheet.isHidden = false
+        view.bringSubviewToFront(nativeCommentsDimView)
+        view.bringSubviewToFront(nativeCommentsSheet)
+        view.layoutIfNeeded()
+        nativeCommentsSheetBottomConstraint?.constant = 0
+        UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseOut]) {
+            self.nativeCommentsDimView.alpha = 1
+            self.nativeCommentsSheet.alpha = 1
+            self.view.layoutIfNeeded()
+        } completion: { _ in
+            self.nativeCommentsTextView.becomeFirstResponder()
+        }
+        loadNativeComments(for: post)
+    }
+
+    @objc private func dismissNativeComments() {
+        nativeCommentsTextView.resignFirstResponder()
+        let reset = {
+            self.nativeCommentsDimView.alpha = 0
+            self.nativeCommentsSheet.alpha = 0
+            self.nativeCommentsSheetBottomConstraint?.constant = 520
+            self.view.layoutIfNeeded()
+        }
+        UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut], animations: reset) { _ in
+            self.nativeCommentsDimView.isHidden = true
+            self.nativeCommentsSheet.isHidden = true
+            self.nativeCommentsPost = nil
+            self.nativeComments = []
+            self.nativeCommentsTableView.reloadData()
+        }
+    }
+
+    @objc private func openNativeCommentsFullPost() {
+        guard let post = nativeCommentsPost else { return }
+        dismissNativeComments()
+        currentRoute = post.url
+        hideNativeFeedIfNeeded()
+        navigateWebView(to: post.url, replace: false)
+    }
+
+    private func loadNativeComments(for post: NativeFeedPost) {
+        performNativeJSONRequest(path: "/api/post/\(post.id)/comments") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self, self.nativeCommentsPost?.id == post.id else { return }
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeCommentsResponse.self, from: data), payload.ok else {
+                        self.showNativeFlash(message: "Comments couldn't load.", category: "error")
+                        return
+                    }
+                    self.nativeComments = payload.flatComments
+                    if let updatedPost = payload.post {
+                        self.nativeCommentsPost = updatedPost
+                        self.updateNativeFeedPost(id: updatedPost.id) { item in
+                            item.comment_count = updatedPost.comment_count
+                        }
+                    }
+                    let count = self.nativeComments.count
+                    self.nativeCommentsSubtitleLabel.text = count == 1 ? "1 comment" : "\(count) comments"
+                    self.nativeCommentsTableView.reloadData()
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
+    @objc private func sendNativeComment() {
+        guard let post = nativeCommentsPost else { return }
+        let body = nativeCommentsTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return }
+        nativeCommentsSendButton.isEnabled = false
+        nativeCommentsSendButton.alpha = 0.65
+        performNativeJSONRequest(path: "/api/post/\(post.id)/comments", method: "POST", bodyObject: ["body": body]) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.nativeCommentsSendButton.isEnabled = true
+                self.nativeCommentsSendButton.alpha = 1
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeCommentsResponse.self, from: data), payload.ok else {
+                        self.showNativeFlash(message: "Comment failed. Try again.", category: "error")
+                        return
+                    }
+                    self.nativeCommentsTextView.text = ""
+                    self.updateNativeCommentsComposeState()
+                    self.nativeComments = payload.flatComments
+                    if let updatedPost = payload.post {
+                        self.nativeCommentsPost = updatedPost
+                        self.updateNativeFeedPost(id: updatedPost.id) { item in
+                            item.comment_count = updatedPost.comment_count
+                        }
+                    }
+                    let count = self.nativeComments.count
+                    self.nativeCommentsSubtitleLabel.text = count == 1 ? "1 comment" : "\(count) comments"
+                    self.nativeCommentsTableView.reloadData()
+                    if count > 0 {
+                        self.nativeCommentsTableView.scrollToRow(at: IndexPath(row: count - 1, section: 0), at: .bottom, animated: true)
+                    }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
+    private func updateNativeCommentsComposeState() {
+        let trimmed = nativeCommentsTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        nativeCommentsPlaceholder.isHidden = !trimmed.isEmpty
+        nativeCommentsSendButton.isEnabled = !trimmed.isEmpty
+        nativeCommentsSendButton.alpha = trimmed.isEmpty ? 0.55 : 1
+        nativeCommentsSendButton.backgroundColor = trimmed.isEmpty
+            ? UIColor(red: 123.0 / 255.0, green: 145.0 / 255.0, blue: 189.0 / 255.0, alpha: 0.82)
+            : UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        nativeCommentsSendButton.setTitleColor(.white, for: .normal)
+        let targetHeight = min(max(nativeCommentsTextView.contentSize.height, 44), 112)
+        nativeCommentsTextViewHeightConstraint?.constant = targetHeight
     }
 
     private func performNativeFeedPostAction(path: String) {
@@ -2706,6 +3001,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             updateNativeThreadTextViewHeight(animated: true)
             return
         }
+        if textView === nativeCommentsTextView {
+            updateNativeCommentsComposeState()
+            UIView.animate(withDuration: 0.14) {
+                self.view.layoutIfNeeded()
+            }
+            return
+        }
         composerPlaceholder.isHidden = !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         updateComposerTextStyling()
         updateComposerMentionSuggestions()
@@ -2731,6 +3033,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if tableView === nativeMessagesListTableView {
             return nativeMessageConversations.count
         }
+        if tableView === nativeCommentsTableView {
+            return nativeComments.count
+        }
         return nativeThreadMessages.count
     }
 
@@ -2755,6 +3060,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if tableView === nativeMessagesListTableView {
             let cell = tableView.dequeueReusableCell(withIdentifier: NativeConversationCell.reuseIdentifier, for: indexPath) as! NativeConversationCell
             cell.configure(with: nativeMessageConversations[indexPath.row], imageCache: nativeAvatarImageCache)
+            return cell
+        }
+        if tableView === nativeCommentsTableView {
+            let cell = tableView.dequeueReusableCell(withIdentifier: NativeCommentCell.reuseIdentifier, for: indexPath) as! NativeCommentCell
+            cell.configure(with: nativeComments[indexPath.row], imageCache: nativeAvatarImageCache)
             return cell
         }
         let cell = tableView.dequeueReusableCell(withIdentifier: NativeThreadMessageCell.reuseIdentifier, for: indexPath) as! NativeThreadMessageCell
@@ -2786,6 +3096,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 is_creator: conversation.is_creator
             ))
             loadNativeThread(username: conversation.username)
+        }
+        if tableView === nativeCommentsTableView {
+            nativeCommentsTextView.becomeFirstResponder()
         }
     }
 
@@ -3006,6 +3319,31 @@ private struct NativeAPIErrorResponse: Decodable {
     let error: String?
 }
 
+private struct NativeCommentsResponse: Decodable {
+    let ok: Bool
+    let post: NativeFeedPost?
+    let comments: [NativeComment]
+
+    var flatComments: [NativeComment] {
+        comments.flatMap { $0.flattened() }
+    }
+}
+
+private struct NativeComment: Decodable {
+    let id: Int
+    let body: String
+    let author: NativeUserSummary
+    let created_at_relative: String
+    let like_count: Int
+    let has_liked: Bool
+    let depth: Int
+    let replies: [NativeComment]
+
+    func flattened() -> [NativeComment] {
+        [self] + replies.flatMap { $0.flattened() }
+    }
+}
+
 private struct NativeInboxResponse: Decodable {
     let conversations: [NativeMessageConversation]
 }
@@ -3207,11 +3545,12 @@ private final class NativeAvatarView: UIView {
 
 private final class NativeStoriesHeaderView: UIView {
     private let titleLabel = UILabel()
-    private let discoverLabel = UILabel()
+    private let discoverButton = UIButton(type: .system)
     private let storiesScrollView = UIScrollView()
     private let stackView = UIStackView()
     var onAddStory: (() -> Void)?
     var onOpenStory: ((NativeFeedStory) -> Void)?
+    var onDiscover: (() -> Void)?
     var preferredHeight: CGFloat {
         120
     }
@@ -3226,11 +3565,13 @@ private final class NativeStoriesHeaderView: UIView {
         titleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
         addSubview(titleLabel)
 
-        discoverLabel.translatesAutoresizingMaskIntoConstraints = false
-        discoverLabel.text = "Discover"
-        discoverLabel.font = .systemFont(ofSize: 14, weight: .semibold)
-        discoverLabel.textColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.84)
-        addSubview(discoverLabel)
+        discoverButton.translatesAutoresizingMaskIntoConstraints = false
+        discoverButton.setTitle("Discover", for: .normal)
+        discoverButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+        discoverButton.setTitleColor(UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.84), for: .normal)
+        discoverButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
+        discoverButton.addTarget(self, action: #selector(handleDiscoverTap), for: .touchUpInside)
+        addSubview(discoverButton)
 
         storiesScrollView.translatesAutoresizingMaskIntoConstraints = false
         storiesScrollView.showsHorizontalScrollIndicator = false
@@ -3246,8 +3587,8 @@ private final class NativeStoriesHeaderView: UIView {
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            discoverLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            discoverLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            discoverButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            discoverButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             storiesScrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             storiesScrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             storiesScrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
@@ -3285,7 +3626,7 @@ private final class NativeStoriesHeaderView: UIView {
             stackView.addArrangedSubview(chip)
         }
 
-        if stories.isEmpty {
+        if stories.isEmpty && currentUser == nil {
             let emptyLabel = UILabel()
             emptyLabel.text = "Fresh stories will show here."
             emptyLabel.font = .systemFont(ofSize: 14, weight: .semibold)
@@ -3302,6 +3643,10 @@ private final class NativeStoriesHeaderView: UIView {
     @objc private func handleStoryTap(_ sender: NativeStoryChipView) {
         guard let story = sender.story else { return }
         onOpenStory?(story)
+    }
+
+    @objc private func handleDiscoverTap() {
+        onDiscover?()
     }
 }
 
@@ -3909,6 +4254,97 @@ private final class NativeFeedPostCell: UITableViewCell {
         }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         onAction?(currentPost, action)
+    }
+}
+
+private final class NativeCommentCell: UITableViewCell {
+    static let reuseIdentifier = "NativeCommentCell"
+
+    private let avatarView = NativeAvatarView()
+    private let bubbleView = UIView()
+    private let nameLabel = UILabel()
+    private let metaLabel = UILabel()
+    private let bodyLabel = UILabel()
+    private let likesLabel = UILabel()
+    private var leadingConstraint: NSLayoutConstraint!
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = .clear
+        selectionStyle = .none
+        contentView.backgroundColor = .clear
+
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(avatarView)
+
+        bubbleView.translatesAutoresizingMaskIntoConstraints = false
+        bubbleView.backgroundColor = UIColor.white.withAlphaComponent(0.74)
+        bubbleView.layer.cornerRadius = 18
+        bubbleView.layer.cornerCurve = .continuous
+        contentView.addSubview(bubbleView)
+
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = .systemFont(ofSize: 15, weight: .bold)
+        nameLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        bubbleView.addSubview(nameLabel)
+
+        metaLabel.translatesAutoresizingMaskIntoConstraints = false
+        metaLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        metaLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.8)
+        bubbleView.addSubview(metaLabel)
+
+        bodyLabel.translatesAutoresizingMaskIntoConstraints = false
+        bodyLabel.font = .systemFont(ofSize: 15)
+        bodyLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.96)
+        bodyLabel.numberOfLines = 0
+        bubbleView.addSubview(bodyLabel)
+
+        likesLabel.translatesAutoresizingMaskIntoConstraints = false
+        likesLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        likesLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.72)
+        bubbleView.addSubview(likesLabel)
+
+        leadingConstraint = avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18)
+        NSLayoutConstraint.activate([
+            leadingConstraint,
+            avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
+            avatarView.widthAnchor.constraint(equalToConstant: 36),
+            avatarView.heightAnchor.constraint(equalToConstant: 36),
+
+            bubbleView.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 10),
+            bubbleView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            bubbleView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            bubbleView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+
+            nameLabel.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 14),
+            nameLabel.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: 10),
+
+            metaLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 6),
+            metaLabel.trailingAnchor.constraint(lessThanOrEqualTo: bubbleView.trailingAnchor, constant: -14),
+            metaLabel.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+
+            bodyLabel.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 14),
+            bodyLabel.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -14),
+            bodyLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
+
+            likesLabel.leadingAnchor.constraint(equalTo: bodyLabel.leadingAnchor),
+            likesLabel.trailingAnchor.constraint(equalTo: bodyLabel.trailingAnchor),
+            likesLabel.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 6),
+            likesLabel.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -10)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(with comment: NativeComment, imageCache: NSCache<NSString, UIImage>) {
+        avatarView.configure(with: comment.author, imageCache: imageCache)
+        nameLabel.text = comment.author.display_name
+        metaLabel.text = "@\(comment.author.username) · \(comment.created_at_relative)"
+        bodyLabel.text = comment.body
+        likesLabel.text = comment.like_count == 1 ? "1 like" : "\(comment.like_count) likes"
+        leadingConstraint.constant = 18 + CGFloat(min(comment.depth, 2) * 22)
     }
 }
 

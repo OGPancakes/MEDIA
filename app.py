@@ -1306,6 +1306,51 @@ def create_app():
             }
         )
 
+    @app.route("/api/post/<int:post_id>/comments", methods=["GET", "POST"])
+    @login_required
+    def api_post_comments(post_id):
+        post = Post.query.get_or_404(post_id)
+        viewer = current_user()
+        if not viewer_can_see_post(viewer, post):
+            return jsonify({"ok": False, "error": "That post is not available to you."}), 403
+        if request.method == "POST":
+            payload = request.get_json(silent=True) or {}
+            body = (payload.get("body") or request.form.get("body") or "").strip()
+            if not body:
+                return jsonify({"ok": False, "error": "Comment cannot be empty."}), 400
+            if find_prohibited_term(body):
+                return jsonify({"ok": False, "error": "That comment contains language that is not allowed."}), 400
+            comment = Post(
+                user_id=viewer.id,
+                body=body,
+                feed_tab=post.feed_tab or "home",
+                reply_to_id=post.id,
+                hashtags=",".join(sorted(set(HASHTAG_RE.findall(body.lower())))),
+                mentions=",".join(sorted(set(MENTION_RE.findall(body.lower())))),
+                view_count=0,
+            )
+            db.session.add(comment)
+            db.session.commit()
+            create_notification(
+                post.user_id,
+                viewer.id,
+                "comment",
+                f"{viewer.username} commented on your post",
+                url_for("post_detail", post_id=post.id),
+            )
+            notify_mentions(comment)
+            db.session.commit()
+        comments = build_comment_tree(post.id, viewer)
+        flat_comments = flatten_comment_tree(comments)
+        reset_post_display_state(flat_comments)
+        return jsonify(
+            {
+                "ok": True,
+                "post": serialize_feed_post(post, viewer),
+                "comments": [serialize_native_comment(comment, viewer, depth=0) for comment in comments],
+            }
+        )
+
     @app.route("/settings", methods=["GET", "POST"])
     @login_required
     def settings():
@@ -2049,6 +2094,28 @@ def serialize_feed_post(post, viewer):
         "has_bookmarked": has_bookmarked(viewer, post),
         "can_edit": bool(viewer and (viewer.id == post.user_id or viewer.is_admin)),
         "is_breaking": post.feed_tab == "breaking",
+    }
+
+
+def serialize_native_comment(comment, viewer, depth=0):
+    if not comment or not comment.author:
+        return None
+    return {
+        "id": comment.id,
+        "body": comment.body or "",
+        "author": serialize_user_brief(comment.author),
+        "created_at_relative": timesince(comment.created_at),
+        "like_count": comment.like_count,
+        "has_liked": has_liked(viewer, comment),
+        "depth": depth,
+        "replies": [
+            serialized
+            for serialized in (
+                serialize_native_comment(reply, viewer, depth=depth + 1)
+                for reply in getattr(comment, "child_replies", [])
+            )
+            if serialized
+        ],
     }
 
 
