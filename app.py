@@ -1306,6 +1306,59 @@ def create_app():
             }
         )
 
+    @app.route("/api/post/<int:post_id>")
+    @login_required
+    def api_post_detail(post_id):
+        post = Post.query.get_or_404(post_id)
+        viewer = current_user()
+        if not viewer_can_see_post(viewer, post):
+            return jsonify({"ok": False, "error": "That post is not available to you."}), 403
+        reset_post_display_state([post])
+        register_post_view(post, viewer)
+        comments = build_comment_tree(post.id, viewer)
+        flat_comments = flatten_comment_tree(comments)
+        reset_post_display_state(flat_comments)
+        return jsonify(
+            {
+                "ok": True,
+                "post": serialize_feed_post(post, viewer),
+                "comments": [serialize_native_comment(comment, viewer, depth=0) for comment in comments],
+            }
+        )
+
+    @app.route("/api/users/<username>")
+    @login_required
+    def api_profile(username):
+        profile_user = User.query.filter_by(username=username.lower()).first_or_404()
+        viewer = current_user()
+        if not can_view_profile(viewer, profile_user):
+            return jsonify({"ok": False, "error": "That profile is private."}), 403
+        posts = get_profile_timeline(profile_user)
+        register_visible_posts([post for post in posts if getattr(post, "reposted_by", None) is None], viewer)
+        return jsonify(
+            {
+                "ok": True,
+                "user": serialize_profile_user(profile_user, viewer),
+                "posts": [serialized for serialized in (serialize_feed_post(post, viewer) for post in posts) if serialized],
+            }
+        )
+
+    @app.route("/api/users/<username>/follow", methods=["POST"])
+    @login_required
+    def api_follow_user(username):
+        target = User.query.filter_by(username=username.lower()).first_or_404()
+        user = current_user()
+        if target.id == user.id:
+            return jsonify({"ok": False, "error": "You already have yourself covered."}), 400
+        follow = Follow.query.filter_by(follower_id=user.id, followed_id=target.id).first()
+        if follow:
+            db.session.delete(follow)
+        else:
+            db.session.add(Follow(follower_id=user.id, followed_id=target.id))
+            create_notification(target.id, user.id, "follow", f"{user.username} followed you", url_for("profile", username=user.username))
+        db.session.commit()
+        return jsonify({"ok": True, "user": serialize_profile_user(target, user)})
+
     @app.route("/api/post/<int:post_id>/comments", methods=["GET", "POST"])
     @login_required
     def api_post_comments(post_id):
@@ -2005,6 +2058,24 @@ def serialize_direct_message(message, viewer):
         "sender": serialize_user_brief(sender),
         "receiver": serialize_user_brief(receiver),
     }
+
+
+def serialize_profile_user(user, viewer):
+    summary = serialize_user_brief(user)
+    summary.update(
+        {
+            "bio": user.bio or "",
+            "location": user.location or "",
+            "website": user.website or "",
+            "banner_url": media_url(user.banner, external=True) if user.banner else "",
+            "follower_count": user.follower_count,
+            "following_count": user.following_count,
+            "post_count": Post.query.filter_by(user_id=user.id, reply_to_id=None).count(),
+            "is_following": is_following(viewer, user),
+            "can_follow": bool(viewer and viewer.id != user.id),
+        }
+    )
+    return summary
 
 
 def serialize_feed_story(story):

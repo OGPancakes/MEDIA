@@ -71,6 +71,15 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeFeedRefreshControl = UIRefreshControl()
     private let nativeFeedStoriesHeader = NativeStoriesHeaderView()
     private let nativeProfileAvatarView = NativeAvatarView()
+    private let nativePostDetailContainer = UIView()
+    private let nativePostDetailBackButton = UIButton(type: .system)
+    private let nativePostDetailTitleLabel = UILabel()
+    private let nativePostDetailTableView = UITableView(frame: .zero, style: .plain)
+    private let nativePostDetailEmptyLabel = UILabel()
+    private let nativeProfileContainer = UIView()
+    private let nativeProfileTableView = UITableView(frame: .zero, style: .plain)
+    private let nativeProfileEmptyLabel = UILabel()
+    private let nativeProfileHeaderView = NativeProfileHeaderView()
     private let nativeCommentsDimView = UIControl()
     private let nativeCommentsSheet = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
     private let nativeCommentsHandle = UIView()
@@ -98,7 +107,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var isPostingComposer = false
     private var isLoggedIntoWebApp = false
     private var isShowingNativeFeed = false
+    private var isShowingNativePostDetail = false
+    private var isShowingNativeProfile = false
     private var isLoadingNativeFeed = false
+    private var isLoadingNativePostDetail = false
+    private var isLoadingNativeProfile = false
     private var isLoadingMentionSuggestions = false
     private var isShowingNativeMessages = false
     private var isLoadingNativeInbox = false
@@ -129,6 +142,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var nativeFeedPosts: [NativeFeedPost] = []
     private var nativeFeedStories: [NativeFeedStory] = []
     private var nativeFeedPolls: [NativeFeedPoll] = []
+    private var nativePostDetailPost: NativeFeedPost?
+    private var nativePostDetailComments: [NativeComment] = []
+    private var nativeProfileUser: NativeProfileUser?
+    private var nativeProfilePosts: [NativeFeedPost] = []
     private var nativeCommentsPost: NativeFeedPost?
     private var nativeComments: [NativeComment] = []
     private var nativeFeedLatestPostID = 0
@@ -160,6 +177,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         configureNativeComposer()
         configureNativeTabBar()
         configureNativeFeed()
+        configureNativePostDetail()
+        configureNativeProfile()
         configureNativeComments()
         configureNativeMessages()
         installKeyboardObservers()
@@ -838,6 +857,112 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         ])
     }
 
+    private func configureNativePostDetail() {
+        nativePostDetailContainer.translatesAutoresizingMaskIntoConstraints = false
+        nativePostDetailContainer.alpha = 0
+        nativePostDetailContainer.isHidden = true
+        nativePostDetailContainer.backgroundColor = shellBackground
+        nativePostDetailContainer.layer.zPosition = 34
+        view.addSubview(nativePostDetailContainer)
+
+        nativePostDetailBackButton.translatesAutoresizingMaskIntoConstraints = false
+        nativePostDetailBackButton.setImage(UIImage(systemName: "chevron.left"), for: .normal)
+        nativePostDetailBackButton.tintColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nativePostDetailBackButton.addTarget(self, action: #selector(closeNativePostDetail), for: .touchUpInside)
+        nativePostDetailContainer.addSubview(nativePostDetailBackButton)
+
+        nativePostDetailTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativePostDetailTitleLabel.text = "Post"
+        nativePostDetailTitleLabel.font = .systemFont(ofSize: 22, weight: .bold)
+        nativePostDetailTitleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nativePostDetailContainer.addSubview(nativePostDetailTitleLabel)
+
+        nativePostDetailTableView.translatesAutoresizingMaskIntoConstraints = false
+        nativePostDetailTableView.backgroundColor = .clear
+        nativePostDetailTableView.separatorStyle = .none
+        nativePostDetailTableView.rowHeight = UITableView.automaticDimension
+        nativePostDetailTableView.estimatedRowHeight = 160
+        nativePostDetailTableView.dataSource = self
+        nativePostDetailTableView.delegate = self
+        nativePostDetailTableView.prefetchDataSource = self
+        nativePostDetailTableView.register(NativeFeedPostCell.self, forCellReuseIdentifier: NativeFeedPostCell.reuseIdentifier)
+        nativePostDetailTableView.register(NativeCommentCell.self, forCellReuseIdentifier: NativeCommentCell.reuseIdentifier)
+        nativePostDetailContainer.addSubview(nativePostDetailTableView)
+
+        nativePostDetailEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativePostDetailEmptyLabel.text = "Loading post..."
+        nativePostDetailEmptyLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        nativePostDetailEmptyLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.75)
+        nativePostDetailEmptyLabel.textAlignment = .center
+        nativePostDetailEmptyLabel.isHidden = true
+        nativePostDetailContainer.addSubview(nativePostDetailEmptyLabel)
+
+        NSLayoutConstraint.activate([
+            nativePostDetailContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            nativePostDetailContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nativePostDetailContainer.topAnchor.constraint(equalTo: view.topAnchor),
+            nativePostDetailContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            nativePostDetailBackButton.leadingAnchor.constraint(equalTo: nativePostDetailContainer.leadingAnchor, constant: 14),
+            nativePostDetailBackButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            nativePostDetailBackButton.widthAnchor.constraint(equalToConstant: 36),
+            nativePostDetailBackButton.heightAnchor.constraint(equalToConstant: 36),
+            nativePostDetailTitleLabel.leadingAnchor.constraint(equalTo: nativePostDetailBackButton.trailingAnchor, constant: 8),
+            nativePostDetailTitleLabel.centerYAnchor.constraint(equalTo: nativePostDetailBackButton.centerYAnchor),
+            nativePostDetailTableView.leadingAnchor.constraint(equalTo: nativePostDetailContainer.leadingAnchor, constant: 10),
+            nativePostDetailTableView.trailingAnchor.constraint(equalTo: nativePostDetailContainer.trailingAnchor, constant: -10),
+            nativePostDetailTableView.topAnchor.constraint(equalTo: nativePostDetailBackButton.bottomAnchor, constant: 8),
+            nativePostDetailTableView.bottomAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -16),
+            nativePostDetailEmptyLabel.centerXAnchor.constraint(equalTo: nativePostDetailTableView.centerXAnchor),
+            nativePostDetailEmptyLabel.centerYAnchor.constraint(equalTo: nativePostDetailTableView.centerYAnchor)
+        ])
+    }
+
+    private func configureNativeProfile() {
+        nativeProfileContainer.translatesAutoresizingMaskIntoConstraints = false
+        nativeProfileContainer.alpha = 0
+        nativeProfileContainer.isHidden = true
+        nativeProfileContainer.backgroundColor = shellBackground
+        nativeProfileContainer.layer.zPosition = 32
+        view.addSubview(nativeProfileContainer)
+
+        nativeProfileTableView.translatesAutoresizingMaskIntoConstraints = false
+        nativeProfileTableView.backgroundColor = .clear
+        nativeProfileTableView.separatorStyle = .none
+        nativeProfileTableView.rowHeight = UITableView.automaticDimension
+        nativeProfileTableView.estimatedRowHeight = 280
+        nativeProfileTableView.dataSource = self
+        nativeProfileTableView.delegate = self
+        nativeProfileTableView.prefetchDataSource = self
+        nativeProfileTableView.register(NativeFeedPostCell.self, forCellReuseIdentifier: NativeFeedPostCell.reuseIdentifier)
+        nativeProfileHeaderView.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: 260)
+        nativeProfileHeaderView.onFollowTap = { [weak self] in
+            self?.toggleNativeProfileFollow()
+        }
+        nativeProfileTableView.tableHeaderView = nativeProfileHeaderView
+        nativeProfileContainer.addSubview(nativeProfileTableView)
+
+        nativeProfileEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeProfileEmptyLabel.text = "Loading profile..."
+        nativeProfileEmptyLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        nativeProfileEmptyLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.75)
+        nativeProfileEmptyLabel.textAlignment = .center
+        nativeProfileEmptyLabel.isHidden = true
+        nativeProfileContainer.addSubview(nativeProfileEmptyLabel)
+
+        NSLayoutConstraint.activate([
+            nativeProfileContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            nativeProfileContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nativeProfileContainer.topAnchor.constraint(equalTo: view.topAnchor),
+            nativeProfileContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            nativeProfileTableView.leadingAnchor.constraint(equalTo: nativeProfileContainer.leadingAnchor, constant: 10),
+            nativeProfileTableView.trailingAnchor.constraint(equalTo: nativeProfileContainer.trailingAnchor, constant: -10),
+            nativeProfileTableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 6),
+            nativeProfileTableView.bottomAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -16),
+            nativeProfileEmptyLabel.centerXAnchor.constraint(equalTo: nativeProfileTableView.centerXAnchor),
+            nativeProfileEmptyLabel.centerYAnchor.constraint(equalTo: nativeProfileTableView.centerYAnchor)
+        ])
+    }
+
     private func configureNativeComments() {
         nativeCommentsDimView.translatesAutoresizingMaskIntoConstraints = false
         nativeCommentsDimView.backgroundColor = UIColor.black.withAlphaComponent(0.12)
@@ -1092,6 +1217,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         } else {
             hideNativeMessagesIfNeeded()
         }
+
+        if currentPrimarySection == .profile {
+            let username = nativeProfileUsername(from: currentRoute) ?? currentUsername
+            showNativeProfileIfNeeded(username: username)
+        } else {
+            hideNativeProfileIfNeeded()
+        }
     }
 
     private func routeSupportsNativeFeed(_ route: String) -> Bool {
@@ -1127,6 +1259,59 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             self.nativeFeedContainer.alpha = 0
         } completion: { _ in
             self.nativeFeedContainer.isHidden = true
+        }
+    }
+
+    private func showNativePostDetail(for post: NativeFeedPost) {
+        nativePostDetailPost = post
+        nativePostDetailComments = []
+        nativePostDetailEmptyLabel.text = "Loading replies..."
+        nativePostDetailEmptyLabel.isHidden = false
+        nativePostDetailTableView.reloadData()
+        isShowingNativePostDetail = true
+        nativePostDetailContainer.isHidden = false
+        nativePostDetailContainer.alpha = 1
+        view.bringSubviewToFront(nativePostDetailContainer)
+        view.bringSubviewToFront(nativeTabBarBackdrop)
+        view.bringSubviewToFront(nativeTabBar)
+        loadNativePostDetail(postID: post.id)
+    }
+
+    @objc private func closeNativePostDetail() {
+        hideNativePostDetailIfNeeded()
+    }
+
+    private func hideNativePostDetailIfNeeded() {
+        guard isShowingNativePostDetail else { return }
+        isShowingNativePostDetail = false
+        UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
+            self.nativePostDetailContainer.alpha = 0
+        } completion: { _ in
+            self.nativePostDetailContainer.isHidden = true
+            self.nativePostDetailPost = nil
+            self.nativePostDetailComments = []
+            self.nativePostDetailTableView.reloadData()
+        }
+    }
+
+    private func showNativeProfileIfNeeded(username: String) {
+        guard !username.isEmpty else { return }
+        isShowingNativeProfile = true
+        nativeProfileContainer.isHidden = false
+        nativeProfileContainer.alpha = 1
+        view.bringSubviewToFront(nativeProfileContainer)
+        view.bringSubviewToFront(nativeTabBarBackdrop)
+        view.bringSubviewToFront(nativeTabBar)
+        loadNativeProfile(username: username, force: nativeProfileUser?.username != username)
+    }
+
+    private func hideNativeProfileIfNeeded() {
+        guard isShowingNativeProfile else { return }
+        isShowingNativeProfile = false
+        UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
+            self.nativeProfileContainer.alpha = 0
+        } completion: { _ in
+            self.nativeProfileContainer.isHidden = true
         }
     }
 
@@ -1177,6 +1362,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             return nil
         }
         return value
+    }
+
+    private func nativeProfileUsername(from route: String) -> String? {
+        guard route.starts(with: "/users/") else { return nil }
+        let raw = String(route.dropFirst("/users/".count))
+        let username = raw.split(separator: "?").first.map(String.init) ?? raw
+        return username.removingPercentEncoding?.isEmpty == false ? username.removingPercentEncoding : username
     }
 
     private func updateNativeThreadComposeState() {
@@ -2235,6 +2427,75 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }.resume()
     }
 
+    private func loadNativePostDetail(postID: Int) {
+        guard !isLoadingNativePostDetail else { return }
+        isLoadingNativePostDetail = true
+        performNativeJSONRequest(path: "/api/post/\(postID)") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isLoadingNativePostDetail = false
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativePostDetailResponse.self, from: data), payload.ok else {
+                        self.nativePostDetailEmptyLabel.text = "Post couldn't load."
+                        self.nativePostDetailEmptyLabel.isHidden = false
+                        return
+                    }
+                    self.nativePostDetailPost = payload.post
+                    self.nativePostDetailComments = payload.flatComments
+                    self.nativePostDetailEmptyLabel.isHidden = true
+                    self.nativePostDetailTableView.reloadData()
+                    self.prefetchNativeFeedImages(for: [payload.post])
+                case .failure(let error):
+                    self.nativePostDetailEmptyLabel.text = "Post couldn't load."
+                    self.nativePostDetailEmptyLabel.isHidden = false
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
+    private func loadNativeProfile(username: String, force: Bool) {
+        guard !isLoadingNativeProfile else { return }
+        if !force, nativeProfileUser?.username == username { return }
+        isLoadingNativeProfile = true
+        nativeProfileEmptyLabel.text = "Loading profile..."
+        nativeProfileEmptyLabel.isHidden = false
+        performNativeJSONRequest(path: "/api/users/\(username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? username)") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isLoadingNativeProfile = false
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeProfileResponse.self, from: data), payload.ok else {
+                        self.nativeProfileEmptyLabel.text = "Profile couldn't load."
+                        self.nativeProfileEmptyLabel.isHidden = false
+                        return
+                    }
+                    self.nativeProfileUser = payload.user
+                    self.nativeProfilePosts = payload.posts
+                    self.nativeProfileHeaderView.configure(user: payload.user, imageCache: self.nativeAvatarImageCache)
+                    self.resizeNativeProfileHeader()
+                    self.nativeProfileTableView.reloadData()
+                    self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(8)))
+                    self.nativeProfileEmptyLabel.text = "No posts yet."
+                    self.nativeProfileEmptyLabel.isHidden = !payload.posts.isEmpty
+                case .failure(let error):
+                    self.nativeProfileEmptyLabel.text = "Profile couldn't load."
+                    self.nativeProfileEmptyLabel.isHidden = false
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
+    private func resizeNativeProfileHeader() {
+        guard nativeProfileTableView.tableHeaderView === nativeProfileHeaderView else { return }
+        let height = nativeProfileHeaderView.preferredHeight
+        nativeProfileHeaderView.frame = CGRect(x: 0, y: 0, width: nativeProfileTableView.bounds.width, height: height)
+        nativeProfileTableView.tableHeaderView = nativeProfileHeaderView
+    }
+
     private func loadNativeInbox() {
         guard isLoggedIntoWebApp, !isLoadingNativeInbox else { return }
         isLoadingNativeInbox = true
@@ -2769,9 +3030,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     @objc private func openNativeCommentsFullPost() {
         guard let post = nativeCommentsPost else { return }
         dismissNativeComments()
-        currentRoute = post.url
-        hideNativeFeedIfNeeded()
-        navigateWebView(to: post.url, replace: false)
+        showNativePostDetail(for: post)
     }
 
     private func loadNativeComments(for post: NativeFeedPost) {
@@ -2785,6 +3044,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                         return
                     }
                     self.nativeComments = payload.flatComments
+                    if self.nativePostDetailPost?.id == post.id {
+                        self.nativePostDetailComments = payload.flatComments
+                        self.nativePostDetailTableView.reloadData()
+                    }
                     if let updatedPost = payload.post {
                         self.nativeCommentsPost = updatedPost
                         self.updateNativeFeedPost(id: updatedPost.id) { item in
@@ -2821,6 +3084,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.nativeCommentsTextView.text = ""
                     self.updateNativeCommentsComposeState()
                     self.nativeComments = payload.flatComments
+                    if self.nativePostDetailPost?.id == post.id {
+                        self.nativePostDetailComments = payload.flatComments
+                        self.nativePostDetailTableView.reloadData()
+                    }
                     if let updatedPost = payload.post {
                         self.nativeCommentsPost = updatedPost
                         self.updateNativeFeedPost(id: updatedPost.id) { item in
@@ -2885,16 +3152,55 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
     }
 
+    private func toggleNativeProfileFollow() {
+        guard let user = nativeProfileUser, user.can_follow else { return }
+        nativeProfileHeaderView.setFollowLoading(true)
+        performNativeJSONRequest(path: "/api/users/\(user.username)/follow", method: "POST", bodyObject: [:]) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.nativeProfileHeaderView.setFollowLoading(false)
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeProfileFollowResponse.self, from: data), payload.ok else {
+                        self.showNativeFlash(message: "Follow failed. Try again.", category: "error")
+                        return
+                    }
+                    self.nativeProfileUser = payload.user
+                    self.nativeProfileHeaderView.configure(user: payload.user, imageCache: self.nativeAvatarImageCache)
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
     private func updateNativeFeedPost(id: Int, mutate: (inout NativeFeedPost) -> Void) {
-        guard let index = nativeFeedPosts.firstIndex(where: { $0.id == id }) else { return }
-        mutate(&nativeFeedPosts[index])
-        let indexPath = IndexPath(row: nativeFeedPolls.count + index, section: 0)
-        if nativeFeedTableView.indexPathsForVisibleRows?.contains(indexPath) == true {
-            nativeFeedTableView.reloadRows(at: [indexPath], with: .none)
+        if let index = nativeFeedPosts.firstIndex(where: { $0.id == id }) {
+            mutate(&nativeFeedPosts[index])
+            let indexPath = IndexPath(row: nativeFeedPolls.count + index, section: 0)
+            if nativeFeedTableView.indexPathsForVisibleRows?.contains(indexPath) == true {
+                nativeFeedTableView.reloadRows(at: [indexPath], with: .none)
+            }
+        }
+        if let detail = nativePostDetailPost, detail.id == id {
+            var updated = detail
+            mutate(&updated)
+            nativePostDetailPost = updated
+            if nativePostDetailTableView.numberOfRows(inSection: 0) > 0 {
+                nativePostDetailTableView.reloadRows(at: [IndexPath(row: 0, section: 0)], with: .none)
+            }
+        }
+        if let profileIndex = nativeProfilePosts.firstIndex(where: { $0.id == id }) {
+            mutate(&nativeProfilePosts[profileIndex])
+            let profileIndexPath = IndexPath(row: profileIndex, section: 0)
+            if nativeProfileTableView.indexPathsForVisibleRows?.contains(profileIndexPath) == true {
+                nativeProfileTableView.reloadRows(at: [profileIndexPath], with: .none)
+            }
         }
     }
 
     private func openPrimarySection(_ section: PrimarySection) {
+        hideNativePostDetailIfNeeded()
         if section == .messages {
             currentPrimarySection = .messages
             updateNativeTabSelection(animated: true)
@@ -2936,6 +3242,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             lastRouteBySection[.feed] = preferredRoute
             updateNativeSectionPresentation()
             loadNativeFeed(force: false)
+        } else if section == .profile {
+            currentRoute = preferredRoute
+            lastRouteBySection[.profile] = preferredRoute
+            hideNativeFeedIfNeeded()
+            hideNativeMessagesIfNeeded()
+            showNativeProfileIfNeeded(username: targetUsername)
         } else {
             hideNativeFeedIfNeeded()
         }
@@ -3061,6 +3373,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if tableView === nativeFeedTableView {
             return nativeFeedPolls.count + nativeFeedPosts.count
         }
+        if tableView === nativePostDetailTableView {
+            return (nativePostDetailPost == nil ? 0 : 1) + nativePostDetailComments.count
+        }
+        if tableView === nativeProfileTableView {
+            return nativeProfilePosts.count
+        }
         if tableView === nativeMessagesListTableView {
             return nativeMessageConversations.count
         }
@@ -3088,6 +3406,27 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             }
             return cell
         }
+        if tableView === nativePostDetailTableView {
+            if indexPath.row == 0, let post = nativePostDetailPost {
+                let cell = tableView.dequeueReusableCell(withIdentifier: NativeFeedPostCell.reuseIdentifier, for: indexPath) as! NativeFeedPostCell
+                cell.configure(with: post, avatarCache: nativeAvatarImageCache, mediaCache: nativeFeedImageCache)
+                cell.onAction = { [weak self] post, action in
+                    self?.handleNativeFeedPostAction(post, action: action)
+                }
+                return cell
+            }
+            let cell = tableView.dequeueReusableCell(withIdentifier: NativeCommentCell.reuseIdentifier, for: indexPath) as! NativeCommentCell
+            cell.configure(with: nativePostDetailComments[indexPath.row - 1], imageCache: nativeAvatarImageCache)
+            return cell
+        }
+        if tableView === nativeProfileTableView {
+            let cell = tableView.dequeueReusableCell(withIdentifier: NativeFeedPostCell.reuseIdentifier, for: indexPath) as! NativeFeedPostCell
+            cell.configure(with: nativeProfilePosts[indexPath.row], avatarCache: nativeAvatarImageCache, mediaCache: nativeFeedImageCache)
+            cell.onAction = { [weak self] post, action in
+                self?.handleNativeFeedPostAction(post, action: action)
+            }
+            return cell
+        }
         if tableView === nativeMessagesListTableView {
             let cell = tableView.dequeueReusableCell(withIdentifier: NativeConversationCell.reuseIdentifier, for: indexPath) as! NativeConversationCell
             cell.configure(with: nativeMessageConversations[indexPath.row], imageCache: nativeAvatarImageCache)
@@ -3108,10 +3447,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if tableView === nativeFeedTableView {
             guard indexPath.row >= nativeFeedPolls.count else { return }
             let post = nativeFeedPosts[indexPath.row - nativeFeedPolls.count]
-            currentRoute = post.url
-            lastRouteBySection[.feed] = "/"
-            hideNativeFeedIfNeeded()
-            navigateWebView(to: post.url, replace: false)
+            showNativePostDetail(for: post)
+            return
+        }
+        if tableView === nativeProfileTableView {
+            showNativePostDetail(for: nativeProfilePosts[indexPath.row])
+            return
+        }
+        if tableView === nativePostDetailTableView {
+            if indexPath.row == 0, let post = nativePostDetailPost {
+                presentNativeComments(for: post)
+            }
             return
         }
         if tableView === nativeMessagesListTableView {
@@ -3134,10 +3480,20 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
-        guard tableView === nativeFeedTableView else { return }
-        let posts = indexPaths.compactMap { indexPath in
-            let postIndex = indexPath.row - nativeFeedPolls.count
-            return postIndex >= 0 && postIndex < nativeFeedPosts.count ? nativeFeedPosts[postIndex] : nil
+        let posts: [NativeFeedPost]
+        if tableView === nativeFeedTableView {
+            posts = indexPaths.compactMap { indexPath in
+                let postIndex = indexPath.row - nativeFeedPolls.count
+                return postIndex >= 0 && postIndex < nativeFeedPosts.count ? nativeFeedPosts[postIndex] : nil
+            }
+        } else if tableView === nativeProfileTableView {
+            posts = indexPaths.compactMap { indexPath in
+                indexPath.row < nativeProfilePosts.count ? nativeProfilePosts[indexPath.row] : nil
+            }
+        } else if tableView === nativePostDetailTableView {
+            posts = nativePostDetailPost.map { [$0] } ?? []
+        } else {
+            return
         }
         prefetchNativeFeedImages(for: posts)
     }
@@ -3376,6 +3732,27 @@ private struct NativeCommentsResponse: Decodable {
     }
 }
 
+private struct NativePostDetailResponse: Decodable {
+    let ok: Bool
+    let post: NativeFeedPost
+    let comments: [NativeComment]
+
+    var flatComments: [NativeComment] {
+        comments.flatMap { $0.flattened() }
+    }
+}
+
+private struct NativeProfileResponse: Decodable {
+    let ok: Bool
+    let user: NativeProfileUser
+    let posts: [NativeFeedPost]
+}
+
+private struct NativeProfileFollowResponse: Decodable {
+    let ok: Bool
+    let user: NativeProfileUser
+}
+
 private struct NativeComment: Decodable {
     let id: Int
     let body: String
@@ -3388,6 +3765,39 @@ private struct NativeComment: Decodable {
 
     func flattened() -> [NativeComment] {
         [self] + replies.flatMap { $0.flattened() }
+    }
+}
+
+private struct NativeProfileUser: Decodable {
+    let id: Int
+    let username: String
+    let display_name: String
+    let avatar_url: String
+    let avatar_emoji: String
+    let use_emoji: Bool
+    let is_verified: Bool
+    let is_creator: Bool
+    let bio: String
+    let location: String
+    let website: String
+    let banner_url: String
+    let follower_count: Int
+    let following_count: Int
+    let post_count: Int
+    let is_following: Bool
+    let can_follow: Bool
+
+    var summary: NativeUserSummary {
+        NativeUserSummary(
+            id: id,
+            username: username,
+            display_name: display_name,
+            avatar_url: avatar_url,
+            avatar_emoji: avatar_emoji,
+            use_emoji: use_emoji,
+            is_verified: is_verified,
+            is_creator: is_creator
+        )
     }
 }
 
@@ -3587,6 +3997,146 @@ private final class NativeAvatarView: UIView {
                 self.emojiLabel.isHidden = true
             }
         }.resume()
+    }
+}
+
+private final class NativeProfileHeaderView: UIView {
+    private let cardView = UIView()
+    private let avatarView = NativeAvatarView()
+    private let nameLabel = UILabel()
+    private let verifiedBadgeView = UIImageView()
+    private let usernameLabel = UILabel()
+    private let bioLabel = UILabel()
+    private let statsLabel = UILabel()
+    private let metaLabel = UILabel()
+    private let followButton = UIButton(type: .system)
+    var onFollowTap: (() -> Void)?
+    var preferredHeight: CGFloat { 260 }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+
+        cardView.translatesAutoresizingMaskIntoConstraints = false
+        cardView.backgroundColor = UIColor.white.withAlphaComponent(0.92)
+        cardView.layer.cornerRadius = 24
+        cardView.layer.cornerCurve = .continuous
+        cardView.layer.borderWidth = 1
+        cardView.layer.borderColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.08).cgColor
+        addSubview(cardView)
+
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        cardView.addSubview(avatarView)
+
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = .systemFont(ofSize: 25, weight: .bold)
+        nameLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        cardView.addSubview(nameLabel)
+
+        verifiedBadgeView.translatesAutoresizingMaskIntoConstraints = false
+        verifiedBadgeView.image = UIImage(systemName: "checkmark.seal.fill")
+        verifiedBadgeView.tintColor = UIColor(red: 62.0 / 255.0, green: 164.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+        verifiedBadgeView.contentMode = .scaleAspectFit
+        verifiedBadgeView.isHidden = true
+        cardView.addSubview(verifiedBadgeView)
+
+        usernameLabel.translatesAutoresizingMaskIntoConstraints = false
+        usernameLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        usernameLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.88)
+        cardView.addSubview(usernameLabel)
+
+        bioLabel.translatesAutoresizingMaskIntoConstraints = false
+        bioLabel.font = .systemFont(ofSize: 15)
+        bioLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.94)
+        bioLabel.numberOfLines = 3
+        cardView.addSubview(bioLabel)
+
+        metaLabel.translatesAutoresizingMaskIntoConstraints = false
+        metaLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        metaLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.8)
+        metaLabel.numberOfLines = 2
+        cardView.addSubview(metaLabel)
+
+        statsLabel.translatesAutoresizingMaskIntoConstraints = false
+        statsLabel.font = .systemFont(ofSize: 15, weight: .bold)
+        statsLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.92)
+        statsLabel.numberOfLines = 2
+        cardView.addSubview(statsLabel)
+
+        followButton.translatesAutoresizingMaskIntoConstraints = false
+        followButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .bold)
+        followButton.layer.cornerRadius = 18
+        followButton.layer.cornerCurve = .continuous
+        followButton.addTarget(self, action: #selector(handleFollowTap), for: .touchUpInside)
+        cardView.addSubview(followButton)
+
+        NSLayoutConstraint.activate([
+            cardView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            cardView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            cardView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            cardView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            avatarView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
+            avatarView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 20),
+            avatarView.widthAnchor.constraint(equalToConstant: 74),
+            avatarView.heightAnchor.constraint(equalToConstant: 74),
+            followButton.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -18),
+            followButton.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
+            followButton.widthAnchor.constraint(equalToConstant: 104),
+            followButton.heightAnchor.constraint(equalToConstant: 36),
+            nameLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: verifiedBadgeView.leadingAnchor, constant: -6),
+            nameLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 14),
+            verifiedBadgeView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            verifiedBadgeView.widthAnchor.constraint(equalToConstant: 20),
+            verifiedBadgeView.heightAnchor.constraint(equalToConstant: 20),
+            verifiedBadgeView.trailingAnchor.constraint(lessThanOrEqualTo: cardView.trailingAnchor, constant: -18),
+            usernameLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            usernameLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -18),
+            usernameLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
+            bioLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            bioLabel.trailingAnchor.constraint(equalTo: usernameLabel.trailingAnchor),
+            bioLabel.topAnchor.constraint(equalTo: usernameLabel.bottomAnchor, constant: 12),
+            metaLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            metaLabel.trailingAnchor.constraint(equalTo: usernameLabel.trailingAnchor),
+            metaLabel.topAnchor.constraint(equalTo: bioLabel.bottomAnchor, constant: 10),
+            statsLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            statsLabel.trailingAnchor.constraint(equalTo: usernameLabel.trailingAnchor),
+            statsLabel.topAnchor.constraint(equalTo: metaLabel.bottomAnchor, constant: 10)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(user: NativeProfileUser, imageCache: NSCache<NSString, UIImage>) {
+        avatarView.configure(with: user.summary, imageCache: imageCache)
+        nameLabel.text = user.display_name
+        verifiedBadgeView.isHidden = !user.is_verified
+        usernameLabel.text = "@\(user.username)"
+        bioLabel.text = user.bio.isEmpty ? "No bio yet." : user.bio
+        let metaParts = [user.location, user.website].filter { !$0.isEmpty }
+        metaLabel.text = metaParts.joined(separator: "  ")
+        metaLabel.isHidden = metaParts.isEmpty
+        statsLabel.text = "\(user.post_count) posts   \(user.follower_count) followers   \(user.following_count) following"
+        followButton.isHidden = !user.can_follow
+        followButton.setTitle(user.is_following ? "Following" : "Follow", for: .normal)
+        followButton.setTitleColor(user.is_following ? UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1) : .white, for: .normal)
+        followButton.backgroundColor = user.is_following
+            ? UIColor(red: 241.0 / 255.0, green: 245.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
+            : UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+    }
+
+    func setFollowLoading(_ loading: Bool) {
+        followButton.isEnabled = !loading
+        followButton.alpha = loading ? 0.65 : 1
+        if loading {
+            followButton.setTitle("...", for: .normal)
+        }
+    }
+
+    @objc private func handleFollowTap() {
+        onFollowTap?()
     }
 }
 
