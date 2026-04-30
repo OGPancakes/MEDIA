@@ -4,6 +4,7 @@ import Capacitor
 import ObjectiveC.runtime
 import PhotosUI
 import UserNotifications
+import AVKit
 
 final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, UITextViewDelegate, PHPickerViewControllerDelegate, UITableViewDataSource, UITableViewDelegate, UITableViewDataSourcePrefetching {
     private enum PrimarySection: String {
@@ -80,6 +81,19 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeProfileTableView = UITableView(frame: .zero, style: .plain)
     private let nativeProfileEmptyLabel = UILabel()
     private let nativeProfileHeaderView = NativeProfileHeaderView()
+    private let nativeSearchContainer = UIView()
+    private let nativeSearchTitleLabel = UILabel()
+    private let nativeSearchField = UITextField()
+    private let nativeSearchTableView = UITableView(frame: .zero, style: .plain)
+    private let nativeSearchEmptyLabel = UILabel()
+    private let nativeStoryViewer = NativeStoryViewerView()
+    private let nativeConnectionsDimView = UIControl()
+    private let nativeConnectionsSheet = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
+    private let nativeConnectionsHandle = UIView()
+    private let nativeConnectionsTitleLabel = UILabel()
+    private let nativeConnectionsCloseButton = UIButton(type: .system)
+    private let nativeConnectionsTableView = UITableView(frame: .zero, style: .plain)
+    private let nativeConnectionsEmptyLabel = UILabel()
     private let nativeCommentsDimView = UIControl()
     private let nativeCommentsSheet = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
     private let nativeCommentsHandle = UIView()
@@ -112,6 +126,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var isLoadingNativeFeed = false
     private var isLoadingNativePostDetail = false
     private var isLoadingNativeProfile = false
+    private var isShowingNativeSearch = false
+    private var isLoadingNativeSearch = false
+    private var isLoadingNativeConnections = false
     private var isLoadingMentionSuggestions = false
     private var isShowingNativeMessages = false
     private var isLoadingNativeInbox = false
@@ -146,6 +163,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var nativePostDetailComments: [NativeComment] = []
     private var nativeProfileUser: NativeProfileUser?
     private var nativeProfilePosts: [NativeFeedPost] = []
+    private var nativeSearchUsers: [NativeProfileUser] = []
+    private var nativeSearchPosts: [NativeFeedPost] = []
+    private var nativeConnectionsUsers: [NativeProfileUser] = []
     private var nativeCommentsPost: NativeFeedPost?
     private var nativeComments: [NativeComment] = []
     private var nativeFeedLatestPostID = 0
@@ -179,6 +199,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         configureNativeFeed()
         configureNativePostDetail()
         configureNativeProfile()
+        configureNativeSearch()
+        configureNativeStoryViewer()
+        configureNativeConnections()
         configureNativeComments()
         configureNativeMessages()
         installKeyboardObservers()
@@ -934,9 +957,15 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeProfileTableView.delegate = self
         nativeProfileTableView.prefetchDataSource = self
         nativeProfileTableView.register(NativeFeedPostCell.self, forCellReuseIdentifier: NativeFeedPostCell.reuseIdentifier)
-        nativeProfileHeaderView.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: 260)
+        nativeProfileHeaderView.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: nativeProfileHeaderView.preferredHeight)
         nativeProfileHeaderView.onFollowTap = { [weak self] in
             self?.toggleNativeProfileFollow()
+        }
+        nativeProfileHeaderView.onFollowersTap = { [weak self] in
+            self?.presentNativeConnections(tab: "followers")
+        }
+        nativeProfileHeaderView.onFollowingTap = { [weak self] in
+            self?.presentNativeConnections(tab: "following")
         }
         nativeProfileTableView.tableHeaderView = nativeProfileHeaderView
         nativeProfileContainer.addSubview(nativeProfileTableView)
@@ -960,6 +989,189 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeProfileTableView.bottomAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -16),
             nativeProfileEmptyLabel.centerXAnchor.constraint(equalTo: nativeProfileTableView.centerXAnchor),
             nativeProfileEmptyLabel.centerYAnchor.constraint(equalTo: nativeProfileTableView.centerYAnchor)
+        ])
+    }
+
+    private func configureNativeSearch() {
+        nativeSearchContainer.translatesAutoresizingMaskIntoConstraints = false
+        nativeSearchContainer.alpha = 0
+        nativeSearchContainer.isHidden = true
+        nativeSearchContainer.backgroundColor = shellBackground
+        nativeSearchContainer.layer.zPosition = 31
+        view.addSubview(nativeSearchContainer)
+
+        nativeSearchTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeSearchTitleLabel.text = "Search"
+        nativeSearchTitleLabel.font = .systemFont(ofSize: 42, weight: .bold)
+        nativeSearchTitleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nativeSearchContainer.addSubview(nativeSearchTitleLabel)
+
+        nativeSearchField.translatesAutoresizingMaskIntoConstraints = false
+        nativeSearchField.placeholder = "Search people and posts"
+        nativeSearchField.font = .systemFont(ofSize: 16, weight: .semibold)
+        nativeSearchField.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nativeSearchField.backgroundColor = UIColor.white.withAlphaComponent(0.92)
+        nativeSearchField.layer.cornerRadius = 22
+        nativeSearchField.layer.cornerCurve = .continuous
+        nativeSearchField.layer.borderWidth = 1
+        nativeSearchField.layer.borderColor = UIColor(red: 207.0 / 255.0, green: 218.0 / 255.0, blue: 236.0 / 255.0, alpha: 0.82).cgColor
+        nativeSearchField.clearButtonMode = .whileEditing
+        nativeSearchField.returnKeyType = .search
+        nativeSearchField.leftViewMode = .always
+        let searchIcon = UIImageView(image: UIImage(systemName: "magnifyingglass"))
+        searchIcon.tintColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.75)
+        searchIcon.contentMode = .center
+        searchIcon.frame = CGRect(x: 0, y: 0, width: 42, height: 42)
+        nativeSearchField.leftView = searchIcon
+        nativeSearchField.addTarget(self, action: #selector(nativeSearchTextChanged), for: .editingChanged)
+        nativeSearchField.addTarget(self, action: #selector(nativeSearchReturnPressed), for: .editingDidEndOnExit)
+        nativeSearchContainer.addSubview(nativeSearchField)
+
+        nativeSearchTableView.translatesAutoresizingMaskIntoConstraints = false
+        nativeSearchTableView.backgroundColor = .clear
+        nativeSearchTableView.separatorStyle = .none
+        nativeSearchTableView.rowHeight = UITableView.automaticDimension
+        nativeSearchTableView.estimatedRowHeight = 92
+        nativeSearchTableView.keyboardDismissMode = .interactive
+        nativeSearchTableView.dataSource = self
+        nativeSearchTableView.delegate = self
+        nativeSearchTableView.prefetchDataSource = self
+        nativeSearchTableView.register(NativeConnectionCell.self, forCellReuseIdentifier: NativeConnectionCell.reuseIdentifier)
+        nativeSearchTableView.register(NativeFeedPostCell.self, forCellReuseIdentifier: NativeFeedPostCell.reuseIdentifier)
+        nativeSearchContainer.addSubview(nativeSearchTableView)
+
+        nativeSearchEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeSearchEmptyLabel.text = "Start typing to find people and posts."
+        nativeSearchEmptyLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        nativeSearchEmptyLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.78)
+        nativeSearchEmptyLabel.textAlignment = .center
+        nativeSearchEmptyLabel.numberOfLines = 0
+        nativeSearchContainer.addSubview(nativeSearchEmptyLabel)
+
+        NSLayoutConstraint.activate([
+            nativeSearchContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            nativeSearchContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nativeSearchContainer.topAnchor.constraint(equalTo: view.topAnchor),
+            nativeSearchContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            nativeSearchTitleLabel.leadingAnchor.constraint(equalTo: nativeSearchContainer.leadingAnchor, constant: 24),
+            nativeSearchTitleLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
+            nativeSearchField.leadingAnchor.constraint(equalTo: nativeSearchContainer.leadingAnchor, constant: 24),
+            nativeSearchField.trailingAnchor.constraint(equalTo: nativeSearchContainer.trailingAnchor, constant: -24),
+            nativeSearchField.topAnchor.constraint(equalTo: nativeSearchTitleLabel.bottomAnchor, constant: 18),
+            nativeSearchField.heightAnchor.constraint(equalToConstant: 46),
+            nativeSearchTableView.leadingAnchor.constraint(equalTo: nativeSearchContainer.leadingAnchor, constant: 10),
+            nativeSearchTableView.trailingAnchor.constraint(equalTo: nativeSearchContainer.trailingAnchor, constant: -10),
+            nativeSearchTableView.topAnchor.constraint(equalTo: nativeSearchField.bottomAnchor, constant: 12),
+            nativeSearchTableView.bottomAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -16),
+            nativeSearchEmptyLabel.centerXAnchor.constraint(equalTo: nativeSearchTableView.centerXAnchor),
+            nativeSearchEmptyLabel.centerYAnchor.constraint(equalTo: nativeSearchTableView.centerYAnchor),
+            nativeSearchEmptyLabel.leadingAnchor.constraint(equalTo: nativeSearchTableView.leadingAnchor, constant: 24),
+            nativeSearchEmptyLabel.trailingAnchor.constraint(equalTo: nativeSearchTableView.trailingAnchor, constant: -24)
+        ])
+    }
+
+    private func configureNativeStoryViewer() {
+        nativeStoryViewer.translatesAutoresizingMaskIntoConstraints = false
+        nativeStoryViewer.alpha = 0
+        nativeStoryViewer.isHidden = true
+        nativeStoryViewer.layer.zPosition = 90
+        nativeStoryViewer.onClose = { [weak self] in
+            self?.dismissNativeStoryViewer()
+        }
+        nativeStoryViewer.onOpenVideo = { [weak self] url in
+            self?.presentNativeVideo(url: url)
+        }
+        view.addSubview(nativeStoryViewer)
+        NSLayoutConstraint.activate([
+            nativeStoryViewer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            nativeStoryViewer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nativeStoryViewer.topAnchor.constraint(equalTo: view.topAnchor),
+            nativeStoryViewer.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+    }
+
+    private func configureNativeConnections() {
+        nativeConnectionsDimView.translatesAutoresizingMaskIntoConstraints = false
+        nativeConnectionsDimView.backgroundColor = UIColor.black.withAlphaComponent(0.18)
+        nativeConnectionsDimView.alpha = 0
+        nativeConnectionsDimView.isHidden = true
+        nativeConnectionsDimView.layer.zPosition = 82
+        nativeConnectionsDimView.addTarget(self, action: #selector(dismissNativeConnections), for: .touchUpInside)
+        view.addSubview(nativeConnectionsDimView)
+
+        nativeConnectionsSheet.translatesAutoresizingMaskIntoConstraints = false
+        nativeConnectionsSheet.layer.cornerRadius = 28
+        nativeConnectionsSheet.layer.cornerCurve = .continuous
+        nativeConnectionsSheet.clipsToBounds = true
+        nativeConnectionsSheet.alpha = 0
+        nativeConnectionsSheet.isHidden = true
+        nativeConnectionsSheet.layer.zPosition = 84
+        view.addSubview(nativeConnectionsSheet)
+
+        let content = nativeConnectionsSheet.contentView
+        content.backgroundColor = UIColor.white.withAlphaComponent(0.96)
+
+        nativeConnectionsHandle.translatesAutoresizingMaskIntoConstraints = false
+        nativeConnectionsHandle.backgroundColor = UIColor(red: 16.0 / 255.0, green: 24.0 / 255.0, blue: 40.0 / 255.0, alpha: 0.16)
+        nativeConnectionsHandle.layer.cornerRadius = 2.5
+        nativeConnectionsHandle.layer.cornerCurve = .continuous
+        content.addSubview(nativeConnectionsHandle)
+
+        nativeConnectionsTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeConnectionsTitleLabel.font = .systemFont(ofSize: 18, weight: .bold)
+        nativeConnectionsTitleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nativeConnectionsTitleLabel.textAlignment = .center
+        content.addSubview(nativeConnectionsTitleLabel)
+
+        nativeConnectionsCloseButton.translatesAutoresizingMaskIntoConstraints = false
+        nativeConnectionsCloseButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        nativeConnectionsCloseButton.tintColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.72)
+        nativeConnectionsCloseButton.addTarget(self, action: #selector(dismissNativeConnections), for: .touchUpInside)
+        content.addSubview(nativeConnectionsCloseButton)
+
+        nativeConnectionsTableView.translatesAutoresizingMaskIntoConstraints = false
+        nativeConnectionsTableView.backgroundColor = .clear
+        nativeConnectionsTableView.separatorStyle = .none
+        nativeConnectionsTableView.rowHeight = UITableView.automaticDimension
+        nativeConnectionsTableView.estimatedRowHeight = 82
+        nativeConnectionsTableView.dataSource = self
+        nativeConnectionsTableView.delegate = self
+        nativeConnectionsTableView.register(NativeConnectionCell.self, forCellReuseIdentifier: NativeConnectionCell.reuseIdentifier)
+        content.addSubview(nativeConnectionsTableView)
+
+        nativeConnectionsEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeConnectionsEmptyLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        nativeConnectionsEmptyLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.78)
+        nativeConnectionsEmptyLabel.textAlignment = .center
+        nativeConnectionsEmptyLabel.isHidden = true
+        content.addSubview(nativeConnectionsEmptyLabel)
+
+        NSLayoutConstraint.activate([
+            nativeConnectionsDimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            nativeConnectionsDimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nativeConnectionsDimView.topAnchor.constraint(equalTo: view.topAnchor),
+            nativeConnectionsDimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            nativeConnectionsSheet.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+            nativeConnectionsSheet.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            nativeConnectionsSheet.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -14),
+            nativeConnectionsSheet.heightAnchor.constraint(equalTo: view.heightAnchor, multiplier: 0.58),
+            nativeConnectionsHandle.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            nativeConnectionsHandle.topAnchor.constraint(equalTo: content.topAnchor, constant: 10),
+            nativeConnectionsHandle.widthAnchor.constraint(equalToConstant: 44),
+            nativeConnectionsHandle.heightAnchor.constraint(equalToConstant: 5),
+            nativeConnectionsTitleLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 56),
+            nativeConnectionsTitleLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -56),
+            nativeConnectionsTitleLabel.topAnchor.constraint(equalTo: nativeConnectionsHandle.bottomAnchor, constant: 14),
+            nativeConnectionsCloseButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
+            nativeConnectionsCloseButton.centerYAnchor.constraint(equalTo: nativeConnectionsTitleLabel.centerYAnchor),
+            nativeConnectionsCloseButton.widthAnchor.constraint(equalToConstant: 34),
+            nativeConnectionsCloseButton.heightAnchor.constraint(equalToConstant: 34),
+            nativeConnectionsTableView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 8),
+            nativeConnectionsTableView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -8),
+            nativeConnectionsTableView.topAnchor.constraint(equalTo: nativeConnectionsTitleLabel.bottomAnchor, constant: 10),
+            nativeConnectionsTableView.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -8),
+            nativeConnectionsEmptyLabel.centerXAnchor.constraint(equalTo: nativeConnectionsTableView.centerXAnchor),
+            nativeConnectionsEmptyLabel.centerYAnchor.constraint(equalTo: nativeConnectionsTableView.centerYAnchor)
         ])
     }
 
@@ -1224,6 +1436,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         } else {
             hideNativeProfileIfNeeded()
         }
+
+        if currentPrimarySection == .search {
+            showNativeSearchIfNeeded()
+        } else {
+            hideNativeSearchIfNeeded()
+        }
     }
 
     private func routeSupportsNativeFeed(_ route: String) -> Bool {
@@ -1312,6 +1530,30 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             self.nativeProfileContainer.alpha = 0
         } completion: { _ in
             self.nativeProfileContainer.isHidden = true
+        }
+    }
+
+    private func showNativeSearchIfNeeded() {
+        guard !isShowingNativeSearch else { return }
+        isShowingNativeSearch = true
+        nativeSearchContainer.isHidden = false
+        nativeSearchContainer.alpha = 1
+        view.bringSubviewToFront(nativeSearchContainer)
+        view.bringSubviewToFront(nativeTabBarBackdrop)
+        view.bringSubviewToFront(nativeTabBar)
+        if nativeSearchUsers.isEmpty && nativeSearchPosts.isEmpty {
+            loadNativeSearch(query: nativeSearchField.text ?? "")
+        }
+    }
+
+    private func hideNativeSearchIfNeeded() {
+        guard isShowingNativeSearch else { return }
+        isShowingNativeSearch = false
+        nativeSearchField.resignFirstResponder()
+        UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
+            self.nativeSearchContainer.alpha = 0
+        } completion: { _ in
+            self.nativeSearchContainer.isHidden = true
         }
     }
 
@@ -2392,6 +2634,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func prefetchNativeStoryImages(for stories: [NativeFeedStory]) {
         stories.forEach { story in
             preloadNativeImage(urlString: story.author.avatar_url, cache: nativeAvatarImageCache)
+            preloadNativeImage(urlString: story.media_url, cache: nativeFeedImageCache)
         }
     }
 
@@ -2403,9 +2646,31 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func openNativeStory(_ story: NativeFeedStory) {
-        currentRoute = story.url
-        hideNativeFeedIfNeeded()
-        navigateWebView(to: story.url, replace: false)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        nativeStoryViewer.configure(story: story, avatarCache: nativeAvatarImageCache, mediaCache: nativeFeedImageCache)
+        nativeStoryViewer.isHidden = false
+        view.bringSubviewToFront(nativeStoryViewer)
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut]) {
+            self.nativeStoryViewer.alpha = 1
+        }
+    }
+
+    private func dismissNativeStoryViewer() {
+        UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
+            self.nativeStoryViewer.alpha = 0
+        } completion: { _ in
+            self.nativeStoryViewer.isHidden = true
+            self.nativeStoryViewer.prepareForReuse()
+        }
+    }
+
+    private func presentNativeVideo(url: URL) {
+        let player = AVPlayer(url: url)
+        let controller = AVPlayerViewController()
+        controller.player = player
+        present(controller, animated: true) {
+            player.play()
+        }
     }
 
     private func openNativeStoryComposer() {
@@ -2494,6 +2759,103 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let height = nativeProfileHeaderView.preferredHeight
         nativeProfileHeaderView.frame = CGRect(x: 0, y: 0, width: nativeProfileTableView.bounds.width, height: height)
         nativeProfileTableView.tableHeaderView = nativeProfileHeaderView
+    }
+
+    @objc private func nativeSearchTextChanged() {
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(runNativeSearchFromField), object: nil)
+        perform(#selector(runNativeSearchFromField), with: nil, afterDelay: 0.22)
+    }
+
+    @objc private func nativeSearchReturnPressed() {
+        nativeSearchField.resignFirstResponder()
+        loadNativeSearch(query: nativeSearchField.text ?? "")
+    }
+
+    @objc private func runNativeSearchFromField() {
+        loadNativeSearch(query: nativeSearchField.text ?? "")
+    }
+
+    private func loadNativeSearch(query: String) {
+        guard isLoggedIntoWebApp, !isLoadingNativeSearch else { return }
+        isLoadingNativeSearch = true
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        performNativeJSONRequest(path: "/api/search?q=\(encoded)") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isLoadingNativeSearch = false
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeSearchResponse.self, from: data), payload.ok else {
+                        self.nativeSearchEmptyLabel.text = "Search couldn't load."
+                        self.nativeSearchEmptyLabel.isHidden = false
+                        return
+                    }
+                    self.nativeSearchUsers = payload.users
+                    self.nativeSearchPosts = payload.posts
+                    self.nativeSearchTableView.reloadData()
+                    self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(8)))
+                    self.nativeSearchEmptyLabel.text = payload.query.isEmpty ? "Discover people and fresh posts." : "No results yet."
+                    self.nativeSearchEmptyLabel.isHidden = !(payload.users.isEmpty && payload.posts.isEmpty)
+                case .failure(let error):
+                    self.nativeSearchEmptyLabel.text = "Search couldn't load."
+                    self.nativeSearchEmptyLabel.isHidden = false
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
+    private func presentNativeConnections(tab: String) {
+        guard let username = nativeProfileUser?.username, !isLoadingNativeConnections else { return }
+        isLoadingNativeConnections = true
+        nativeConnectionsUsers = []
+        nativeConnectionsTitleLabel.text = tab == "following" ? "Following" : "Followers"
+        nativeConnectionsEmptyLabel.text = "Loading..."
+        nativeConnectionsEmptyLabel.isHidden = false
+        nativeConnectionsTableView.reloadData()
+        nativeConnectionsDimView.isHidden = false
+        nativeConnectionsSheet.isHidden = false
+        view.bringSubviewToFront(nativeConnectionsDimView)
+        view.bringSubviewToFront(nativeConnectionsSheet)
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut]) {
+            self.nativeConnectionsDimView.alpha = 1
+            self.nativeConnectionsSheet.alpha = 1
+        }
+
+        let encodedUsername = username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? username
+        performNativeJSONRequest(path: "/api/users/\(encodedUsername)/connections?tab=\(tab)") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isLoadingNativeConnections = false
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeConnectionsResponse.self, from: data), payload.ok else {
+                        self.nativeConnectionsEmptyLabel.text = "Couldn't load."
+                        self.nativeConnectionsEmptyLabel.isHidden = false
+                        return
+                    }
+                    self.nativeConnectionsTitleLabel.text = payload.tab == "following" ? "Following" : "Followers"
+                    self.nativeConnectionsUsers = payload.users
+                    self.nativeConnectionsTableView.reloadData()
+                    self.nativeConnectionsEmptyLabel.text = "No people here yet."
+                    self.nativeConnectionsEmptyLabel.isHidden = !payload.users.isEmpty
+                case .failure(let error):
+                    self.nativeConnectionsEmptyLabel.text = "Couldn't load."
+                    self.nativeConnectionsEmptyLabel.isHidden = false
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
+    @objc private func dismissNativeConnections() {
+        UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
+            self.nativeConnectionsDimView.alpha = 0
+            self.nativeConnectionsSheet.alpha = 0
+        } completion: { _ in
+            self.nativeConnectionsDimView.isHidden = true
+            self.nativeConnectionsSheet.isHidden = true
+        }
     }
 
     private func loadNativeInbox() {
@@ -3248,6 +3610,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             hideNativeFeedIfNeeded()
             hideNativeMessagesIfNeeded()
             showNativeProfileIfNeeded(username: targetUsername)
+        } else if section == .search {
+            currentRoute = "/search"
+            lastRouteBySection[.search] = "/search"
+            hideNativeFeedIfNeeded()
+            hideNativeMessagesIfNeeded()
+            hideNativeProfileIfNeeded()
+            showNativeSearchIfNeeded()
         } else {
             hideNativeFeedIfNeeded()
         }
@@ -3379,6 +3748,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if tableView === nativeProfileTableView {
             return nativeProfilePosts.count
         }
+        if tableView === nativeSearchTableView {
+            return nativeSearchUsers.count + nativeSearchPosts.count
+        }
+        if tableView === nativeConnectionsTableView {
+            return nativeConnectionsUsers.count
+        }
         if tableView === nativeMessagesListTableView {
             return nativeMessageConversations.count
         }
@@ -3427,6 +3802,25 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             }
             return cell
         }
+        if tableView === nativeSearchTableView {
+            if indexPath.row < nativeSearchUsers.count {
+                let cell = tableView.dequeueReusableCell(withIdentifier: NativeConnectionCell.reuseIdentifier, for: indexPath) as! NativeConnectionCell
+                cell.configure(user: nativeSearchUsers[indexPath.row], imageCache: nativeAvatarImageCache)
+                return cell
+            }
+            let cell = tableView.dequeueReusableCell(withIdentifier: NativeFeedPostCell.reuseIdentifier, for: indexPath) as! NativeFeedPostCell
+            let post = nativeSearchPosts[indexPath.row - nativeSearchUsers.count]
+            cell.configure(with: post, avatarCache: nativeAvatarImageCache, mediaCache: nativeFeedImageCache)
+            cell.onAction = { [weak self] post, action in
+                self?.handleNativeFeedPostAction(post, action: action)
+            }
+            return cell
+        }
+        if tableView === nativeConnectionsTableView {
+            let cell = tableView.dequeueReusableCell(withIdentifier: NativeConnectionCell.reuseIdentifier, for: indexPath) as! NativeConnectionCell
+            cell.configure(user: nativeConnectionsUsers[indexPath.row], imageCache: nativeAvatarImageCache)
+            return cell
+        }
         if tableView === nativeMessagesListTableView {
             let cell = tableView.dequeueReusableCell(withIdentifier: NativeConversationCell.reuseIdentifier, for: indexPath) as! NativeConversationCell
             cell.configure(with: nativeMessageConversations[indexPath.row], imageCache: nativeAvatarImageCache)
@@ -3452,6 +3846,28 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         if tableView === nativeProfileTableView {
             showNativePostDetail(for: nativeProfilePosts[indexPath.row])
+            return
+        }
+        if tableView === nativeSearchTableView {
+            if indexPath.row < nativeSearchUsers.count {
+                let user = nativeSearchUsers[indexPath.row]
+                currentPrimarySection = .profile
+                currentRoute = "/users/\(user.username)"
+                updateNativeTabSelection(animated: true)
+                dismissNativeConnections()
+                updateNativeSectionPresentation()
+            } else {
+                showNativePostDetail(for: nativeSearchPosts[indexPath.row - nativeSearchUsers.count])
+            }
+            return
+        }
+        if tableView === nativeConnectionsTableView {
+            let user = nativeConnectionsUsers[indexPath.row]
+            dismissNativeConnections()
+            currentPrimarySection = .profile
+            currentRoute = "/users/\(user.username)"
+            updateNativeTabSelection(animated: true)
+            updateNativeSectionPresentation()
             return
         }
         if tableView === nativePostDetailTableView {
@@ -3492,6 +3908,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             }
         } else if tableView === nativePostDetailTableView {
             posts = nativePostDetailPost.map { [$0] } ?? []
+        } else if tableView === nativeSearchTableView {
+            posts = indexPaths.compactMap { indexPath in
+                let postIndex = indexPath.row - nativeSearchUsers.count
+                return postIndex >= 0 && postIndex < nativeSearchPosts.count ? nativeSearchPosts[postIndex] : nil
+            }
         } else {
             return
         }
@@ -3643,6 +4064,9 @@ private struct NativeFeedResponse: Decodable {
 fileprivate struct NativeFeedStory: Decodable {
     let id: Int
     let author: NativeUserSummary
+    let body: String
+    let media_url: String
+    let media_type: String
     let url: String
     let expires_at: String
 }
@@ -3751,6 +4175,19 @@ private struct NativeProfileResponse: Decodable {
 private struct NativeProfileFollowResponse: Decodable {
     let ok: Bool
     let user: NativeProfileUser
+}
+
+private struct NativeSearchResponse: Decodable {
+    let ok: Bool
+    let query: String
+    let users: [NativeProfileUser]
+    let posts: [NativeFeedPost]
+}
+
+private struct NativeConnectionsResponse: Decodable {
+    let ok: Bool
+    let tab: String
+    let users: [NativeProfileUser]
 }
 
 private struct NativeComment: Decodable {
@@ -4002,16 +4439,25 @@ private final class NativeAvatarView: UIView {
 
 private final class NativeProfileHeaderView: UIView {
     private let cardView = UIView()
+    private let bannerView = UIView()
+    private let bannerGradient = CAGradientLayer()
+    private let bannerImageView = UIImageView()
     private let avatarView = NativeAvatarView()
     private let nameLabel = UILabel()
     private let verifiedBadgeView = UIImageView()
     private let usernameLabel = UILabel()
     private let bioLabel = UILabel()
-    private let statsLabel = UILabel()
+    private let statsStack = UIStackView()
+    private let postsButton = UIButton(type: .system)
+    private let followersButton = UIButton(type: .system)
+    private let followingButton = UIButton(type: .system)
     private let metaLabel = UILabel()
     private let followButton = UIButton(type: .system)
+    private var currentBannerKey = ""
     var onFollowTap: (() -> Void)?
-    var preferredHeight: CGFloat { 260 }
+    var onFollowersTap: (() -> Void)?
+    var onFollowingTap: (() -> Void)?
+    var preferredHeight: CGFloat { 328 }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -4023,9 +4469,33 @@ private final class NativeProfileHeaderView: UIView {
         cardView.layer.cornerCurve = .continuous
         cardView.layer.borderWidth = 1
         cardView.layer.borderColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.08).cgColor
+        cardView.clipsToBounds = true
         addSubview(cardView)
 
+        bannerView.translatesAutoresizingMaskIntoConstraints = false
+        bannerView.backgroundColor = UIColor(red: 22.0 / 255.0, green: 83.0 / 255.0, blue: 161.0 / 255.0, alpha: 1)
+        cardView.addSubview(bannerView)
+
+        bannerGradient.colors = [
+            UIColor(red: 12.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1).cgColor,
+            UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 0.82).cgColor,
+            UIColor(red: 255.0 / 255.0, green: 184.0 / 255.0, blue: 77.0 / 255.0, alpha: 0.88).cgColor
+        ]
+        bannerGradient.startPoint = CGPoint(x: 0, y: 0)
+        bannerGradient.endPoint = CGPoint(x: 1, y: 1)
+        bannerView.layer.addSublayer(bannerGradient)
+
+        bannerImageView.translatesAutoresizingMaskIntoConstraints = false
+        bannerImageView.contentMode = .scaleAspectFill
+        bannerImageView.clipsToBounds = true
+        bannerImageView.alpha = 0
+        bannerView.addSubview(bannerImageView)
+
         avatarView.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.layer.shadowColor = UIColor.black.cgColor
+        avatarView.layer.shadowOpacity = 0.14
+        avatarView.layer.shadowRadius = 10
+        avatarView.layer.shadowOffset = CGSize(width: 0, height: 5)
         cardView.addSubview(avatarView)
 
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -4057,11 +4527,22 @@ private final class NativeProfileHeaderView: UIView {
         metaLabel.numberOfLines = 2
         cardView.addSubview(metaLabel)
 
-        statsLabel.translatesAutoresizingMaskIntoConstraints = false
-        statsLabel.font = .systemFont(ofSize: 15, weight: .bold)
-        statsLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.92)
-        statsLabel.numberOfLines = 2
-        cardView.addSubview(statsLabel)
+        statsStack.translatesAutoresizingMaskIntoConstraints = false
+        statsStack.axis = .horizontal
+        statsStack.distribution = .fillEqually
+        statsStack.spacing = 8
+        [postsButton, followersButton, followingButton].forEach { button in
+            button.titleLabel?.numberOfLines = 2
+            button.titleLabel?.textAlignment = .center
+            button.backgroundColor = UIColor(red: 242.0 / 255.0, green: 247.0 / 255.0, blue: 255.0 / 255.0, alpha: 0.88)
+            button.layer.cornerRadius = 16
+            button.layer.cornerCurve = .continuous
+            button.setTitleColor(UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.92), for: .normal)
+            statsStack.addArrangedSubview(button)
+        }
+        followersButton.addTarget(self, action: #selector(handleFollowersTap), for: .touchUpInside)
+        followingButton.addTarget(self, action: #selector(handleFollowingTap), for: .touchUpInside)
+        cardView.addSubview(statsStack)
 
         followButton.translatesAutoresizingMaskIntoConstraints = false
         followButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .bold)
@@ -4075,8 +4556,16 @@ private final class NativeProfileHeaderView: UIView {
             cardView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             cardView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             cardView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            bannerView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
+            bannerView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor),
+            bannerView.topAnchor.constraint(equalTo: cardView.topAnchor),
+            bannerView.heightAnchor.constraint(equalToConstant: 116),
+            bannerImageView.leadingAnchor.constraint(equalTo: bannerView.leadingAnchor),
+            bannerImageView.trailingAnchor.constraint(equalTo: bannerView.trailingAnchor),
+            bannerImageView.topAnchor.constraint(equalTo: bannerView.topAnchor),
+            bannerImageView.bottomAnchor.constraint(equalTo: bannerView.bottomAnchor),
             avatarView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
-            avatarView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 20),
+            avatarView.topAnchor.constraint(equalTo: bannerView.bottomAnchor, constant: -34),
             avatarView.widthAnchor.constraint(equalToConstant: 74),
             avatarView.heightAnchor.constraint(equalToConstant: 74),
             followButton.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -18),
@@ -4099,10 +4588,16 @@ private final class NativeProfileHeaderView: UIView {
             metaLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
             metaLabel.trailingAnchor.constraint(equalTo: usernameLabel.trailingAnchor),
             metaLabel.topAnchor.constraint(equalTo: bioLabel.bottomAnchor, constant: 10),
-            statsLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            statsLabel.trailingAnchor.constraint(equalTo: usernameLabel.trailingAnchor),
-            statsLabel.topAnchor.constraint(equalTo: metaLabel.bottomAnchor, constant: 10)
+            statsStack.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            statsStack.trailingAnchor.constraint(equalTo: usernameLabel.trailingAnchor),
+            statsStack.topAnchor.constraint(equalTo: metaLabel.bottomAnchor, constant: 12),
+            statsStack.heightAnchor.constraint(equalToConstant: 58)
         ])
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        bannerGradient.frame = bannerView.bounds
     }
 
     required init?(coder: NSCoder) {
@@ -4118,13 +4613,56 @@ private final class NativeProfileHeaderView: UIView {
         let metaParts = [user.location, user.website].filter { !$0.isEmpty }
         metaLabel.text = metaParts.joined(separator: "  ")
         metaLabel.isHidden = metaParts.isEmpty
-        statsLabel.text = "\(user.post_count) posts   \(user.follower_count) followers   \(user.following_count) following"
+        configureStatButton(postsButton, value: user.post_count, label: "Posts")
+        configureStatButton(followersButton, value: user.follower_count, label: "Followers")
+        configureStatButton(followingButton, value: user.following_count, label: "Following")
+        configureBanner(urlString: user.banner_url, imageCache: imageCache)
         followButton.isHidden = !user.can_follow
         followButton.setTitle(user.is_following ? "Following" : "Follow", for: .normal)
         followButton.setTitleColor(user.is_following ? UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1) : .white, for: .normal)
         followButton.backgroundColor = user.is_following
             ? UIColor(red: 241.0 / 255.0, green: 245.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
             : UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+    }
+
+    private func configureStatButton(_ button: UIButton, value: Int, label: String) {
+        let text = NSMutableAttributedString(
+            string: "\(value)\n",
+            attributes: [.font: UIFont.systemFont(ofSize: 16, weight: .bold)]
+        )
+        text.append(NSAttributedString(
+            string: label,
+            attributes: [
+                .font: UIFont.systemFont(ofSize: 11, weight: .semibold),
+                .foregroundColor: UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.84)
+            ]
+        ))
+        button.setAttributedTitle(text, for: .normal)
+    }
+
+    private func configureBanner(urlString: String, imageCache: NSCache<NSString, UIImage>) {
+        currentBannerKey = urlString
+        bannerImageView.alpha = 0
+        bannerImageView.image = nil
+        guard !urlString.isEmpty else { return }
+        let key = NSString(string: urlString)
+        if let cached = imageCache.object(forKey: key) {
+            bannerImageView.image = cached
+            bannerImageView.alpha = 1
+            return
+        }
+        guard let url = URL(string: urlString) else { return }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data, let image = UIImage(data: data) else { return }
+            imageCache.setObject(image, forKey: key)
+            DispatchQueue.main.async {
+                guard self.currentBannerKey == urlString else { return }
+                self.bannerImageView.image = image
+                UIView.animate(withDuration: 0.18) {
+                    self.bannerImageView.alpha = 1
+                }
+            }
+        }.resume()
     }
 
     func setFollowLoading(_ loading: Bool) {
@@ -4137,6 +4675,150 @@ private final class NativeProfileHeaderView: UIView {
 
     @objc private func handleFollowTap() {
         onFollowTap?()
+    }
+
+    @objc private func handleFollowersTap() {
+        onFollowersTap?()
+    }
+
+    @objc private func handleFollowingTap() {
+        onFollowingTap?()
+    }
+}
+
+private final class NativeStoryViewerView: UIView {
+    private let dimView = UIView()
+    private let imageView = UIImageView()
+    private let closeButton = UIButton(type: .system)
+    private let avatarView = NativeAvatarView()
+    private let nameLabel = UILabel()
+    private let bodyLabel = UILabel()
+    private let videoButton = UIButton(type: .system)
+    private var currentMediaKey = ""
+    private var videoURL: URL?
+    var onClose: (() -> Void)?
+    var onOpenVideo: ((URL) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .black
+
+        dimView.translatesAutoresizingMaskIntoConstraints = false
+        dimView.backgroundColor = UIColor.black.withAlphaComponent(0.35)
+        addSubview(dimView)
+
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFit
+        imageView.clipsToBounds = true
+        addSubview(imageView)
+
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(avatarView)
+
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = .systemFont(ofSize: 16, weight: .bold)
+        nameLabel.textColor = .white
+        addSubview(nameLabel)
+
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        closeButton.tintColor = .white
+        closeButton.backgroundColor = UIColor.black.withAlphaComponent(0.34)
+        closeButton.layer.cornerRadius = 18
+        closeButton.layer.cornerCurve = .continuous
+        closeButton.addTarget(self, action: #selector(handleClose), for: .touchUpInside)
+        addSubview(closeButton)
+
+        bodyLabel.translatesAutoresizingMaskIntoConstraints = false
+        bodyLabel.font = .systemFont(ofSize: 18, weight: .semibold)
+        bodyLabel.textColor = .white
+        bodyLabel.numberOfLines = 0
+        bodyLabel.textAlignment = .center
+        addSubview(bodyLabel)
+
+        videoButton.translatesAutoresizingMaskIntoConstraints = false
+        videoButton.setImage(UIImage(systemName: "play.circle.fill"), for: .normal)
+        videoButton.tintColor = .white
+        videoButton.backgroundColor = UIColor.black.withAlphaComponent(0.28)
+        videoButton.layer.cornerRadius = 36
+        videoButton.layer.cornerCurve = .continuous
+        videoButton.addTarget(self, action: #selector(handleVideo), for: .touchUpInside)
+        videoButton.isHidden = true
+        addSubview(videoButton)
+
+        NSLayoutConstraint.activate([
+            dimView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            dimView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            dimView.topAnchor.constraint(equalTo: topAnchor),
+            dimView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            avatarView.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 18),
+            avatarView.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 16),
+            avatarView.widthAnchor.constraint(equalToConstant: 38),
+            avatarView.heightAnchor.constraint(equalToConstant: 38),
+            nameLabel.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 10),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -12),
+            nameLabel.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
+            closeButton.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -18),
+            closeButton.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
+            closeButton.widthAnchor.constraint(equalToConstant: 36),
+            closeButton.heightAnchor.constraint(equalToConstant: 36),
+            bodyLabel.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 28),
+            bodyLabel.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -28),
+            bodyLabel.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -46),
+            videoButton.centerXAnchor.constraint(equalTo: centerXAnchor),
+            videoButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            videoButton.widthAnchor.constraint(equalToConstant: 72),
+            videoButton.heightAnchor.constraint(equalToConstant: 72)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(story: NativeFeedStory, avatarCache: NSCache<NSString, UIImage>, mediaCache: NSCache<NSString, UIImage>) {
+        avatarView.configure(with: story.author, imageCache: avatarCache)
+        nameLabel.text = story.author.display_name
+        bodyLabel.text = story.body
+        bodyLabel.isHidden = story.body.isEmpty
+        videoURL = URL(string: story.media_url)
+        videoButton.isHidden = story.media_type != "video" || videoURL == nil
+        imageView.image = nil
+        currentMediaKey = story.media_url
+        guard !story.media_url.isEmpty, story.media_type != "video" else { return }
+        let key = NSString(string: story.media_url)
+        if let cached = mediaCache.object(forKey: key) {
+            imageView.image = cached
+            return
+        }
+        guard let url = URL(string: story.media_url) else { return }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data, let image = UIImage(data: data) else { return }
+            mediaCache.setObject(image, forKey: key)
+            DispatchQueue.main.async {
+                guard self.currentMediaKey == story.media_url else { return }
+                self.imageView.image = image
+            }
+        }.resume()
+    }
+
+    func prepareForReuse() {
+        currentMediaKey = ""
+        imageView.image = nil
+        videoURL = nil
+    }
+
+    @objc private func handleClose() {
+        onClose?()
+    }
+
+    @objc private func handleVideo() {
+        guard let videoURL else { return }
+        onOpenVideo?(videoURL)
     }
 }
 
@@ -4853,6 +5535,7 @@ private final class NativeFeedPostCell: UITableViewCell {
 private final class NativeCommentCell: UITableViewCell {
     static let reuseIdentifier = "NativeCommentCell"
 
+    private let threadLine = UIView()
     private let avatarView = NativeAvatarView()
     private let bubbleView = UIView()
     private let nameLabel = UILabel()
@@ -4866,6 +5549,11 @@ private final class NativeCommentCell: UITableViewCell {
         backgroundColor = .clear
         selectionStyle = .none
         contentView.backgroundColor = .clear
+
+        threadLine.translatesAutoresizingMaskIntoConstraints = false
+        threadLine.backgroundColor = UIColor(red: 190.0 / 255.0, green: 202.0 / 255.0, blue: 224.0 / 255.0, alpha: 0.8)
+        threadLine.layer.cornerRadius = 1
+        contentView.addSubview(threadLine)
 
         avatarView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(avatarView)
@@ -4901,6 +5589,10 @@ private final class NativeCommentCell: UITableViewCell {
             avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
             avatarView.widthAnchor.constraint(equalToConstant: 36),
             avatarView.heightAnchor.constraint(equalToConstant: 36),
+            threadLine.centerXAnchor.constraint(equalTo: avatarView.centerXAnchor),
+            threadLine.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 5),
+            threadLine.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2),
+            threadLine.widthAnchor.constraint(equalToConstant: 2),
 
             bubbleView.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 10),
             bubbleView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
@@ -4937,6 +5629,93 @@ private final class NativeCommentCell: UITableViewCell {
         let likeText = comment.like_count == 1 ? "1 like" : "\(comment.like_count) likes"
         likesLabel.text = "\(likeText)    Reply"
         leadingConstraint.constant = 18 + CGFloat(min(comment.depth, 2) * 18)
+        threadLine.isHidden = comment.depth > 1
+    }
+}
+
+private final class NativeConnectionCell: UITableViewCell {
+    static let reuseIdentifier = "NativeConnectionCell"
+
+    private let cardView = UIView()
+    private let avatarView = NativeAvatarView()
+    private let nameLabel = UILabel()
+    private let usernameLabel = UILabel()
+    private let bioLabel = UILabel()
+    private let chevronView = UIImageView()
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = .clear
+        selectionStyle = .none
+        contentView.backgroundColor = .clear
+
+        cardView.translatesAutoresizingMaskIntoConstraints = false
+        cardView.backgroundColor = UIColor.white.withAlphaComponent(0.86)
+        cardView.layer.cornerRadius = 20
+        cardView.layer.cornerCurve = .continuous
+        cardView.layer.borderWidth = 1
+        cardView.layer.borderColor = UIColor(red: 218.0 / 255.0, green: 226.0 / 255.0, blue: 240.0 / 255.0, alpha: 0.74).cgColor
+        contentView.addSubview(cardView)
+
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        cardView.addSubview(avatarView)
+
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = .systemFont(ofSize: 16, weight: .bold)
+        nameLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        cardView.addSubview(nameLabel)
+
+        usernameLabel.translatesAutoresizingMaskIntoConstraints = false
+        usernameLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        usernameLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.82)
+        cardView.addSubview(usernameLabel)
+
+        bioLabel.translatesAutoresizingMaskIntoConstraints = false
+        bioLabel.font = .systemFont(ofSize: 13)
+        bioLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.82)
+        bioLabel.numberOfLines = 2
+        cardView.addSubview(bioLabel)
+
+        chevronView.translatesAutoresizingMaskIntoConstraints = false
+        chevronView.image = UIImage(systemName: "chevron.right")
+        chevronView.tintColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.45)
+        cardView.addSubview(chevronView)
+
+        NSLayoutConstraint.activate([
+            cardView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            cardView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            cardView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 5),
+            cardView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -5),
+            avatarView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 14),
+            avatarView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 14),
+            avatarView.widthAnchor.constraint(equalToConstant: 48),
+            avatarView.heightAnchor.constraint(equalToConstant: 48),
+            chevronView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -14),
+            chevronView.centerYAnchor.constraint(equalTo: cardView.centerYAnchor),
+            chevronView.widthAnchor.constraint(equalToConstant: 14),
+            chevronView.heightAnchor.constraint(equalToConstant: 18),
+            nameLabel.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 12),
+            nameLabel.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -10),
+            nameLabel.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 13),
+            usernameLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            usernameLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
+            usernameLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
+            bioLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            bioLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
+            bioLabel.topAnchor.constraint(equalTo: usernameLabel.bottomAnchor, constant: 5),
+            bioLabel.bottomAnchor.constraint(lessThanOrEqualTo: cardView.bottomAnchor, constant: -12)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(user: NativeProfileUser, imageCache: NSCache<NSString, UIImage>) {
+        avatarView.configure(with: user.summary, imageCache: imageCache)
+        nameLabel.text = user.display_name
+        usernameLabel.text = "@\(user.username)"
+        bioLabel.text = user.bio.isEmpty ? "\(user.follower_count) followers" : user.bio
     }
 }
 

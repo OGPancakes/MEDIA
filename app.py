@@ -1057,6 +1057,52 @@ def create_app():
             users = get_suggested_users(current_user())
         return render_template("search.html", query=query, users=users, posts=posts, title="Search")
 
+    @app.route("/api/search")
+    @login_required
+    def api_search():
+        viewer = current_user()
+        query = request.args.get("q", "").strip()
+        users = []
+        posts = []
+        if query:
+            lowered = query.lower()
+            users = (
+                User.query.filter(
+                    or_(
+                        db.func.lower(User.username).contains(lowered),
+                        db.func.lower(User.display_name).contains(lowered),
+                    )
+                )
+                .order_by(User.display_name.asc())
+                .limit(15)
+                .all()
+            )
+            posts = (
+                Post.query.filter(Post.reply_to_id.is_(None), Post.body.contains(query))
+                .order_by(Post.created_at.desc())
+                .limit(20)
+                .all()
+            )
+        else:
+            users = get_suggested_users(viewer)[:15]
+            posts = (
+                Post.query.filter(Post.reply_to_id.is_(None))
+                .order_by(Post.created_at.desc())
+                .limit(15)
+                .all()
+            )
+        posts = [post for post in posts if viewer_can_see_post(viewer, post)]
+        reset_post_display_state(posts)
+        register_visible_posts(posts, viewer)
+        return jsonify(
+            {
+                "ok": True,
+                "query": query,
+                "users": [serialize_profile_user(user, viewer) for user in users if can_view_profile(viewer, user)],
+                "posts": [serialized for serialized in (serialize_feed_post(post, viewer) for post in posts) if serialized],
+            }
+        )
+
     @app.route("/api/users/mentions")
     @login_required
     def mention_suggestions():
@@ -1358,6 +1404,40 @@ def create_app():
             create_notification(target.id, user.id, "follow", f"{user.username} followed you", url_for("profile", username=user.username))
         db.session.commit()
         return jsonify({"ok": True, "user": serialize_profile_user(target, user)})
+
+    @app.route("/api/users/<username>/connections")
+    @login_required
+    def api_profile_connections(username):
+        profile_user = User.query.filter_by(username=username.lower()).first_or_404()
+        viewer = current_user()
+        if not can_view_profile(viewer, profile_user):
+            return jsonify({"ok": False, "error": "That profile is private."}), 403
+        tab = request.args.get("tab", "followers").strip().lower()
+        if tab not in {"followers", "following"}:
+            tab = "followers"
+        if tab == "followers":
+            rows = (
+                Follow.query.filter_by(followed_id=profile_user.id)
+                .order_by(Follow.created_at.desc())
+                .limit(80)
+                .all()
+            )
+            users = [User.query.get(row.follower_id) for row in rows]
+        else:
+            rows = (
+                Follow.query.filter_by(follower_id=profile_user.id)
+                .order_by(Follow.created_at.desc())
+                .limit(80)
+                .all()
+            )
+            users = [User.query.get(row.followed_id) for row in rows]
+        return jsonify(
+            {
+                "ok": True,
+                "tab": tab,
+                "users": [serialize_profile_user(user, viewer) for user in users if user and can_view_profile(viewer, user)],
+            }
+        )
 
     @app.route("/api/post/<int:post_id>/comments", methods=["GET", "POST"])
     @login_required
@@ -2081,9 +2161,13 @@ def serialize_profile_user(user, viewer):
 def serialize_feed_story(story):
     if not story or not story.author:
         return None
+    media_path = story.media_path or ""
     return {
         "id": story.id,
         "author": serialize_user_brief(story.author),
+        "body": story.body or "",
+        "media_url": media_url(media_path, external=True) if media_path else "",
+        "media_type": "video" if media_path.lower().endswith((".mp4", ".mov", ".m4v", ".webm")) else ("image" if media_path else "text"),
         "url": url_for("story_view", story_id=story.id),
         "expires_at": story.expires_at.isoformat() if story.expires_at else "",
     }
