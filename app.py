@@ -1449,15 +1449,25 @@ def create_app():
         if request.method == "POST":
             payload = request.get_json(silent=True) or {}
             body = (payload.get("body") or request.form.get("body") or "").strip()
+            reply_to_comment_id = payload.get("reply_to_id") or request.form.get("reply_to_id")
             if not body:
                 return jsonify({"ok": False, "error": "Comment cannot be empty."}), 400
             if find_prohibited_term(body):
                 return jsonify({"ok": False, "error": "That comment contains language that is not allowed."}), 400
+            reply_parent_id = post.id
+            if reply_to_comment_id:
+                try:
+                    candidate_id = int(reply_to_comment_id)
+                except (TypeError, ValueError):
+                    candidate_id = 0
+                candidate = Post.query.get(candidate_id) if candidate_id else None
+                if candidate and (candidate.id == post.id or candidate.reply_to_id == post.id):
+                    reply_parent_id = candidate.id
             comment = Post(
                 user_id=viewer.id,
                 body=body,
                 feed_tab=post.feed_tab or "home",
-                reply_to_id=post.id,
+                reply_to_id=reply_parent_id,
                 hashtags=",".join(sorted(set(HASHTAG_RE.findall(body.lower())))),
                 mentions=",".join(sorted(set(MENTION_RE.findall(body.lower())))),
                 view_count=0,
@@ -1561,12 +1571,18 @@ def create_app():
         body = request.form.get("body", "").strip()
         media = request.files.get("media")
         if find_prohibited_term(body):
+            if wants_partial_response():
+                return jsonify({"ok": False, "error": "That story contains language that is not allowed."}), 400
             flash("That story contains language that is not allowed in this community.", "error")
             return redirect(url_for("index"))
         media_path, _ = save_upload(media, user=current_user(), max_video_seconds=15)
         if media and media.filename and not media_path:
+            if wants_partial_response():
+                return jsonify({"ok": False, "error": "That story media upload was rejected."}), 400
             return redirect(url_for("index"))
         if not body and not media_path:
+            if wants_partial_response():
+                return jsonify({"ok": False, "error": "Your story needs text or media."}), 400
             flash("Your story needs text or media.", "error")
             return redirect(url_for("index"))
         story = Story(
@@ -1577,6 +1593,8 @@ def create_app():
         )
         db.session.add(story)
         db.session.commit()
+        if wants_partial_response():
+            return jsonify({"ok": True, "story": serialize_feed_story(story)})
         flash("Story posted for 24 hours.", "success")
         return redirect(url_for("index"))
 

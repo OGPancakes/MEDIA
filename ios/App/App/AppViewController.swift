@@ -5,8 +5,9 @@ import ObjectiveC.runtime
 import PhotosUI
 import UserNotifications
 import AVKit
+import UniformTypeIdentifiers
 
-final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, UITextViewDelegate, PHPickerViewControllerDelegate, UITableViewDataSource, UITableViewDelegate, UITableViewDataSourcePrefetching {
+final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, UITextViewDelegate, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UITableViewDataSource, UITableViewDelegate, UITableViewDataSourcePrefetching {
     private enum PrimarySection: String {
         case feed
         case messages
@@ -110,6 +111,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeCommentsSubtitleLabel = UILabel()
     private let nativeCommentsCloseButton = UIButton(type: .system)
     private let nativeCommentsFullPostButton = UIButton(type: .system)
+    private let nativeCommentsReplyingLabel = UILabel()
+    private let nativeCommentsCancelReplyButton = UIButton(type: .system)
     private let nativeCommentsTableView = UITableView(frame: .zero, style: .plain)
     private let nativeCommentsComposerBar = UIView()
     private let nativeCommentsComposerAvatar = NativeAvatarView()
@@ -177,12 +180,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var nativeConnectionsUsers: [NativeProfileUser] = []
     private var nativeCommentsPost: NativeFeedPost?
     private var nativeComments: [NativeComment] = []
+    private var nativeCommentsReplyTarget: NativeComment?
     private var nativeFeedLatestPostID = 0
     private var nativeCurrentUser: NativeUserSummary?
     private var currentMentionSuggestions: [NativeMentionUser] = []
     private var activeMentionQuery = ""
     private var isApplyingComposerTextAttributes = false
     private var nativeMessageTarget: NativeUserSummary?
+    private var nativeRouteOverrideUntil: Date?
     private var pendingNativeJSONRequests: [String: (Result<Data, Error>) -> Void] = [:]
     private let nativeAvatarImageCache = NSCache<NSString, UIImage>()
     private let nativeFeedImageCache = NSCache<NSString, UIImage>()
@@ -1429,6 +1434,20 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeCommentsFullPostButton.addTarget(self, action: #selector(openNativeCommentsFullPost), for: .touchUpInside)
         content.addSubview(nativeCommentsFullPostButton)
 
+        nativeCommentsReplyingLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsReplyingLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        nativeCommentsReplyingLabel.textColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.86)
+        nativeCommentsReplyingLabel.isHidden = true
+        content.addSubview(nativeCommentsReplyingLabel)
+
+        nativeCommentsCancelReplyButton.translatesAutoresizingMaskIntoConstraints = false
+        nativeCommentsCancelReplyButton.setTitle("Cancel", for: .normal)
+        nativeCommentsCancelReplyButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
+        nativeCommentsCancelReplyButton.setTitleColor(UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 0.9), for: .normal)
+        nativeCommentsCancelReplyButton.isHidden = true
+        nativeCommentsCancelReplyButton.addTarget(self, action: #selector(cancelNativeCommentReply), for: .touchUpInside)
+        content.addSubview(nativeCommentsCancelReplyButton)
+
         nativeCommentsTableView.translatesAutoresizingMaskIntoConstraints = false
         nativeCommentsTableView.backgroundColor = .clear
         nativeCommentsTableView.separatorStyle = .none
@@ -1459,6 +1478,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeCommentsTextView.delegate = self
         nativeCommentsTextView.textContainerInset = UIEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
         nativeCommentsTextView.textContainer.lineFragmentPadding = 0
+        nativeCommentsTextView.inputAccessoryView = makeNativeCommentsKeyboardAccessory()
         nativeCommentsComposerBar.addSubview(nativeCommentsTextView)
 
         nativeCommentsPlaceholder.translatesAutoresizingMaskIntoConstraints = false
@@ -1486,7 +1506,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
             nativeCommentsSheet.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
             nativeCommentsSheet.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
-            nativeCommentsSheet.heightAnchor.constraint(equalTo: view.heightAnchor, multiplier: 0.82),
+            nativeCommentsSheet.heightAnchor.constraint(equalTo: view.heightAnchor, multiplier: 0.62),
             nativeCommentsSheetBottomConstraint!,
 
             nativeCommentsHandle.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
@@ -1505,10 +1525,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
             nativeCommentsSubtitleLabel.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             nativeCommentsSubtitleLabel.topAnchor.constraint(equalTo: nativeCommentsTitleLabel.bottomAnchor, constant: 2),
+            nativeCommentsReplyingLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 22),
+            nativeCommentsReplyingLabel.topAnchor.constraint(equalTo: nativeCommentsSubtitleLabel.bottomAnchor, constant: 8),
+            nativeCommentsCancelReplyButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -22),
+            nativeCommentsCancelReplyButton.centerYAnchor.constraint(equalTo: nativeCommentsReplyingLabel.centerYAnchor),
 
             nativeCommentsTableView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             nativeCommentsTableView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            nativeCommentsTableView.topAnchor.constraint(equalTo: nativeCommentsSubtitleLabel.bottomAnchor, constant: 10),
+            nativeCommentsTableView.topAnchor.constraint(equalTo: nativeCommentsReplyingLabel.bottomAnchor, constant: 8),
             nativeCommentsTableView.bottomAnchor.constraint(equalTo: nativeCommentsComposerBar.topAnchor, constant: -10),
 
             nativeCommentsComposerBar.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
@@ -1535,6 +1559,16 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeCommentsSendButton.heightAnchor.constraint(equalToConstant: 34)
         ])
         updateNativeCommentsComposeState()
+    }
+
+    private func makeNativeCommentsKeyboardAccessory() -> UIToolbar {
+        let toolbar = UIToolbar()
+        toolbar.sizeToFit()
+        let done = UIBarButtonItem(title: "Done", style: .plain, target: self, action: #selector(dismissNativeCommentsKeyboard))
+        let close = UIBarButtonItem(title: "Close Comments", style: .done, target: self, action: #selector(dismissNativeComments))
+        let spacer = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
+        toolbar.items = [done, spacer, close]
+        return toolbar
     }
 
     private func tabTag(for section: PrimarySection) -> Int {
@@ -2087,11 +2121,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 let payloadRoute = payload["currentRoute"] as? String ?? ""
                 let payloadSection = PrimarySection(rawValue: payload["primarySection"] as? String ?? "feed") ?? .feed
                 let shouldPreserveNativeMessages = self.isShowingNativeMessages && !payloadRoute.starts(with: "/messages")
-                if !shouldPreserveNativeMessages {
+                let shouldPreserveNativeRoute = self.nativeRouteOverrideUntil.map { Date() < $0 } ?? false
+                if !shouldPreserveNativeMessages && !shouldPreserveNativeRoute {
                     self.currentPrimarySection = payloadSection
                 }
                 self.currentUsername = username
-                if !shouldPreserveNativeMessages, !payloadRoute.isEmpty {
+                if !shouldPreserveNativeMessages, !shouldPreserveNativeRoute, !payloadRoute.isEmpty {
                     self.currentRoute = payloadRoute
                     self.lastRouteBySection[self.currentPrimarySection] = payloadRoute
                 } else if self.currentPrimarySection == .messages {
@@ -2895,7 +2930,36 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if !nativeCommentsSheet.isHidden {
             dismissNativeComments()
         }
-        presentPhotoPicker(purpose: .story)
+        presentNativeStorySourceOptions()
+    }
+
+    private func presentNativeStorySourceOptions() {
+        let alert = UIAlertController(title: "Add to Story", message: nil, preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "Camera", style: .default) { [weak self] _ in
+            self?.presentCameraForStory()
+        })
+        alert.addAction(UIAlertAction(title: "Upload a Photo", style: .default) { [weak self] _ in
+            self?.presentPhotoPicker(purpose: .story, mediaFilter: .images)
+        })
+        alert.addAction(UIAlertAction(title: "Upload a Video", style: .default) { [weak self] _ in
+            self?.presentPhotoPicker(purpose: .story, mediaFilter: .videos)
+        })
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        topPresentationController().present(alert, animated: true)
+    }
+
+    private func presentCameraForStory() {
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            presentPhotoPicker(purpose: .story, mediaFilter: .images)
+            return
+        }
+        photoPickerPurpose = .story
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.mediaTypes = ["public.image"]
+        picker.allowsEditing = true
+        picker.delegate = self
+        topPresentationController().present(picker, animated: true)
     }
 
     private func preloadNativeImage(urlString: String, cache: NSCache<NSString, UIImage>) {
@@ -3580,6 +3644,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeCommentsComposerAvatar.configure(with: currentUser, imageCache: nativeAvatarImageCache)
         }
         nativeCommentsTextView.text = ""
+        nativeCommentsReplyTarget = nil
+        updateNativeCommentsReplyState()
         updateNativeCommentsComposeState()
         nativeCommentsTableView.reloadData()
         nativeCommentsDimView.isHidden = false
@@ -3609,8 +3675,21 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             self.nativeCommentsSheet.isHidden = true
             self.nativeCommentsPost = nil
             self.nativeComments = []
+            self.nativeCommentsReplyTarget = nil
+            self.updateNativeCommentsReplyState()
             self.nativeCommentsTableView.reloadData()
         }
+    }
+
+    @objc private func dismissNativeCommentsKeyboard() {
+        nativeCommentsTextView.resignFirstResponder()
+    }
+
+    @objc private func cancelNativeCommentReply() {
+        nativeCommentsReplyTarget = nil
+        updateNativeCommentsReplyState()
+        nativeCommentsTextView.text = ""
+        updateNativeCommentsComposeState()
     }
 
     @objc private func openNativeCommentsFullPost() {
@@ -3650,13 +3729,52 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
     }
 
+    private func beginNativeCommentReply(to comment: NativeComment) {
+        nativeCommentsReplyTarget = comment
+        updateNativeCommentsReplyState()
+        nativeCommentsTextView.becomeFirstResponder()
+    }
+
+    private func toggleNativeCommentLike(_ comment: NativeComment) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        performNativeJSONRequest(path: "/post/\(comment.id)/like", method: "POST") { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let post = self.nativeCommentsPost {
+                    self.loadNativeComments(for: post)
+                }
+                if let detailPost = self.nativePostDetailPost {
+                    self.loadNativePostDetail(postID: detailPost.id)
+                }
+            }
+        }
+    }
+
+    private func updateNativeCommentsReplyState() {
+        if let target = nativeCommentsReplyTarget {
+            nativeCommentsReplyingLabel.text = "Replying to @\(target.author.username)"
+            nativeCommentsReplyingLabel.isHidden = false
+            nativeCommentsCancelReplyButton.isHidden = false
+            nativeCommentsPlaceholder.text = "Reply to @\(target.author.username)..."
+        } else {
+            nativeCommentsReplyingLabel.text = ""
+            nativeCommentsReplyingLabel.isHidden = true
+            nativeCommentsCancelReplyButton.isHidden = true
+            nativeCommentsPlaceholder.text = "Add a comment for everyone to see..."
+        }
+    }
+
     @objc private func sendNativeComment() {
         guard let post = nativeCommentsPost else { return }
         let body = nativeCommentsTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
         nativeCommentsSendButton.isEnabled = false
         nativeCommentsSendButton.alpha = 0.65
-        performNativeJSONRequest(path: "/api/post/\(post.id)/comments", method: "POST", bodyObject: ["body": body]) { [weak self] result in
+        var bodyObject: [String: Any] = ["body": body]
+        if let replyTarget = nativeCommentsReplyTarget {
+            bodyObject["reply_to_id"] = replyTarget.id
+        }
+        performNativeJSONRequest(path: "/api/post/\(post.id)/comments", method: "POST", bodyObject: bodyObject) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.nativeCommentsSendButton.isEnabled = true
@@ -3668,6 +3786,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                         return
                     }
                     self.nativeCommentsTextView.text = ""
+                    self.nativeCommentsReplyTarget = nil
+                    self.updateNativeCommentsReplyState()
                     self.updateNativeCommentsComposeState()
                     self.nativeComments = payload.flatComments
                     if self.nativePostDetailPost?.id == post.id {
@@ -4016,6 +4136,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             }
             let cell = tableView.dequeueReusableCell(withIdentifier: NativeCommentCell.reuseIdentifier, for: indexPath) as! NativeCommentCell
             cell.configure(with: nativePostDetailComments[indexPath.row - 1], imageCache: nativeAvatarImageCache)
+            cell.onLike = { [weak self] comment in self?.toggleNativeCommentLike(comment) }
+            cell.onReply = { [weak self] comment in
+                guard let self, let post = self.nativePostDetailPost else { return }
+                self.presentNativeComments(for: post)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    self.beginNativeCommentReply(to: comment)
+                }
+            }
             return cell
         }
         if tableView === nativeProfileTableView {
@@ -4053,6 +4181,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if tableView === nativeCommentsTableView {
             let cell = tableView.dequeueReusableCell(withIdentifier: NativeCommentCell.reuseIdentifier, for: indexPath) as! NativeCommentCell
             cell.configure(with: nativeComments[indexPath.row], imageCache: nativeAvatarImageCache)
+            cell.onLike = { [weak self] comment in self?.toggleNativeCommentLike(comment) }
+            cell.onReply = { [weak self] comment in self?.beginNativeCommentReply(to: comment) }
             return cell
         }
         let cell = tableView.dequeueReusableCell(withIdentifier: NativeThreadMessageCell.reuseIdentifier, for: indexPath) as! NativeThreadMessageCell
@@ -4075,8 +4205,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if tableView === nativeSearchTableView {
             if indexPath.row < nativeSearchUsers.count {
                 let user = nativeSearchUsers[indexPath.row]
+                nativeRouteOverrideUntil = Date().addingTimeInterval(3)
                 currentPrimarySection = .profile
                 currentRoute = "/users/\(user.username)"
+                lastRouteBySection[.profile] = currentRoute
                 updateNativeTabSelection(animated: true)
                 dismissNativeConnections()
                 updateNativeSectionPresentation()
@@ -4088,8 +4220,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if tableView === nativeConnectionsTableView {
             let user = nativeConnectionsUsers[indexPath.row]
             dismissNativeConnections()
+            nativeRouteOverrideUntil = Date().addingTimeInterval(3)
             currentPrimarySection = .profile
             currentRoute = "/users/\(user.username)"
+            lastRouteBySection[.profile] = currentRoute
             updateNativeTabSelection(animated: true)
             updateNativeSectionPresentation()
             return
@@ -4144,14 +4278,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     @objc private func openPhotoPicker() {
-        presentPhotoPicker(purpose: .post)
+        presentPhotoPicker(purpose: .post, mediaFilter: .any(of: [.images, .videos]))
     }
 
-    private func presentPhotoPicker(purpose: NativePhotoPickerPurpose) {
+    private func presentPhotoPicker(purpose: NativePhotoPickerPurpose, mediaFilter: PHPickerFilter = .any(of: [.images, .videos])) {
         photoPickerPurpose = purpose
         DispatchQueue.main.async {
             var configuration = PHPickerConfiguration(photoLibrary: .shared())
-            configuration.filter = .images
+            configuration.filter = mediaFilter
             configuration.selectionLimit = 1
             let picker = PHPickerViewController(configuration: configuration)
             picker.delegate = self
@@ -4184,6 +4318,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         selectedImageName = nil
         selectedImageMimeType = "image/jpeg"
         composerPreviewImageView.image = nil
+        composerPreviewImageView.contentMode = .scaleAspectFill
         composerPreviewContainer.isHidden = true
         composerPreviewHeightConstraint?.constant = 0
     }
@@ -4192,6 +4327,28 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let purpose = photoPickerPurpose
         picker.dismiss(animated: true)
         guard let provider = results.first?.itemProvider else { return }
+        if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
+            provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { [weak self] url, _ in
+                guard let self, let url, let data = try? Data(contentsOf: url) else { return }
+                let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
+                DispatchQueue.main.async {
+                    if purpose == .story {
+                        self.uploadNativeStory(imageData: data, imageName: "story.\(ext)", mimeType: ext.lowercased() == "mp4" ? "video/mp4" : "video/quicktime")
+                        return
+                    }
+                    self.composerPreviewImageView.image = UIImage(systemName: "play.rectangle.fill")
+                    self.composerPreviewImageView.tintColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+                    self.composerPreviewImageView.contentMode = .center
+                    self.composerPreviewContainer.isHidden = false
+                    self.composerPreviewHeightConstraint?.constant = 140
+                    self.selectedImageData = data
+                    self.selectedImageName = "video.\(ext)"
+                    self.selectedImageMimeType = ext.lowercased() == "mp4" ? "video/mp4" : "video/quicktime"
+                    self.textViewDidChange(self.composerTextView)
+                }
+            }
+            return
+        }
         if provider.canLoadObject(ofClass: UIImage.self) {
             provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
                 guard let self, let image = object as? UIImage else { return }
@@ -4204,16 +4361,48 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                         self.uploadNativeStory(imageData: imageData, imageName: "story.jpg", mimeType: "image/jpeg")
                         return
                     }
-                    self.composerPreviewImageView.image = image
-                    self.composerPreviewContainer.isHidden = false
-                    self.composerPreviewHeightConstraint?.constant = 140
-                    self.selectedImageData = image.jpegData(compressionQuality: 0.88)
-                    self.selectedImageName = "photo.jpg"
-                    self.selectedImageMimeType = "image/jpeg"
-                    self.textViewDidChange(self.composerTextView)
+                    self.presentNativeImageAdjuster(image)
                 }
             }
         }
+    }
+
+    private func presentNativeImageAdjuster(_ image: UIImage) {
+        let editor = NativeImageAdjustViewController(image: image) { [weak self] adjusted in
+            guard let self else { return }
+            self.composerPreviewImageView.image = adjusted
+            self.composerPreviewImageView.contentMode = .scaleAspectFit
+            self.composerPreviewContainer.isHidden = false
+            self.composerPreviewHeightConstraint?.constant = 140
+            self.selectedImageData = adjusted.jpegData(compressionQuality: 0.9)
+            self.selectedImageName = "photo.jpg"
+            self.selectedImageMimeType = "image/jpeg"
+            self.textViewDidChange(self.composerTextView)
+        }
+        editor.modalPresentationStyle = .pageSheet
+        topPresentationController().present(editor, animated: true)
+    }
+
+    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        picker.dismiss(animated: true)
+    }
+
+    func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+        picker.dismiss(animated: true)
+        let image = (info[.editedImage] as? UIImage) ?? (info[.originalImage] as? UIImage)
+        guard let image, let data = image.jpegData(compressionQuality: 0.88) else { return }
+        if photoPickerPurpose == .story {
+            uploadNativeStory(imageData: data, imageName: "story.jpg", mimeType: "image/jpeg")
+            return
+        }
+        composerPreviewImageView.image = image
+        composerPreviewImageView.contentMode = .scaleAspectFit
+        composerPreviewContainer.isHidden = false
+        composerPreviewHeightConstraint?.constant = 140
+        selectedImageData = data
+        selectedImageName = "photo.jpg"
+        selectedImageMimeType = "image/jpeg"
+        textViewDidChange(composerTextView)
     }
 
     private func uploadNativeStory(imageData: Data, imageName: String, mimeType: String) {
@@ -4225,21 +4414,26 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             var request = URLRequest(url: targetURL)
             request.httpMethod = "POST"
             request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
             request.setValue("fetch", forHTTPHeaderField: "X-Requested-With")
             if let cookieHeader, !cookieHeader.isEmpty {
                 request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
             }
             request.httpBody = self.storyMultipartBody(boundary: boundary, imageData: imageData, imageName: imageName, mimeType: mimeType)
 
-            URLSession.shared.dataTask(with: request) { _, response, error in
+            URLSession.shared.dataTask(with: request) { data, response, error in
                 DispatchQueue.main.async {
                     if error != nil {
                         self.showNativeFlash(message: "Story upload failed. Try again.", category: "error")
                         return
                     }
                     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                    guard status == 0 || (200..<400).contains(status) else {
-                        self.showNativeFlash(message: "Story upload failed. Try again.", category: "error")
+                    guard status == 0 || (200..<400).contains(status),
+                          let data,
+                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          (json["ok"] as? Bool) == true else {
+                        let message = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["error"] as? String
+                        self.showNativeFlash(message: message ?? "Story upload failed. Try again.", category: "error")
                         return
                     }
                     self.loadNativeFeed(force: true)
@@ -4600,7 +4794,7 @@ private final class NativeAvatarView: UIView {
         addSubview(backgroundCircle)
 
         imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.contentMode = .scaleAspectFill
+        imageView.contentMode = .scaleAspectFit
         imageView.clipsToBounds = true
         imageView.layer.cornerRadius = 24
         imageView.layer.cornerCurve = .continuous
@@ -5045,6 +5239,122 @@ private final class NativeStoryViewerView: UIView {
     @objc private func handleVideo() {
         guard let videoURL else { return }
         onOpenVideo?(videoURL)
+    }
+}
+
+private final class NativeImageAdjustViewController: UIViewController, UIScrollViewDelegate {
+    private let image: UIImage
+    private let completion: (UIImage) -> Void
+    private let scrollView = UIScrollView()
+    private let imageView = UIImageView()
+    private let cropGuide = UIView()
+
+    init(image: UIImage, completion: @escaping (UIImage) -> Void) {
+        self.image = image
+        self.completion = completion
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor(red: 238.0 / 255.0, green: 244.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = "Adjust Photo"
+        titleLabel.font = .systemFont(ofSize: 22, weight: .bold)
+        titleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        view.addSubview(titleLabel)
+
+        let cancelButton = UIButton(type: .system)
+        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+        cancelButton.setTitle("Cancel", for: .normal)
+        cancelButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+        cancelButton.addTarget(self, action: #selector(cancel), for: .touchUpInside)
+        view.addSubview(cancelButton)
+
+        let useButton = UIButton(type: .system)
+        useButton.translatesAutoresizingMaskIntoConstraints = false
+        useButton.setTitle("Use", for: .normal)
+        useButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .bold)
+        useButton.setTitleColor(.white, for: .normal)
+        useButton.backgroundColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        useButton.layer.cornerRadius = 18
+        useButton.layer.cornerCurve = .continuous
+        useButton.addTarget(self, action: #selector(useImage), for: .touchUpInside)
+        view.addSubview(useButton)
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.delegate = self
+        scrollView.backgroundColor = .black
+        scrollView.layer.cornerRadius = 22
+        scrollView.layer.cornerCurve = .continuous
+        scrollView.clipsToBounds = true
+        scrollView.minimumZoomScale = 0.5
+        scrollView.maximumZoomScale = 4
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+        view.addSubview(scrollView)
+
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.image = image
+        imageView.contentMode = .scaleAspectFit
+        scrollView.addSubview(imageView)
+
+        cropGuide.translatesAutoresizingMaskIntoConstraints = false
+        cropGuide.isUserInteractionEnabled = false
+        cropGuide.layer.borderWidth = 2
+        cropGuide.layer.borderColor = UIColor.white.withAlphaComponent(0.8).cgColor
+        cropGuide.layer.cornerRadius = 18
+        cropGuide.layer.cornerCurve = .continuous
+        view.addSubview(cropGuide)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 22),
+            titleLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 18),
+            cancelButton.trailingAnchor.constraint(equalTo: useButton.leadingAnchor, constant: -12),
+            cancelButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            useButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -22),
+            useButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            useButton.widthAnchor.constraint(equalToConstant: 72),
+            useButton.heightAnchor.constraint(equalToConstant: 36),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            scrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 22),
+            scrollView.heightAnchor.constraint(equalTo: scrollView.widthAnchor, multiplier: 0.72),
+            cropGuide.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            cropGuide.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            cropGuide.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            cropGuide.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            imageView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            imageView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            imageView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
+        ])
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+        imageView
+    }
+
+    @objc private func cancel() {
+        dismiss(animated: true)
+    }
+
+    @objc private func useImage() {
+        let renderer = UIGraphicsImageRenderer(size: scrollView.bounds.size)
+        let rendered = renderer.image { context in
+            scrollView.drawHierarchy(in: scrollView.bounds, afterScreenUpdates: true)
+        }
+        dismiss(animated: true) {
+            self.completion(rendered)
+        }
     }
 }
 
@@ -5772,7 +6082,12 @@ private final class NativeCommentCell: UITableViewCell {
     private let metaLabel = UILabel()
     private let bodyLabel = UILabel()
     private let likesLabel = UILabel()
+    private let likeButton = UIButton(type: .system)
+    private let replyButton = UIButton(type: .system)
     private var leadingConstraint: NSLayoutConstraint!
+    private var currentComment: NativeComment?
+    var onLike: ((NativeComment) -> Void)?
+    var onReply: ((NativeComment) -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -5813,6 +6128,19 @@ private final class NativeCommentCell: UITableViewCell {
         likesLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.72)
         bubbleView.addSubview(likesLabel)
 
+        likeButton.translatesAutoresizingMaskIntoConstraints = false
+        likeButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
+        likeButton.setTitle("Like", for: .normal)
+        likeButton.addTarget(self, action: #selector(handleLikeTap), for: .touchUpInside)
+        bubbleView.addSubview(likeButton)
+
+        replyButton.translatesAutoresizingMaskIntoConstraints = false
+        replyButton.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
+        replyButton.setTitle("Reply", for: .normal)
+        replyButton.setTitleColor(UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.9), for: .normal)
+        replyButton.addTarget(self, action: #selector(handleReplyTap), for: .touchUpInside)
+        bubbleView.addSubview(replyButton)
+
         leadingConstraint = avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18)
         NSLayoutConstraint.activate([
             leadingConstraint,
@@ -5841,9 +6169,14 @@ private final class NativeCommentCell: UITableViewCell {
             bodyLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
 
             likesLabel.leadingAnchor.constraint(equalTo: bodyLabel.leadingAnchor),
-            likesLabel.trailingAnchor.constraint(equalTo: bodyLabel.trailingAnchor),
             likesLabel.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 6),
-            likesLabel.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor)
+            likesLabel.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor),
+
+            likeButton.leadingAnchor.constraint(equalTo: likesLabel.trailingAnchor, constant: 12),
+            likeButton.centerYAnchor.constraint(equalTo: likesLabel.centerYAnchor),
+            replyButton.leadingAnchor.constraint(equalTo: likeButton.trailingAnchor, constant: 10),
+            replyButton.trailingAnchor.constraint(lessThanOrEqualTo: bubbleView.trailingAnchor),
+            replyButton.centerYAnchor.constraint(equalTo: likesLabel.centerYAnchor)
         ])
     }
 
@@ -5852,14 +6185,27 @@ private final class NativeCommentCell: UITableViewCell {
     }
 
     func configure(with comment: NativeComment, imageCache: NSCache<NSString, UIImage>) {
+        currentComment = comment
         avatarView.configure(with: comment.author, imageCache: imageCache)
         nameLabel.text = comment.author.display_name
         metaLabel.text = comment.created_at_relative
         bodyLabel.text = comment.body
         let likeText = comment.like_count == 1 ? "1 like" : "\(comment.like_count) likes"
-        likesLabel.text = "\(likeText)    Reply"
+        likesLabel.text = likeText
+        likeButton.setTitle(comment.has_liked ? "Liked" : "Like", for: .normal)
+        likeButton.setTitleColor(comment.has_liked ? UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 1) : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.9), for: .normal)
         leadingConstraint.constant = 18 + CGFloat(min(comment.depth, 2) * 18)
         threadLine.isHidden = comment.depth > 1
+    }
+
+    @objc private func handleLikeTap() {
+        guard let currentComment else { return }
+        onLike?(currentComment)
+    }
+
+    @objc private func handleReplyTap() {
+        guard let currentComment else { return }
+        onReply?(currentComment)
     }
 }
 
