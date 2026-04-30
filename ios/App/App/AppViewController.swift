@@ -774,9 +774,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeFeedStoriesHeader.onOpenStory = { [weak self] story in
             self?.openNativeStory(story)
         }
-        nativeFeedStoriesHeader.onVotePoll = { [weak self] poll, option in
-            self?.voteNativePoll(poll: poll, option: option)
-        }
         nativeFeedTableView.tableHeaderView = nativeFeedStoriesHeader
         nativeFeedContainer.addSubview(nativeFeedTableView)
 
@@ -1295,7 +1292,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeFeedPolls = []
             nativeFeedLatestPostID = 0
             nativeCurrentUser = nil
-            nativeFeedStoriesHeader.configure(stories: [], polls: [], currentUser: nil, hasCurrentUserStory: false, imageCache: nativeAvatarImageCache)
+            nativeFeedStoriesHeader.configure(stories: [], currentUser: nil, hasCurrentUserStory: false, imageCache: nativeAvatarImageCache)
             lastRouteBySection = [
                 .messages: "/messages",
                 .feed: "/",
@@ -1948,7 +1945,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.nativeCurrentUser = payload.current_user
                     self.nativeFeedStoriesHeader.configure(
                         stories: payload.stories,
-                        polls: payload.polls,
                         currentUser: payload.current_user,
                         hasCurrentUserStory: payload.current_user_story,
                         imageCache: self.nativeAvatarImageCache
@@ -2031,20 +2027,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             })();
             """
             self?.webView?.evaluateJavaScript(script, completionHandler: nil)
-        }
-    }
-
-    private func voteNativePoll(poll: NativeFeedPoll, option: NativeFeedPollOption) {
-        performNativeJSONRequest(path: "/polls/\(poll.id)/vote", method: "POST", bodyObject: ["option_id": option.id]) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                switch result {
-                case .success:
-                    self.loadNativeFeed(force: true)
-                case .failure(let error):
-                    self.showNativeFlash(message: error.localizedDescription, category: "error")
-                }
-            }
         }
     }
 
@@ -2513,25 +2495,48 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             hideNativeFeedIfNeeded()
             navigateWebView(to: post.url, replace: false)
         case .like:
+            updateNativeFeedPost(id: post.id) { item in
+                item.has_liked.toggle()
+                item.like_count = max(0, item.like_count + (item.has_liked ? 1 : -1))
+            }
             performNativeFeedPostAction(path: "/post/\(post.id)/like")
         case .repost:
+            updateNativeFeedPost(id: post.id) { item in
+                item.has_reposted.toggle()
+                item.repost_count = max(0, item.repost_count + (item.has_reposted ? 1 : -1))
+            }
             performNativeFeedPostAction(path: "/post/\(post.id)/repost")
         case .bookmark:
+            updateNativeFeedPost(id: post.id) { item in
+                item.has_bookmarked.toggle()
+                item.bookmark_count = max(0, item.bookmark_count + (item.has_bookmarked ? 1 : -1))
+            }
             performNativeFeedPostAction(path: "/post/\(post.id)/bookmark")
         }
     }
 
     private func performNativeFeedPostAction(path: String) {
-        performNativeJSONRequest(path: path, method: "POST") { [weak self] result in
+        performNativeJSONRequest(path: path, method: "POST", bodyObject: [:]) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
                 case .success:
-                    self.loadNativeFeed(force: true)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        self.loadNativeFeed(force: true)
+                    }
                 case .failure(let error):
                     self.showNativeFlash(message: error.localizedDescription, category: "error")
                 }
             }
+        }
+    }
+
+    private func updateNativeFeedPost(id: Int, mutate: (inout NativeFeedPost) -> Void) {
+        guard let index = nativeFeedPosts.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&nativeFeedPosts[index])
+        let indexPath = IndexPath(row: index, section: 0)
+        if nativeFeedTableView.indexPathsForVisibleRows?.contains(indexPath) == true {
+            nativeFeedTableView.reloadRows(at: [indexPath], with: .none)
         }
     }
 
@@ -2890,14 +2895,14 @@ private struct NativeFeedPost: Decodable {
     let quote: NativeFeedQuote?
     let reposted_by: NativeUserSummary?
     let url: String
-    let view_count: Int
-    let like_count: Int
-    let comment_count: Int
-    let repost_count: Int
-    let bookmark_count: Int
-    let has_liked: Bool
-    let has_reposted: Bool
-    let has_bookmarked: Bool
+    var view_count: Int
+    var like_count: Int
+    var comment_count: Int
+    var repost_count: Int
+    var bookmark_count: Int
+    var has_liked: Bool
+    var has_reposted: Bool
+    var has_bookmarked: Bool
     let is_breaking: Bool
 }
 
@@ -3118,13 +3123,10 @@ private final class NativeStoriesHeaderView: UIView {
     private let discoverLabel = UILabel()
     private let storiesScrollView = UIScrollView()
     private let stackView = UIStackView()
-    private let pollsStack = UIStackView()
     var onAddStory: (() -> Void)?
     var onOpenStory: ((NativeFeedStory) -> Void)?
-    var onVotePoll: ((NativeFeedPoll, NativeFeedPollOption) -> Void)?
-    private var polls: [NativeFeedPoll] = []
     var preferredHeight: CGFloat {
-        120 + CGFloat(min(polls.count, 3)) * 128
+        120
     }
 
     override init(frame: CGRect) {
@@ -3154,11 +3156,6 @@ private final class NativeStoriesHeaderView: UIView {
         stackView.spacing = 12
         storiesScrollView.addSubview(stackView)
 
-        pollsStack.translatesAutoresizingMaskIntoConstraints = false
-        pollsStack.axis = .vertical
-        pollsStack.spacing = 10
-        addSubview(pollsStack)
-
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
@@ -3172,10 +3169,7 @@ private final class NativeStoriesHeaderView: UIView {
             stackView.trailingAnchor.constraint(equalTo: storiesScrollView.contentLayoutGuide.trailingAnchor, constant: -16),
             stackView.topAnchor.constraint(equalTo: storiesScrollView.contentLayoutGuide.topAnchor),
             stackView.bottomAnchor.constraint(equalTo: storiesScrollView.contentLayoutGuide.bottomAnchor),
-            stackView.heightAnchor.constraint(equalTo: storiesScrollView.frameLayoutGuide.heightAnchor),
-            pollsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            pollsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            pollsStack.topAnchor.constraint(equalTo: storiesScrollView.bottomAnchor, constant: 8)
+            stackView.heightAnchor.constraint(equalTo: storiesScrollView.frameLayoutGuide.heightAnchor)
         ])
     }
 
@@ -3183,14 +3177,9 @@ private final class NativeStoriesHeaderView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(stories: [NativeFeedStory], polls: [NativeFeedPoll], currentUser: NativeUserSummary?, hasCurrentUserStory: Bool, imageCache: NSCache<NSString, UIImage>) {
-        self.polls = polls
+    func configure(stories: [NativeFeedStory], currentUser: NativeUserSummary?, hasCurrentUserStory: Bool, imageCache: NSCache<NSString, UIImage>) {
         stackView.arrangedSubviews.forEach { view in
             stackView.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        pollsStack.arrangedSubviews.forEach { view in
-            pollsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
 
@@ -3217,14 +3206,6 @@ private final class NativeStoriesHeaderView: UIView {
             stackView.addArrangedSubview(emptyLabel)
         }
 
-        polls.prefix(3).forEach { poll in
-            let pollView = NativePollCardView()
-            pollView.configure(with: poll)
-            pollView.onVote = { [weak self] option in
-                self?.onVotePoll?(poll, option)
-            }
-            pollsStack.addArrangedSubview(pollView)
-        }
     }
 
     @objc private func handleAddStoryTap() {
@@ -3297,97 +3278,6 @@ private final class NativeStoryChipView: UIControl {
         avatarView.layer.borderColor = UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 0.84).cgColor
         titleLabel.text = title
         addBadge.isHidden = !showsAddBadge
-    }
-}
-
-private final class NativePollCardView: UIView {
-    private let titleLabel = UILabel()
-    private let pillLabel = UILabel()
-    private let optionsStack = UIStackView()
-    private var poll: NativeFeedPoll?
-    var onVote: ((NativeFeedPollOption) -> Void)?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = UIColor.white.withAlphaComponent(0.92)
-        layer.cornerRadius = 18
-        layer.cornerCurve = .continuous
-        layer.borderWidth = 1
-        layer.borderColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.08).cgColor
-
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .systemFont(ofSize: 16, weight: .bold)
-        titleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
-        titleLabel.numberOfLines = 2
-        addSubview(titleLabel)
-
-        pillLabel.translatesAutoresizingMaskIntoConstraints = false
-        pillLabel.text = "Poll"
-        pillLabel.font = .systemFont(ofSize: 12, weight: .bold)
-        pillLabel.textAlignment = .center
-        pillLabel.textColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
-        pillLabel.backgroundColor = UIColor(red: 235.0 / 255.0, green: 241.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
-        pillLabel.layer.cornerRadius = 10
-        pillLabel.layer.cornerCurve = .continuous
-        pillLabel.clipsToBounds = true
-        addSubview(pillLabel)
-
-        optionsStack.translatesAutoresizingMaskIntoConstraints = false
-        optionsStack.axis = .vertical
-        optionsStack.spacing = 6
-        addSubview(optionsStack)
-
-        NSLayoutConstraint.activate([
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 118),
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: pillLabel.leadingAnchor, constant: -8),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            pillLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            pillLabel.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            pillLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 54),
-            pillLabel.heightAnchor.constraint(equalToConstant: 22),
-            optionsStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            optionsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            optionsStack.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 10),
-            optionsStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
-        ])
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func configure(with poll: NativeFeedPoll) {
-        self.poll = poll
-        titleLabel.text = poll.question
-        pillLabel.text = poll.is_hidden_results && !poll.results_visible ? "Hidden" : "Poll"
-        optionsStack.arrangedSubviews.forEach { view in
-            optionsStack.removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        poll.options.prefix(4).forEach { option in
-            let button = UIButton(type: .system)
-            button.contentHorizontalAlignment = .left
-            button.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
-            button.layer.cornerRadius = 12
-            button.layer.cornerCurve = .continuous
-            button.contentEdgeInsets = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
-            let selected = poll.selected_option_id == option.id
-            let suffix = poll.results_visible ? "  \(option.votes)" : ""
-            button.setTitle("\(selected ? "✓ " : "")\(option.label)\(suffix)", for: .normal)
-            button.setTitleColor(selected ? .white : UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1), for: .normal)
-            button.backgroundColor = selected ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1) : UIColor(red: 245.0 / 255.0, green: 248.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
-            button.tag = option.id
-            button.addTarget(self, action: #selector(handleOptionTap(_:)), for: .touchUpInside)
-            optionsStack.addArrangedSubview(button)
-        }
-    }
-
-    @objc private func handleOptionTap(_ sender: UIButton) {
-        guard let option = poll?.options.first(where: { $0.id == sender.tag }) else { return }
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        onVote?(option)
     }
 }
 
@@ -3548,6 +3438,7 @@ private final class NativeFeedPostCell: UITableViewCell {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         backgroundColor = .clear
         selectionStyle = .none
+        contentView.isUserInteractionEnabled = true
         contentView.backgroundColor = .clear
 
         cardView.translatesAutoresizingMaskIntoConstraints = false
@@ -3647,6 +3538,10 @@ private final class NativeFeedPostCell: UITableViewCell {
             button.tag = index
             button.addTarget(self, action: #selector(handleActionTap(_:)), for: .touchUpInside)
             button.imageView?.contentMode = .scaleAspectFit
+            button.contentEdgeInsets = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+            button.backgroundColor = UIColor(red: 245.0 / 255.0, green: 248.0 / 255.0, blue: 255.0 / 255.0, alpha: 0.72)
+            button.layer.cornerRadius = 20
+            button.layer.cornerCurve = .continuous
             button.accessibilityLabel = ["Like", "Repost", "Comment", "Save"][index]
             actionStack.addArrangedSubview(button)
         }
@@ -3725,7 +3620,7 @@ private final class NativeFeedPostCell: UITableViewCell {
             actionStack.leadingAnchor.constraint(equalTo: bodyLabel.leadingAnchor),
             actionStack.trailingAnchor.constraint(equalTo: bodyLabel.trailingAnchor),
             actionStack.topAnchor.constraint(equalTo: statsLabel.bottomAnchor, constant: 12),
-            actionStack.heightAnchor.constraint(equalToConstant: 24),
+            actionStack.heightAnchor.constraint(equalToConstant: 44),
             actionStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -16)
         ])
     }
@@ -3788,6 +3683,13 @@ private final class NativeFeedPostCell: UITableViewCell {
 
     @objc private func handleActionTap(_ sender: UIButton) {
         guard let currentPost, let action = NativeFeedPostAction(rawValue: sender.tag) else { return }
+        UIView.animate(withDuration: 0.08, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
+            sender.transform = CGAffineTransform(scaleX: 0.86, y: 0.86)
+        } completion: { _ in
+            UIView.animate(withDuration: 0.18, delay: 0, usingSpringWithDamping: 0.55, initialSpringVelocity: 0.6, options: [.beginFromCurrentState]) {
+                sender.transform = .identity
+            }
+        }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         onAction?(currentPost, action)
     }
