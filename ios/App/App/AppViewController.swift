@@ -81,7 +81,19 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeAccountAvatarLargeView = NativeAvatarView()
     private let nativeAccountNameLabel = UILabel()
     private let nativeAccountUsernameLabel = UILabel()
+    private let nativeAccountCloseButton = UIButton(type: .system)
     private let nativeAccountStack = UIStackView()
+    private let nativeAuthContainer = UIView()
+    private let nativeAuthLogoView = UIImageView()
+    private let nativeAuthTitleLabel = UILabel()
+    private let nativeAuthSubtitleLabel = UILabel()
+    private let nativeAuthUsernameField = UITextField()
+    private let nativeAuthPasswordField = UITextField()
+    private let nativeAuthLoginButton = UIButton(type: .system)
+    private let nativeAuthLegalLabel = UILabel()
+    private let nativeAuthTermsButton = UIButton(type: .system)
+    private let nativeAuthPrivacyButton = UIButton(type: .system)
+    private let nativeAuthErrorLabel = UILabel()
     private let nativePostDetailContainer = UIView()
     private let nativePostDetailBackButton = UIButton(type: .system)
     private let nativePostDetailTitleLabel = UILabel()
@@ -141,6 +153,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var isShowingNativeSearch = false
     private var isLoadingNativeSearch = false
     private var isLoadingNativeConnections = false
+    private var isNativeAuthVisible = false
+    private var isSubmittingNativeAuth = false
     private var isLoadingMentionSuggestions = false
     private var isShowingNativeMessages = false
     private var isLoadingNativeInbox = false
@@ -208,6 +222,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
 
         configureWebView()
+        configureNativeAuth()
         configureNativeComposer()
         configureNativeTabBar()
         configureNativeFeed()
@@ -267,6 +282,136 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         webView.scrollView.showsVerticalScrollIndicator = false
         webView.scrollView.showsHorizontalScrollIndicator = false
         webView.scrollView.keyboardDismissMode = .interactive
+    }
+
+    private func configureNativeAuth() {
+        nativeAuthContainer.translatesAutoresizingMaskIntoConstraints = false
+        nativeAuthContainer.backgroundColor = shellBackground
+        nativeAuthContainer.layer.zPosition = 95
+        nativeAuthContainer.isHidden = true
+        nativeAuthContainer.alpha = 0
+        view.addSubview(nativeAuthContainer)
+
+        nativeAuthLogoView.translatesAutoresizingMaskIntoConstraints = false
+        nativeAuthLogoView.image = UIImage(systemName: "building.columns.fill")
+        nativeAuthLogoView.tintColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        nativeAuthLogoView.contentMode = .center
+        nativeAuthLogoView.clipsToBounds = true
+        nativeAuthLogoView.layer.cornerRadius = 34
+        nativeAuthLogoView.backgroundColor = UIColor.white.withAlphaComponent(0.8)
+        nativeAuthContainer.addSubview(nativeAuthLogoView)
+
+        nativeAuthTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeAuthTitleLabel.text = "Politics In Action"
+        nativeAuthTitleLabel.font = .systemFont(ofSize: 34, weight: .bold)
+        nativeAuthTitleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nativeAuthTitleLabel.numberOfLines = 2
+        nativeAuthContainer.addSubview(nativeAuthTitleLabel)
+
+        nativeAuthSubtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeAuthSubtitleLabel.text = "Sign in with the account your camp admin gave you."
+        nativeAuthSubtitleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        nativeAuthSubtitleLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.9)
+        nativeAuthSubtitleLabel.numberOfLines = 0
+        nativeAuthContainer.addSubview(nativeAuthSubtitleLabel)
+
+        configureNativeAuthField(nativeAuthUsernameField, placeholder: "Username or email", secure: false)
+        configureNativeAuthField(nativeAuthPasswordField, placeholder: "Password", secure: true)
+        nativeAuthContainer.addSubview(nativeAuthUsernameField)
+        nativeAuthContainer.addSubview(nativeAuthPasswordField)
+
+        nativeAuthLoginButton.translatesAutoresizingMaskIntoConstraints = false
+        nativeAuthLoginButton.setTitle("Sign in", for: .normal)
+        nativeAuthLoginButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .bold)
+        nativeAuthLoginButton.setTitleColor(.white, for: .normal)
+        nativeAuthLoginButton.backgroundColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        nativeAuthLoginButton.layer.cornerRadius = 22
+        nativeAuthLoginButton.layer.cornerCurve = .continuous
+        nativeAuthLoginButton.addTarget(self, action: #selector(submitNativeLogin), for: .touchUpInside)
+        nativeAuthContainer.addSubview(nativeAuthLoginButton)
+
+        nativeAuthErrorLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeAuthErrorLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        nativeAuthErrorLabel.textColor = UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 1)
+        nativeAuthErrorLabel.numberOfLines = 0
+        nativeAuthErrorLabel.isHidden = true
+        nativeAuthContainer.addSubview(nativeAuthErrorLabel)
+
+        nativeAuthLegalLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeAuthLegalLabel.text = "Accounts are created by camp admins. This community has zero tolerance for objectionable content, harassment, threats, bullying, or abusive users. By continuing, you agree to the app rules."
+        nativeAuthLegalLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        nativeAuthLegalLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+        nativeAuthLegalLabel.numberOfLines = 0
+        nativeAuthContainer.addSubview(nativeAuthLegalLabel)
+
+        nativeAuthTermsButton.translatesAutoresizingMaskIntoConstraints = false
+        nativeAuthTermsButton.setTitle("Terms of Use", for: .normal)
+        nativeAuthTermsButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .bold)
+        nativeAuthTermsButton.addTarget(self, action: #selector(openNativeAuthTerms), for: .touchUpInside)
+        nativeAuthContainer.addSubview(nativeAuthTermsButton)
+
+        nativeAuthPrivacyButton.translatesAutoresizingMaskIntoConstraints = false
+        nativeAuthPrivacyButton.setTitle("Privacy Policy", for: .normal)
+        nativeAuthPrivacyButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .bold)
+        nativeAuthPrivacyButton.addTarget(self, action: #selector(openNativeAuthPrivacy), for: .touchUpInside)
+        nativeAuthContainer.addSubview(nativeAuthPrivacyButton)
+
+        NSLayoutConstraint.activate([
+            nativeAuthContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            nativeAuthContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nativeAuthContainer.topAnchor.constraint(equalTo: view.topAnchor),
+            nativeAuthContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            nativeAuthLogoView.leadingAnchor.constraint(equalTo: nativeAuthContainer.leadingAnchor, constant: 26),
+            nativeAuthLogoView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 44),
+            nativeAuthLogoView.widthAnchor.constraint(equalToConstant: 68),
+            nativeAuthLogoView.heightAnchor.constraint(equalToConstant: 68),
+            nativeAuthTitleLabel.leadingAnchor.constraint(equalTo: nativeAuthContainer.leadingAnchor, constant: 26),
+            nativeAuthTitleLabel.trailingAnchor.constraint(equalTo: nativeAuthContainer.trailingAnchor, constant: -26),
+            nativeAuthTitleLabel.topAnchor.constraint(equalTo: nativeAuthLogoView.bottomAnchor, constant: 24),
+            nativeAuthSubtitleLabel.leadingAnchor.constraint(equalTo: nativeAuthTitleLabel.leadingAnchor),
+            nativeAuthSubtitleLabel.trailingAnchor.constraint(equalTo: nativeAuthTitleLabel.trailingAnchor),
+            nativeAuthSubtitleLabel.topAnchor.constraint(equalTo: nativeAuthTitleLabel.bottomAnchor, constant: 10),
+            nativeAuthUsernameField.leadingAnchor.constraint(equalTo: nativeAuthTitleLabel.leadingAnchor),
+            nativeAuthUsernameField.trailingAnchor.constraint(equalTo: nativeAuthTitleLabel.trailingAnchor),
+            nativeAuthUsernameField.topAnchor.constraint(equalTo: nativeAuthSubtitleLabel.bottomAnchor, constant: 28),
+            nativeAuthUsernameField.heightAnchor.constraint(equalToConstant: 52),
+            nativeAuthPasswordField.leadingAnchor.constraint(equalTo: nativeAuthUsernameField.leadingAnchor),
+            nativeAuthPasswordField.trailingAnchor.constraint(equalTo: nativeAuthUsernameField.trailingAnchor),
+            nativeAuthPasswordField.topAnchor.constraint(equalTo: nativeAuthUsernameField.bottomAnchor, constant: 12),
+            nativeAuthPasswordField.heightAnchor.constraint(equalToConstant: 52),
+            nativeAuthLoginButton.leadingAnchor.constraint(equalTo: nativeAuthUsernameField.leadingAnchor),
+            nativeAuthLoginButton.trailingAnchor.constraint(equalTo: nativeAuthUsernameField.trailingAnchor),
+            nativeAuthLoginButton.topAnchor.constraint(equalTo: nativeAuthPasswordField.bottomAnchor, constant: 18),
+            nativeAuthLoginButton.heightAnchor.constraint(equalToConstant: 52),
+            nativeAuthErrorLabel.leadingAnchor.constraint(equalTo: nativeAuthUsernameField.leadingAnchor),
+            nativeAuthErrorLabel.trailingAnchor.constraint(equalTo: nativeAuthUsernameField.trailingAnchor),
+            nativeAuthErrorLabel.topAnchor.constraint(equalTo: nativeAuthLoginButton.bottomAnchor, constant: 12),
+            nativeAuthLegalLabel.leadingAnchor.constraint(equalTo: nativeAuthUsernameField.leadingAnchor),
+            nativeAuthLegalLabel.trailingAnchor.constraint(equalTo: nativeAuthUsernameField.trailingAnchor),
+            nativeAuthLegalLabel.topAnchor.constraint(equalTo: nativeAuthErrorLabel.bottomAnchor, constant: 20),
+            nativeAuthTermsButton.leadingAnchor.constraint(equalTo: nativeAuthLegalLabel.leadingAnchor),
+            nativeAuthTermsButton.topAnchor.constraint(equalTo: nativeAuthLegalLabel.bottomAnchor, constant: 12),
+            nativeAuthPrivacyButton.leadingAnchor.constraint(equalTo: nativeAuthTermsButton.trailingAnchor, constant: 18),
+            nativeAuthPrivacyButton.centerYAnchor.constraint(equalTo: nativeAuthTermsButton.centerYAnchor)
+        ])
+    }
+
+    private func configureNativeAuthField(_ field: UITextField, placeholder: String, secure: Bool) {
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.placeholder = placeholder
+        field.font = .systemFont(ofSize: 16, weight: .semibold)
+        field.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        field.backgroundColor = UIColor.white.withAlphaComponent(0.92)
+        field.layer.cornerRadius = 18
+        field.layer.cornerCurve = .continuous
+        field.layer.borderWidth = 1
+        field.layer.borderColor = UIColor(red: 207.0 / 255.0, green: 218.0 / 255.0, blue: 236.0 / 255.0, alpha: 0.86).cgColor
+        field.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 16, height: 1))
+        field.leftViewMode = .always
+        field.isSecureTextEntry = secure
+        field.autocapitalizationType = .none
+        field.autocorrectionType = .no
+        field.returnKeyType = secure ? .go : .next
     }
 
     private func configureNativeComposer() {
@@ -1250,6 +1395,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeAccountUsernameLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
         content.addSubview(nativeAccountUsernameLabel)
 
+        nativeAccountCloseButton.translatesAutoresizingMaskIntoConstraints = false
+        nativeAccountCloseButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        nativeAccountCloseButton.tintColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.7)
+        nativeAccountCloseButton.addTarget(self, action: #selector(dismissNativeAccountMenu), for: .touchUpInside)
+        content.addSubview(nativeAccountCloseButton)
+
         nativeAccountStack.translatesAutoresizingMaskIntoConstraints = false
         nativeAccountStack.axis = .vertical
         nativeAccountStack.spacing = 10
@@ -1263,7 +1414,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
         NSLayoutConstraint.activate([
             nativeAccountButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -18),
-            nativeAccountButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            nativeAccountButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 62),
             nativeAccountButton.widthAnchor.constraint(equalToConstant: 44),
             nativeAccountButton.heightAnchor.constraint(equalToConstant: 44),
             nativeAccountAvatarView.centerXAnchor.constraint(equalTo: nativeAccountButton.centerXAnchor),
@@ -1292,6 +1443,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeAccountUsernameLabel.leadingAnchor.constraint(equalTo: nativeAccountNameLabel.leadingAnchor),
             nativeAccountUsernameLabel.trailingAnchor.constraint(equalTo: nativeAccountNameLabel.trailingAnchor),
             nativeAccountUsernameLabel.topAnchor.constraint(equalTo: nativeAccountNameLabel.bottomAnchor, constant: 3),
+            nativeAccountCloseButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            nativeAccountCloseButton.centerYAnchor.constraint(equalTo: nativeAccountAvatarLargeView.centerYAnchor),
+            nativeAccountCloseButton.widthAnchor.constraint(equalToConstant: 34),
+            nativeAccountCloseButton.heightAnchor.constraint(equalToConstant: 34),
             nativeAccountStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
             nativeAccountStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
             nativeAccountStack.topAnchor.constraint(equalTo: nativeAccountAvatarLargeView.bottomAnchor, constant: 20)
@@ -1355,6 +1510,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     @objc private func dismissNativeAccountMenu() {
+        view.endEditing(true)
         UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
             self.nativeAccountDimView.alpha = 0
             self.nativeAccountSheet.alpha = 0
@@ -1368,6 +1524,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         dismissNativeAccountMenu()
         if let route {
             currentRoute = route
+            currentPrimarySection = primarySection(for: route)
             if route == "/logout" {
                 setNativeAccountButtonVisible(false, animated: true)
             }
@@ -1379,6 +1536,88 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             return
         }
         openPrimarySection(.profile)
+    }
+
+    private func setNativeAuthVisible(_ visible: Bool, animated: Bool) {
+        guard isNativeAuthVisible != visible else { return }
+        isNativeAuthVisible = visible
+        let changes = { self.nativeAuthContainer.alpha = visible ? 1 : 0 }
+        let completion: (Bool) -> Void = { _ in
+            self.nativeAuthContainer.isHidden = !visible
+        }
+        if animated {
+            if visible { nativeAuthContainer.isHidden = false }
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut], animations: changes, completion: completion)
+        } else {
+            nativeAuthContainer.isHidden = !visible
+            changes()
+        }
+    }
+
+    @objc private func submitNativeLogin() {
+        let username = nativeAuthUsernameField.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let password = nativeAuthPasswordField.text ?? ""
+        guard !username.isEmpty, !password.isEmpty, !isSubmittingNativeAuth else {
+            nativeAuthErrorLabel.text = "Enter your username and password."
+            nativeAuthErrorLabel.isHidden = false
+            return
+        }
+        isSubmittingNativeAuth = true
+        nativeAuthLoginButton.setTitle("Signing in...", for: .normal)
+        nativeAuthLoginButton.alpha = 0.72
+        nativeAuthErrorLabel.isHidden = true
+        let payload: [String: String] = ["username": username, "password": password]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+        let submitScript = """
+        (function() {
+          const creds = \(json);
+          function submit() {
+            const form = document.querySelector('form');
+            const username = document.querySelector('input[name="username"]');
+            const password = document.querySelector('input[name="password"]');
+            if (!form || !username || !password) return false;
+            username.value = creds.username;
+            password.value = creds.password;
+            form.submit();
+            return true;
+          }
+          if ((window.location.pathname || '') !== '/login') {
+            window.location.assign('/login');
+            setTimeout(submit, 450);
+            return true;
+          }
+          return submit();
+        })();
+        """
+        webView?.evaluateJavaScript(submitScript) { [weak self] _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                guard let self else { return }
+                self.isSubmittingNativeAuth = false
+                self.nativeAuthLoginButton.setTitle("Sign in", for: .normal)
+                self.nativeAuthLoginButton.alpha = 1
+                if !self.isLoggedIntoWebApp {
+                    self.nativeAuthErrorLabel.text = "If that did not work, check your login details and try again."
+                    self.nativeAuthErrorLabel.isHidden = false
+                }
+            }
+        }
+    }
+
+    @objc private func openNativeAuthTerms() {
+        let message = "Politics In Action is a private community app for invited camp users. No bullying, harassment, hate speech, threats, sexual content involving minors, or other objectionable content is allowed. Abusive users and reported content may be reviewed, blocked, suspended, or removed."
+        presentNativeAuthInfo(title: "Terms of Use", message: message)
+    }
+
+    @objc private func openNativeAuthPrivacy() {
+        let message = "The app stores account details, profile content, posts, media, messages, reports, poll votes, notifications, and app activity needed to run the service. Published content may be visible to other users depending on privacy settings. Account deletion is available in Settings."
+        presentNativeAuthInfo(title: "Privacy Policy", message: message)
+    }
+
+    private func presentNativeAuthInfo(title: String, message: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        topPresentationController().present(alert, animated: true)
     }
 
     private func configureNativeComments() {
@@ -1645,7 +1884,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func updateNativeSectionPresentation() {
-        let shouldShowFeed = isLoggedIntoWebApp && currentPrimarySection == .feed
+        let shouldShowFeed = isLoggedIntoWebApp && currentPrimarySection == .feed && routeSupportsNativeFeed(currentRoute)
         if shouldShowFeed {
             showNativeFeedIfNeeded()
         } else {
@@ -1678,6 +1917,22 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             hideNativeSearchIfNeeded()
         }
         setNativeAccountButtonVisible(isLoggedIntoWebApp && currentPrimarySection != .messages, animated: true)
+    }
+
+    private func shouldPreserveNativeSection(against payloadRoute: String) -> Bool {
+        if nativeRouteOverrideUntil.map({ Date() < $0 }) ?? false {
+            return true
+        }
+        if isShowingNativeMessages && !payloadRoute.starts(with: "/messages") {
+            return true
+        }
+        if isShowingNativeSearch && !payloadRoute.starts(with: "/search") {
+            return true
+        }
+        if isShowingNativeProfile && !payloadRoute.starts(with: "/users/") {
+            return true
+        }
+        return false
     }
 
     private func routeSupportsNativeFeed(_ route: String) -> Bool {
@@ -2120,13 +2375,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 self.currentFeedTab = payload["feedMode"] as? String ?? "home"
                 let payloadRoute = payload["currentRoute"] as? String ?? ""
                 let payloadSection = PrimarySection(rawValue: payload["primarySection"] as? String ?? "feed") ?? .feed
-                let shouldPreserveNativeMessages = self.isShowingNativeMessages && !payloadRoute.starts(with: "/messages")
-                let shouldPreserveNativeRoute = self.nativeRouteOverrideUntil.map { Date() < $0 } ?? false
-                if !shouldPreserveNativeMessages && !shouldPreserveNativeRoute {
+                let shouldPreserveNativeRoute = self.shouldPreserveNativeSection(against: payloadRoute)
+                if !shouldPreserveNativeRoute {
                     self.currentPrimarySection = payloadSection
                 }
                 self.currentUsername = username
-                if !shouldPreserveNativeMessages, !shouldPreserveNativeRoute, !payloadRoute.isEmpty {
+                if !shouldPreserveNativeRoute, !payloadRoute.isEmpty {
                     self.currentRoute = payloadRoute
                     self.lastRouteBySection[self.currentPrimarySection] = payloadRoute
                 } else if self.currentPrimarySection == .messages {
@@ -2147,6 +2401,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func handleLoginState(loggedIn: Bool, username: String) {
         let wasLoggedIn = isLoggedIntoWebApp
         isLoggedIntoWebApp = loggedIn
+        setNativeAuthVisible(!loggedIn, animated: true)
         setNativeTabBarVisible(loggedIn, animated: true)
         guard loggedIn else {
             lastRegisteredPushToken = nil
@@ -2176,6 +2431,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             setNativeAccountButtonVisible(false, animated: true)
             return
         }
+        nativeAuthUsernameField.resignFirstResponder()
+        nativeAuthPasswordField.resignFirstResponder()
+        nativeAuthErrorLabel.isHidden = true
+        isSubmittingNativeAuth = false
+        nativeAuthLoginButton.setTitle("Sign in", for: .normal)
+        nativeAuthLoginButton.alpha = 1
         if !wasLoggedIn {
             maybeRequestNotificationPermission(for: username)
         }
@@ -3539,12 +3800,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         currentFeedTab = payload["feedMode"] as? String ?? "home"
         let payloadRoute = payload["currentRoute"] as? String ?? ""
         let payloadSection = PrimarySection(rawValue: payload["primarySection"] as? String ?? "feed") ?? .feed
-        let shouldPreserveNativeMessages = isShowingNativeMessages && !payloadRoute.starts(with: "/messages")
-        if !shouldPreserveNativeMessages {
+        let shouldPreserveNativeRoute = shouldPreserveNativeSection(against: payloadRoute)
+        if !shouldPreserveNativeRoute {
             currentPrimarySection = payloadSection
         }
         currentUsername = username
-        if !shouldPreserveNativeMessages, !payloadRoute.isEmpty {
+        if !shouldPreserveNativeRoute, !payloadRoute.isEmpty {
             currentRoute = payloadRoute
             lastRouteBySection[currentPrimarySection] = payloadRoute
         } else if currentPrimarySection == .messages {
@@ -3906,6 +4167,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func openPrimarySection(_ section: PrimarySection) {
+        nativeRouteOverrideUntil = Date().addingTimeInterval(4)
         hideNativePostDetailIfNeeded()
         if section == .messages {
             currentPrimarySection = .messages
