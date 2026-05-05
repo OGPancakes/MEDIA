@@ -153,6 +153,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var isShowingNativeSearch = false
     private var isLoadingNativeSearch = false
     private var isLoadingNativeConnections = false
+    private var isDismissingNativeComments = false
     private var isNativeAuthVisible = false
     private var isSubmittingNativeAuth = false
     private var isLoadingMentionSuggestions = false
@@ -1646,6 +1647,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeCommentsHandle.layer.cornerRadius = 2.5
         nativeCommentsHandle.layer.cornerCurve = .continuous
         content.addSubview(nativeCommentsHandle)
+        let commentsPanGesture = UIPanGestureRecognizer(target: self, action: #selector(handleNativeCommentsPan(_:)))
+        nativeCommentsSheet.addGestureRecognizer(commentsPanGesture)
 
         nativeCommentsTitleLabel.translatesAutoresizingMaskIntoConstraints = false
         nativeCommentsTitleLabel.text = "Comments"
@@ -1804,7 +1807,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let toolbar = UIToolbar()
         toolbar.sizeToFit()
         let done = UIBarButtonItem(title: "Done", style: .plain, target: self, action: #selector(dismissNativeCommentsKeyboard))
-        let close = UIBarButtonItem(title: "Close Comments", style: .done, target: self, action: #selector(dismissNativeComments))
+        let close = UIBarButtonItem(title: "Close", style: .done, target: self, action: #selector(dismissNativeComments))
         let spacer = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
         toolbar.items = [done, spacer, close]
         return toolbar
@@ -2724,7 +2727,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             composerSheetBottomConstraint?.constant = max(0, -view.safeAreaInsets.bottom) - overlap + view.safeAreaInsets.bottom
             shouldAnimate = true
         }
-        if !nativeCommentsSheet.isHidden,
+        if !nativeCommentsSheet.isHidden, !isDismissingNativeComments,
            let frameValue = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue {
             let keyboardFrame = view.convert(frameValue.cgRectValue, from: nil)
             let overlap = max(0, view.bounds.maxY - keyboardFrame.minY)
@@ -2748,7 +2751,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             composerSheetBottomConstraint?.constant = 0
             shouldAnimate = true
         }
-        if !nativeCommentsSheet.isHidden {
+        if !nativeCommentsSheet.isHidden, !isDismissingNativeComments {
             nativeCommentsSheetBottomConstraint?.constant = 0
             shouldAnimate = true
         }
@@ -2868,82 +2871,48 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func performNativeJSONRequest(path: String, method: String = "GET", bodyObject: Any? = nil, completion: @escaping (Result<Data, Error>) -> Void) {
+        let finish: (Result<Data, Error>) -> Void = { result in
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }
         guard let targetURL = URL(string: path, relativeTo: webView?.url)?.absoluteURL else {
-            completion(.failure(NSError(domain: "NativeMessages", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid request URL."])))
+            finish(.failure(NSError(domain: "NativeMessages", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid request URL."])))
             return
         }
-        let bodyJSON: String?
-        if let bodyObject,
-           let bodyData = try? JSONSerialization.data(withJSONObject: bodyObject),
-           let bodyString = String(data: bodyData, encoding: .utf8) {
-            bodyJSON = bodyString
-        } else {
-            bodyJSON = nil
-        }
-        let requestID = UUID().uuidString
-        let payload: [String: Any] = [
-            "id": requestID,
-            "url": path,
-            "method": method,
-            "body": bodyJSON ?? NSNull()
-        ]
-        guard let payloadData = try? JSONSerialization.data(withJSONObject: payload),
-              let payloadJSON = String(data: payloadData, encoding: .utf8) else {
-            completion(.failure(NSError(domain: "NativeMessages", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid request payload."])))
-            return
-        }
-        let script = """
-        (function() {
-          const request = \(payloadJSON);
-          const complete = function(payload) {
-            try {
-              window.webkit.messageHandlers.\(nativeJSONScriptMessageName).postMessage(payload);
-            } catch (e) {}
-          };
-          const headers = {
-            "Accept": "application/json",
-            "X-Requested-With": "fetch"
-          };
-          const options = {
-            method: request.method || "GET",
-            credentials: "include",
-            headers
-          };
-          if (request.body !== null && request.body !== undefined) {
-            headers["Content-Type"] = "application/json";
-            options.body = request.body;
-          }
-          fetch(request.url, options)
-            .then(async function(response) {
-              const text = await response.text();
-              complete({ id: request.id, status: response.status, text: text });
-            })
-            .catch(function(error) {
-              const message = error && error.message ? error.message : String(error);
-              complete({
-                id: request.id,
-                status: 0,
-                text: JSON.stringify({ ok: false, error: message || "Network request failed." })
-              });
-            });
-          return true;
-        })();
-        """
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.pendingNativeJSONRequests[requestID] = completion
-            print("Native DM request \(method) \(targetURL.absoluteString)")
-            self.webView?.evaluateJavaScript(script) { _, error in
-                if let error {
-                    let pending = self.pendingNativeJSONRequests.removeValue(forKey: requestID)
-                    pending?(.failure(error))
+        fetchCookieHeader(for: targetURL) { [weak self] cookieHeader in
+            var request = URLRequest(url: targetURL)
+            request.httpMethod = method
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("fetch", forHTTPHeaderField: "X-Requested-With")
+            if let cookieHeader, !cookieHeader.isEmpty {
+                request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+            }
+            if let bodyObject {
+                guard let bodyData = try? JSONSerialization.data(withJSONObject: bodyObject) else {
+                    finish(.failure(NSError(domain: "NativeMessages", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid request payload."])))
+                    return
                 }
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = bodyData
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
-                guard let self,
-                      let pending = self.pendingNativeJSONRequests.removeValue(forKey: requestID) else { return }
-                pending(.failure(NSError(domain: "NativeMessages", code: 4, userInfo: [NSLocalizedDescriptionKey: "Native DM request timed out."])))
-            }
+            print("Native API request \(method) \(targetURL.absoluteString)")
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                if let error {
+                    finish(.failure(error))
+                    return
+                }
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let responseData = data ?? Data()
+                let preview = String(data: responseData, encoding: .utf8)?.prefix(300) ?? ""
+                print("Native API response status=\(status) body=\(preview)")
+                guard (200..<300).contains(status) else {
+                    let message = self?.nativeResponsePreview(from: responseData) ?? "Request failed."
+                    finish(.failure(NSError(domain: "NativeMessages", code: status, userInfo: [NSLocalizedDescriptionKey: message])))
+                    return
+                }
+                finish(.success(responseData))
+            }.resume()
         }
     }
 
@@ -3897,6 +3866,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func presentNativeComments(for post: NativeFeedPost) {
+        isDismissingNativeComments = false
         nativeCommentsPost = post
         nativeComments = []
         nativeCommentsTitleLabel.text = "Comments"
@@ -3924,6 +3894,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     @objc private func dismissNativeComments() {
+        guard !nativeCommentsSheet.isHidden else { return }
+        isDismissingNativeComments = true
         nativeCommentsTextView.resignFirstResponder()
         let reset = {
             self.nativeCommentsDimView.alpha = 0
@@ -3937,8 +3909,35 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             self.nativeCommentsPost = nil
             self.nativeComments = []
             self.nativeCommentsReplyTarget = nil
+            self.isDismissingNativeComments = false
             self.updateNativeCommentsReplyState()
             self.nativeCommentsTableView.reloadData()
+        }
+    }
+
+    @objc private func handleNativeCommentsPan(_ gesture: UIPanGestureRecognizer) {
+        guard !nativeCommentsSheet.isHidden else { return }
+        let translation = gesture.translation(in: view)
+        let velocity = gesture.velocity(in: view)
+        switch gesture.state {
+        case .changed:
+            guard translation.y > 0 else { return }
+            nativeCommentsTextView.resignFirstResponder()
+            nativeCommentsSheetBottomConstraint?.constant = translation.y
+            nativeCommentsDimView.alpha = max(0.18, 1 - (translation.y / 420))
+            view.layoutIfNeeded()
+        case .ended, .cancelled:
+            if translation.y > 90 || velocity.y > 650 {
+                dismissNativeComments()
+            } else {
+                nativeCommentsSheetBottomConstraint?.constant = 0
+                UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut]) {
+                    self.nativeCommentsDimView.alpha = 1
+                    self.view.layoutIfNeeded()
+                }
+            }
+        default:
+            break
         }
     }
 
@@ -4511,7 +4510,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             loadNativeThread(username: conversation.username)
         }
         if tableView === nativeCommentsTableView {
-            nativeCommentsTextView.becomeFirstResponder()
+            return
         }
     }
 
@@ -5138,7 +5137,7 @@ private final class NativeProfileHeaderView: UIView {
     var onFollowTap: (() -> Void)?
     var onFollowersTap: (() -> Void)?
     var onFollowingTap: (() -> Void)?
-    var preferredHeight: CGFloat { 374 }
+    var preferredHeight: CGFloat { 430 }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -5199,13 +5198,15 @@ private final class NativeProfileHeaderView: UIView {
         bioLabel.translatesAutoresizingMaskIntoConstraints = false
         bioLabel.font = .systemFont(ofSize: 15)
         bioLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.94)
-        bioLabel.numberOfLines = 2
+        bioLabel.numberOfLines = 3
+        bioLabel.lineBreakMode = .byWordWrapping
         cardView.addSubview(bioLabel)
 
         metaLabel.translatesAutoresizingMaskIntoConstraints = false
         metaLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         metaLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.8)
-        metaLabel.numberOfLines = 2
+        metaLabel.numberOfLines = 3
+        metaLabel.lineBreakMode = .byWordWrapping
         cardView.addSubview(metaLabel)
 
         statsStack.translatesAutoresizingMaskIntoConstraints = false
@@ -5291,8 +5292,8 @@ private final class NativeProfileHeaderView: UIView {
         nameLabel.text = user.display_name
         verifiedBadgeView.isHidden = !user.is_verified
         usernameLabel.text = "@\(user.username)"
-        bioLabel.text = user.bio.isEmpty ? "No bio yet." : user.bio
-        let metaParts = [user.location, user.website].filter { !$0.isEmpty }
+        bioLabel.text = user.bio.isEmpty ? "No bio yet." : cappedProfileText(user.bio, limit: 180)
+        let metaParts = [cappedProfileText(user.location, limit: 90), cappedProfileText(user.website, limit: 90)].filter { !$0.isEmpty }
         metaLabel.text = metaParts.joined(separator: "  ")
         metaLabel.isHidden = metaParts.isEmpty
         configureStatButton(postsButton, value: user.post_count, label: "Posts")
@@ -5320,6 +5321,13 @@ private final class NativeProfileHeaderView: UIView {
             ]
         ))
         button.setAttributedTitle(text, for: .normal)
+    }
+
+    private func cappedProfileText(_ text: String, limit: Int) -> String {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > limit else { return normalized }
+        let end = normalized.index(normalized.startIndex, offsetBy: limit)
+        return String(normalized[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func configureBanner(urlString: String, imageCache: NSCache<NSString, UIImage>) {
@@ -5644,6 +5652,7 @@ private final class NativeStoriesHeaderView: UIView {
 
         discoverButton.translatesAutoresizingMaskIntoConstraints = false
         discoverButton.setTitle("Discover", for: .normal)
+        discoverButton.isHidden = true
         discoverButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
         discoverButton.setTitleColor(UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.84), for: .normal)
         discoverButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
