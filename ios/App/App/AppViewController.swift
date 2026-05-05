@@ -1526,6 +1526,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeUtilityScrollView.translatesAutoresizingMaskIntoConstraints = false
         nativeUtilityScrollView.alwaysBounceVertical = true
         nativeUtilityScrollView.keyboardDismissMode = .interactive
+        nativeUtilityScrollView.contentInsetAdjustmentBehavior = .always
         content.addSubview(nativeUtilityScrollView)
 
         nativeUtilityStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1816,8 +1817,24 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         field.layer.borderColor = UIColor(red: 222.0 / 255.0, green: 230.0 / 255.0, blue: 244.0 / 255.0, alpha: 1).cgColor
         field.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 16, height: 1))
         field.leftViewMode = .always
+        field.returnKeyType = .done
+        field.inputAccessoryView = nativeKeyboardDoneToolbar()
         field.heightAnchor.constraint(equalToConstant: 54).isActive = true
         return field
+    }
+
+    private func nativeKeyboardDoneToolbar() -> UIToolbar {
+        let toolbar = UIToolbar(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: 44))
+        toolbar.items = [
+            UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil),
+            UIBarButtonItem(title: "Done", style: .done, target: self, action: #selector(dismissNativeKeyboard))
+        ]
+        toolbar.sizeToFit()
+        return toolbar
+    }
+
+    @objc private func dismissNativeKeyboard() {
+        view.endEditing(true)
     }
 
     private func utilityPrimaryButton(title: String, action: @escaping () -> Void) -> UIButton {
@@ -3007,10 +3024,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         if !username.isEmpty {
             lastRouteBySection[.profile] = "/users/\(username)"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
                 guard let self, self.isLoggedIntoWebApp, self.currentUsername == username else { return }
                 self.loadNativeProfile(username: username, force: false)
-                self.loadNativeSearch(query: "")
             }
         }
         updateNativeAccountAvatar()
@@ -3303,6 +3319,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeCommentsSheetHeightConstraint?.constant = min(max(360, availableHeight), view.bounds.height * 0.84)
             shouldAnimate = true
         }
+        if !nativeUtilitySheet.isHidden,
+           let frameValue = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue {
+            let keyboardFrame = view.convert(frameValue.cgRectValue, from: nil)
+            let overlap = max(0, view.bounds.maxY - keyboardFrame.minY - view.safeAreaInsets.bottom)
+            nativeUtilityScrollView.contentInset.bottom = overlap + 28
+            nativeUtilityScrollView.verticalScrollIndicatorInsets.bottom = overlap + 28
+            shouldAnimate = true
+        }
         if shouldAnimate {
             animateWithKeyboard(note)
         }
@@ -3323,6 +3347,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if !nativeCommentsSheet.isHidden, !isDismissingNativeComments {
             nativeCommentsSheetBottomConstraint?.constant = 0
             nativeCommentsSheetHeightConstraint?.constant = defaultNativeCommentsSheetHeight()
+            shouldAnimate = true
+        }
+        if !nativeUtilitySheet.isHidden {
+            nativeUtilityScrollView.contentInset.bottom = 0
+            nativeUtilityScrollView.verticalScrollIndicatorInsets.bottom = 0
             shouldAnimate = true
         }
         if shouldAnimate {
@@ -5276,7 +5305,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         let purpose = photoPickerPurpose
-        picker.dismiss(animated: true)
+        picker.dismiss(animated: true) { [weak self] in
+            self?.handlePhotoPickerResults(results, purpose: purpose)
+        }
+    }
+
+    private func handlePhotoPickerResults(_ results: [PHPickerResult], purpose: NativePhotoPickerPurpose) {
         guard let provider = results.first?.itemProvider else { return }
         if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
             guard purpose == .post || purpose == .story else { return }
