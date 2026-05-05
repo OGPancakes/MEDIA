@@ -1,4 +1,5 @@
 node_modules/
+pokestock-intel/dist/
 ios/App/build/
 ios/App/Pods/
 ios/App/App/public/
