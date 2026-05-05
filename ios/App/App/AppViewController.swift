@@ -18,6 +18,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private enum NativePhotoPickerPurpose {
         case post
         case story
+        case profileAvatar
+        case profileBanner
     }
 
     private let shellBackground = UIColor(red: 238.0 / 255.0, green: 244.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
@@ -135,6 +137,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var composerSheetBottomConstraint: NSLayoutConstraint?
     private var composeButtonBottomConstraint: NSLayoutConstraint?
     private var nativeCommentsSheetBottomConstraint: NSLayoutConstraint?
+    private var nativeCommentsSheetHeightConstraint: NSLayoutConstraint?
     private var nativeCommentsTextViewHeightConstraint: NSLayoutConstraint?
     private var composerTextViewHeightConstraint: NSLayoutConstraint?
     private var composerPreviewHeightConstraint: NSLayoutConstraint?
@@ -1483,6 +1486,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func setNativeAccountButtonVisible(_ visible: Bool, animated: Bool) {
+        if !visible {
+            dismissNativeAccountMenu()
+        }
         let changes = {
             self.nativeAccountButton.alpha = visible ? 1 : 0
         }
@@ -1524,6 +1530,18 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func handleNativeAccountMenuSelection(route: String?) {
         dismissNativeAccountMenu()
         if let route {
+            if route == "/settings" {
+                presentNativeSettingsPanel()
+                return
+            }
+            if route == "/saved" {
+                presentNativeSavedPanel()
+                return
+            }
+            if route == "/admin" {
+                presentNativeAdminPanel()
+                return
+            }
             currentRoute = route
             currentPrimarySection = primarySection(for: route)
             if route == "/logout" {
@@ -1537,6 +1555,38 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             return
         }
         openPrimarySection(.profile)
+    }
+
+    private func presentNativeSettingsPanel() {
+        let alert = UIAlertController(title: "Settings", message: "Update your native profile media.", preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "Change Profile Picture", style: .default) { [weak self] _ in
+            self?.presentPhotoPicker(purpose: .profileAvatar, mediaFilter: .images)
+        })
+        alert.addAction(UIAlertAction(title: "Change Profile Background", style: .default) { [weak self] _ in
+            self?.presentPhotoPicker(purpose: .profileBanner, mediaFilter: .images)
+        })
+        alert.addAction(UIAlertAction(title: "View Profile", style: .default) { [weak self] _ in
+            self?.openPrimarySection(.profile)
+        })
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        topPresentationController().present(alert, animated: true)
+    }
+
+    private func presentNativeSavedPanel() {
+        let alert = UIAlertController(title: "Saved", message: "Saved posts stay in the native shell now. A full saved-posts list is next.", preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "Stay on Feed", style: .default))
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        topPresentationController().present(alert, animated: true)
+    }
+
+    private func presentNativeAdminPanel() {
+        let alert = UIAlertController(title: "Admin", message: "Admin controls no longer kick you out of the native shell. Use the website dashboard only when you need the full admin table.", preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "Stay Native", style: .default))
+        alert.addAction(UIAlertAction(title: "Open Dashboard", style: .destructive) { [weak self] _ in
+            self?.navigateWebView(to: "/admin", replace: false)
+        })
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        topPresentationController().present(alert, animated: true)
     }
 
     private func setNativeAuthVisible(_ visible: Bool, animated: Bool) {
@@ -1720,7 +1770,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeCommentsTextView.delegate = self
         nativeCommentsTextView.textContainerInset = UIEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
         nativeCommentsTextView.textContainer.lineFragmentPadding = 0
-        nativeCommentsTextView.inputAccessoryView = makeNativeCommentsKeyboardAccessory()
+        nativeCommentsTextView.inputAccessoryView = nil
         nativeCommentsComposerBar.addSubview(nativeCommentsTextView)
 
         nativeCommentsPlaceholder.translatesAutoresizingMaskIntoConstraints = false
@@ -1738,6 +1788,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeCommentsComposerBar.addSubview(nativeCommentsSendButton)
 
         nativeCommentsSheetBottomConstraint = nativeCommentsSheet.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: 520)
+        nativeCommentsSheetHeightConstraint = nativeCommentsSheet.heightAnchor.constraint(equalToConstant: defaultNativeCommentsSheetHeight())
         nativeCommentsTextViewHeightConstraint = nativeCommentsTextView.heightAnchor.constraint(equalToConstant: 44)
 
         NSLayoutConstraint.activate([
@@ -1748,7 +1799,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
             nativeCommentsSheet.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
             nativeCommentsSheet.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
-            nativeCommentsSheet.heightAnchor.constraint(equalTo: view.heightAnchor, multiplier: 0.62),
+            nativeCommentsSheetHeightConstraint!,
             nativeCommentsSheetBottomConstraint!,
 
             nativeCommentsHandle.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
@@ -1803,14 +1854,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         updateNativeCommentsComposeState()
     }
 
-    private func makeNativeCommentsKeyboardAccessory() -> UIToolbar {
-        let toolbar = UIToolbar()
-        toolbar.sizeToFit()
-        let done = UIBarButtonItem(title: "Done", style: .plain, target: self, action: #selector(dismissNativeCommentsKeyboard))
-        let close = UIBarButtonItem(title: "Close", style: .done, target: self, action: #selector(dismissNativeComments))
-        let spacer = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-        toolbar.items = [done, spacer, close]
-        return toolbar
+    private func defaultNativeCommentsSheetHeight() -> CGFloat {
+        max(420, view.bounds.height * 0.62)
     }
 
     private func tabTag(for section: PrimarySection) -> Int {
@@ -1919,7 +1964,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         } else {
             hideNativeSearchIfNeeded()
         }
-        setNativeAccountButtonVisible(isLoggedIntoWebApp && currentPrimarySection != .messages, animated: true)
+        setNativeAccountButtonVisible(isLoggedIntoWebApp && currentPrimarySection == .feed, animated: true)
     }
 
     private func shouldPreserveNativeSection(against payloadRoute: String) -> Bool {
@@ -2016,7 +2061,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeProfileContainer.isHidden = false
         nativeProfileContainer.alpha = 1
         view.bringSubviewToFront(nativeProfileContainer)
-        view.bringSubviewToFront(nativeAccountButton)
         view.bringSubviewToFront(nativeTabBarBackdrop)
         view.bringSubviewToFront(nativeTabBar)
         loadNativeProfile(username: username, force: nativeProfileUser?.username != username)
@@ -2038,7 +2082,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeSearchContainer.isHidden = false
         nativeSearchContainer.alpha = 1
         view.bringSubviewToFront(nativeSearchContainer)
-        view.bringSubviewToFront(nativeAccountButton)
         view.bringSubviewToFront(nativeTabBarBackdrop)
         view.bringSubviewToFront(nativeTabBar)
         if nativeSearchUsers.isEmpty && nativeSearchPosts.isEmpty {
@@ -2447,7 +2490,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             lastRouteBySection[.profile] = "/users/\(username)"
         }
         updateNativeAccountAvatar()
-        setNativeAccountButtonVisible(currentPrimarySection != .messages, animated: true)
+        setNativeAccountButtonVisible(currentPrimarySection == .feed, animated: true)
         openPendingPushRouteIfPossible()
     }
 
@@ -2732,6 +2775,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             let keyboardFrame = view.convert(frameValue.cgRectValue, from: nil)
             let overlap = max(0, view.bounds.maxY - keyboardFrame.minY)
             nativeCommentsSheetBottomConstraint?.constant = max(0, -view.safeAreaInsets.bottom) - overlap + view.safeAreaInsets.bottom
+            let availableHeight = keyboardFrame.minY - view.safeAreaInsets.top - 10
+            nativeCommentsSheetHeightConstraint?.constant = min(max(360, availableHeight), view.bounds.height * 0.84)
             shouldAnimate = true
         }
         if shouldAnimate {
@@ -2753,6 +2798,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         if !nativeCommentsSheet.isHidden, !isDismissingNativeComments {
             nativeCommentsSheetBottomConstraint?.constant = 0
+            nativeCommentsSheetHeightConstraint?.constant = defaultNativeCommentsSheetHeight()
             shouldAnimate = true
         }
         if shouldAnimate {
@@ -2899,7 +2945,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             print("Native API request \(method) \(targetURL.absoluteString)")
             URLSession.shared.dataTask(with: request) { data, response, error in
                 if let error {
-                    finish(.failure(error))
+                    self?.performNativeJSONWebViewRequest(path: path, method: method, bodyObject: bodyObject, completion: completion)
                     return
                 }
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -2907,12 +2953,97 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 let preview = String(data: responseData, encoding: .utf8)?.prefix(300) ?? ""
                 print("Native API response status=\(status) body=\(preview)")
                 guard (200..<300).contains(status) else {
-                    let message = self?.nativeResponsePreview(from: responseData) ?? "Request failed."
-                    finish(.failure(NSError(domain: "NativeMessages", code: status, userInfo: [NSLocalizedDescriptionKey: message])))
+                    self?.performNativeJSONWebViewRequest(path: path, method: method, bodyObject: bodyObject, completion: completion)
+                    return
+                }
+                let trimmed = String(data: responseData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !(trimmed.hasPrefix("{") || trimmed.hasPrefix("[")) {
+                    self?.performNativeJSONWebViewRequest(path: path, method: method, bodyObject: bodyObject, completion: completion)
                     return
                 }
                 finish(.success(responseData))
             }.resume()
+        }
+    }
+
+    private func performNativeJSONWebViewRequest(path: String, method: String, bodyObject: Any?, completion: @escaping (Result<Data, Error>) -> Void) {
+        let finish: (Result<Data, Error>) -> Void = { result in
+            DispatchQueue.main.async {
+                completion(result)
+            }
+        }
+        let bodyJSON: String?
+        if let bodyObject,
+           let bodyData = try? JSONSerialization.data(withJSONObject: bodyObject),
+           let bodyString = String(data: bodyData, encoding: .utf8) {
+            bodyJSON = bodyString
+        } else {
+            bodyJSON = nil
+        }
+        let requestID = UUID().uuidString
+        let payload: [String: Any] = [
+            "id": requestID,
+            "url": path,
+            "method": method,
+            "body": bodyJSON ?? NSNull()
+        ]
+        guard let payloadData = try? JSONSerialization.data(withJSONObject: payload),
+              let payloadJSON = String(data: payloadData, encoding: .utf8) else {
+            finish(.failure(NSError(domain: "NativeMessages", code: 2, userInfo: [NSLocalizedDescriptionKey: "Invalid request payload."])))
+            return
+        }
+        let script = """
+        (function() {
+          const request = \(payloadJSON);
+          const complete = function(payload) {
+            try {
+              window.webkit.messageHandlers.\(nativeJSONScriptMessageName).postMessage(payload);
+            } catch (e) {}
+          };
+          const headers = {
+            "Accept": "application/json",
+            "X-Requested-With": "fetch"
+          };
+          const options = {
+            method: request.method || "GET",
+            credentials: "include",
+            headers
+          };
+          if (request.body !== null && request.body !== undefined) {
+            headers["Content-Type"] = "application/json";
+            options.body = request.body;
+          }
+          fetch(request.url, options)
+            .then(async function(response) {
+              const text = await response.text();
+              complete({ id: request.id, status: response.status, text: text });
+            })
+            .catch(function(error) {
+              const message = error && error.message ? error.message : String(error);
+              complete({
+                id: request.id,
+                status: 0,
+                text: JSON.stringify({ ok: false, error: message || "Network request failed." })
+              });
+            });
+          return true;
+        })();
+        """
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingNativeJSONRequests[requestID] = finish
+            print("Native API fallback \(method) \(path)")
+            self.webView?.evaluateJavaScript(script) { _, error in
+                if let error {
+                    let pending = self.pendingNativeJSONRequests.removeValue(forKey: requestID)
+                    pending?(.failure(error))
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+                guard let self,
+                      let pending = self.pendingNativeJSONRequests.removeValue(forKey: requestID) else { return }
+                pending(.failure(NSError(domain: "NativeMessages", code: 4, userInfo: [NSLocalizedDescriptionKey: "Native request timed out."])))
+            }
         }
     }
 
@@ -3884,6 +4015,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         view.bringSubviewToFront(nativeCommentsDimView)
         view.bringSubviewToFront(nativeCommentsSheet)
         view.layoutIfNeeded()
+        nativeCommentsSheetHeightConstraint?.constant = defaultNativeCommentsSheetHeight()
         nativeCommentsSheetBottomConstraint?.constant = 0
         UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseOut]) {
             self.nativeCommentsDimView.alpha = 1
@@ -3901,6 +4033,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             self.nativeCommentsDimView.alpha = 0
             self.nativeCommentsSheet.alpha = 0
             self.nativeCommentsSheetBottomConstraint?.constant = 520
+            self.nativeCommentsSheetHeightConstraint?.constant = self.defaultNativeCommentsSheetHeight()
             self.view.layoutIfNeeded()
         }
         UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseInOut], animations: reset) { _ in
@@ -4589,6 +4722,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         picker.dismiss(animated: true)
         guard let provider = results.first?.itemProvider else { return }
         if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
+            guard purpose == .post || purpose == .story else { return }
             provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { [weak self] url, _ in
                 guard let self, let url, let data = try? Data(contentsOf: url) else { return }
                 let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
@@ -4622,6 +4756,20 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                         self.uploadNativeStory(imageData: imageData, imageName: "story.jpg", mimeType: "image/jpeg")
                         return
                     }
+                    if purpose == .profileAvatar {
+                        self.presentNativeImageAdjuster(image, title: "Adjust Profile Picture", aspectRatio: 1, circularGuide: true) { [weak self] adjusted in
+                            guard let data = adjusted.jpegData(compressionQuality: 0.9) else { return }
+                            self?.uploadNativeSettingsImage(imageData: data, fieldName: "avatar", imageName: "avatar.jpg")
+                        }
+                        return
+                    }
+                    if purpose == .profileBanner {
+                        self.presentNativeImageAdjuster(image, title: "Adjust Background", aspectRatio: 3, circularGuide: false) { [weak self] adjusted in
+                            guard let data = adjusted.jpegData(compressionQuality: 0.9) else { return }
+                            self?.uploadNativeSettingsImage(imageData: data, fieldName: "banner", imageName: "banner.jpg")
+                        }
+                        return
+                    }
                     self.presentNativeImageAdjuster(image)
                 }
             }
@@ -4629,7 +4777,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func presentNativeImageAdjuster(_ image: UIImage) {
-        let editor = NativeImageAdjustViewController(image: image) { [weak self] adjusted in
+        presentNativeImageAdjuster(image, title: "Adjust Photo", aspectRatio: 1.38, circularGuide: false) { [weak self] adjusted in
             guard let self else { return }
             self.composerPreviewImageView.image = adjusted
             self.composerPreviewImageView.contentMode = .scaleAspectFit
@@ -4640,6 +4788,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             self.selectedImageMimeType = "image/jpeg"
             self.textViewDidChange(self.composerTextView)
         }
+    }
+
+    private func presentNativeImageAdjuster(_ image: UIImage, title: String, aspectRatio: CGFloat, circularGuide: Bool, completion: @escaping (UIImage) -> Void) {
+        let editor = NativeImageAdjustViewController(image: image, title: title, aspectRatio: aspectRatio, circularGuide: circularGuide, completion: completion)
         editor.modalPresentationStyle = .pageSheet
         topPresentationController().present(editor, animated: true)
     }
@@ -4664,6 +4816,49 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         selectedImageName = "photo.jpg"
         selectedImageMimeType = "image/jpeg"
         textViewDidChange(composerTextView)
+    }
+
+    private func uploadNativeSettingsImage(imageData: Data, fieldName: String, imageName: String) {
+        guard let targetURL = URL(string: "/settings", relativeTo: webView?.url)?.absoluteURL else { return }
+        showNativeFlash(message: "Saving profile media...", category: "success")
+        fetchCookieHeader(for: targetURL) { [weak self] cookieHeader in
+            guard let self else { return }
+            let boundary = "Boundary-\(UUID().uuidString)"
+            var request = URLRequest(url: targetURL)
+            request.httpMethod = "POST"
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("fetch", forHTTPHeaderField: "X-Requested-With")
+            if let cookieHeader, !cookieHeader.isEmpty {
+                request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+            }
+            var body = Data()
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"\(fieldName)\"; filename=\"\(imageName)\"\r\n".data(using: .utf8)!)
+            body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+            body.append(imageData)
+            body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+            request.httpBody = body
+            URLSession.shared.dataTask(with: request) { _, response, error in
+                DispatchQueue.main.async {
+                    guard error == nil,
+                          let status = (response as? HTTPURLResponse)?.statusCode,
+                          (200..<400).contains(status) else {
+                        self.showNativeFlash(message: "Profile media failed to save.", category: "error")
+                        return
+                    }
+                    self.showNativeFlash(message: "Profile media saved.", category: "success")
+                    self.nativeAvatarImageCache.removeAllObjects()
+                    self.nativeFeedImageCache.removeAllObjects()
+                    if self.currentPrimarySection == .profile {
+                        self.loadNativeProfile(username: self.currentUsername, force: true)
+                    }
+                    if self.currentPrimarySection == .feed {
+                        self.loadNativeFeed(force: true)
+                    }
+                }
+            }.resume()
+        }
     }
 
     private func uploadNativeStory(imageData: Data, imageName: String, mimeType: String) {
@@ -5514,13 +5709,19 @@ private final class NativeStoryViewerView: UIView {
 
 private final class NativeImageAdjustViewController: UIViewController, UIScrollViewDelegate {
     private let image: UIImage
+    private let titleText: String
+    private let aspectRatio: CGFloat
+    private let circularGuide: Bool
     private let completion: (UIImage) -> Void
     private let scrollView = UIScrollView()
     private let imageView = UIImageView()
     private let cropGuide = UIView()
 
-    init(image: UIImage, completion: @escaping (UIImage) -> Void) {
+    init(image: UIImage, title: String = "Adjust Photo", aspectRatio: CGFloat = 1.38, circularGuide: Bool = false, completion: @escaping (UIImage) -> Void) {
         self.image = image
+        self.titleText = title
+        self.aspectRatio = max(0.4, aspectRatio)
+        self.circularGuide = circularGuide
         self.completion = completion
         super.init(nibName: nil, bundle: nil)
     }
@@ -5535,7 +5736,7 @@ private final class NativeImageAdjustViewController: UIViewController, UIScrollV
 
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "Adjust Photo"
+        titleLabel.text = titleText
         titleLabel.font = .systemFont(ofSize: 22, weight: .bold)
         titleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
         view.addSubview(titleLabel)
@@ -5579,7 +5780,7 @@ private final class NativeImageAdjustViewController: UIViewController, UIScrollV
         cropGuide.isUserInteractionEnabled = false
         cropGuide.layer.borderWidth = 2
         cropGuide.layer.borderColor = UIColor.white.withAlphaComponent(0.8).cgColor
-        cropGuide.layer.cornerRadius = 18
+        cropGuide.layer.cornerRadius = circularGuide ? 999 : 18
         cropGuide.layer.cornerCurve = .continuous
         view.addSubview(cropGuide)
 
@@ -5595,7 +5796,7 @@ private final class NativeImageAdjustViewController: UIViewController, UIScrollV
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
             scrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 22),
-            scrollView.heightAnchor.constraint(equalTo: scrollView.widthAnchor, multiplier: 0.72),
+            scrollView.heightAnchor.constraint(equalTo: scrollView.widthAnchor, multiplier: 1 / aspectRatio),
             cropGuide.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             cropGuide.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
             cropGuide.topAnchor.constraint(equalTo: scrollView.topAnchor),
