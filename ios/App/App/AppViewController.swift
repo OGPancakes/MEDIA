@@ -1487,7 +1487,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func setNativeAccountButtonVisible(_ visible: Bool, animated: Bool) {
         if !visible {
-            dismissNativeAccountMenu()
+            hideNativeAccountMenu(endingEditing: false)
         }
         let changes = {
             self.nativeAccountButton.alpha = visible ? 1 : 0
@@ -1517,7 +1517,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     @objc private func dismissNativeAccountMenu() {
-        view.endEditing(true)
+        hideNativeAccountMenu(endingEditing: true)
+    }
+
+    private func hideNativeAccountMenu(endingEditing: Bool) {
+        if endingEditing {
+            view.endEditing(true)
+        }
         UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
             self.nativeAccountDimView.alpha = 0
             self.nativeAccountSheet.alpha = 0
@@ -2944,7 +2950,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             }
             print("Native API request \(method) \(targetURL.absoluteString)")
             URLSession.shared.dataTask(with: request) { data, response, error in
-                if let error {
+                if error != nil {
                     self?.performNativeJSONWebViewRequest(path: path, method: method, bodyObject: bodyObject, completion: completion)
                     return
                 }
