@@ -414,6 +414,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func configureNativeAuthField(_ field: UITextField, placeholder: String, secure: Bool) {
         field.translatesAutoresizingMaskIntoConstraints = false
         field.placeholder = placeholder
+        field.attributedPlaceholder = NSAttributedString(
+            string: placeholder,
+            attributes: [.foregroundColor: UIColor(red: 113.0 / 255.0, green: 124.0 / 255.0, blue: 153.0 / 255.0, alpha: 0.86)]
+        )
         field.font = .systemFont(ofSize: 16, weight: .semibold)
         field.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
         field.backgroundColor = UIColor.white.withAlphaComponent(0.92)
@@ -1183,6 +1187,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
         nativeSearchField.translatesAutoresizingMaskIntoConstraints = false
         nativeSearchField.placeholder = "Search people and posts"
+        nativeSearchField.attributedPlaceholder = NSAttributedString(
+            string: "Search people and posts",
+            attributes: [.foregroundColor: UIColor(red: 113.0 / 255.0, green: 124.0 / 255.0, blue: 153.0 / 255.0, alpha: 0.86)]
+        )
         nativeSearchField.font = .systemFont(ofSize: 16, weight: .semibold)
         nativeSearchField.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
         nativeSearchField.backgroundColor = UIColor.white.withAlphaComponent(0.92)
@@ -1792,6 +1800,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let field = UITextField()
         field.translatesAutoresizingMaskIntoConstraints = false
         field.placeholder = placeholder
+        field.attributedPlaceholder = NSAttributedString(
+            string: placeholder,
+            attributes: [.foregroundColor: UIColor(red: 113.0 / 255.0, green: 124.0 / 255.0, blue: 153.0 / 255.0, alpha: 0.88)]
+        )
         field.text = text
         field.clearButtonMode = .whileEditing
         field.autocorrectionType = .yes
@@ -1846,6 +1858,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
         let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
         chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 17, weight: .bold)
+        chevron.contentMode = .scaleAspectFit
         chevron.tintColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.45)
         button.addSubview(chevron)
 
@@ -1857,6 +1871,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             icon.heightAnchor.constraint(equalToConstant: 26),
             chevron.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -16),
             chevron.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: 12),
+            chevron.heightAnchor.constraint(equalToConstant: 18),
             titleLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 14),
             titleLabel.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: -12),
             titleLabel.topAnchor.constraint(equalTo: button.topAnchor, constant: 15),
