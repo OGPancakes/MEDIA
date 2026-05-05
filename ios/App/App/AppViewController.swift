@@ -155,6 +155,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var isLoadingNativeProfile = false
     private var isShowingNativeSearch = false
     private var isLoadingNativeSearch = false
+    private var pendingNativeSearchQuery: String?
     private var isLoadingNativeConnections = false
     private var isDismissingNativeComments = false
     private var isNativeAuthVisible = false
@@ -1564,15 +1565,43 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func presentNativeSettingsPanel() {
-        let alert = UIAlertController(title: "Settings", message: "Update your native profile media.", preferredStyle: .actionSheet)
-        alert.addAction(UIAlertAction(title: "Change Profile Picture", style: .default) { [weak self] _ in
+        let currentProfile = nativeProfileUser?.username == currentUsername ? nativeProfileUser : nil
+        let alert = UIAlertController(title: "Settings", message: "Edit profile details or update profile media.", preferredStyle: .alert)
+        alert.addTextField { field in
+            field.placeholder = "Display name"
+            field.text = currentProfile?.display_name ?? self.nativeCurrentUser?.display_name
+            field.clearButtonMode = .whileEditing
+        }
+        alert.addTextField { field in
+            field.placeholder = "Bio"
+            field.text = currentProfile?.bio
+            field.clearButtonMode = .whileEditing
+        }
+        alert.addTextField { field in
+            field.placeholder = "Location"
+            field.text = currentProfile?.location
+            field.clearButtonMode = .whileEditing
+        }
+        alert.addTextField { field in
+            field.placeholder = "Website"
+            field.text = currentProfile?.website
+            field.clearButtonMode = .whileEditing
+        }
+        alert.addAction(UIAlertAction(title: "Save Profile", style: .default) { [weak self, weak alert] _ in
+            guard let self else { return }
+            let fields = alert?.textFields ?? []
+            self.submitNativeSettingsProfile(
+                displayName: fields.indices.contains(0) ? fields[0].text ?? "" : "",
+                bio: fields.indices.contains(1) ? fields[1].text ?? "" : "",
+                location: fields.indices.contains(2) ? fields[2].text ?? "" : "",
+                website: fields.indices.contains(3) ? fields[3].text ?? "" : ""
+            )
+        })
+        alert.addAction(UIAlertAction(title: "Profile Picture", style: .default) { [weak self] _ in
             self?.presentPhotoPicker(purpose: .profileAvatar, mediaFilter: .images)
         })
-        alert.addAction(UIAlertAction(title: "Change Profile Background", style: .default) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: "Profile Background", style: .default) { [weak self] _ in
             self?.presentPhotoPicker(purpose: .profileBanner, mediaFilter: .images)
-        })
-        alert.addAction(UIAlertAction(title: "View Profile", style: .default) { [weak self] _ in
-            self?.openPrimarySection(.profile)
         })
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         topPresentationController().present(alert, animated: true)
@@ -1586,13 +1615,61 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func presentNativeAdminPanel() {
-        let alert = UIAlertController(title: "Admin", message: "Admin controls no longer kick you out of the native shell. Use the website dashboard only when you need the full admin table.", preferredStyle: .actionSheet)
-        alert.addAction(UIAlertAction(title: "Stay Native", style: .default))
-        alert.addAction(UIAlertAction(title: "Open Dashboard", style: .destructive) { [weak self] _ in
+        let alert = UIAlertController(title: "Admin", message: "Native admin actions stay in the app. Open the full dashboard only for advanced tables.", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Create Poll", style: .default) { [weak self] _ in
+            self?.showNativeFlash(message: "Native poll creation is coming next.", category: "success")
+        })
+        alert.addAction(UIAlertAction(title: "Manage Users", style: .default) { [weak self] _ in
+            self?.showNativeFlash(message: "Native user tools are coming next.", category: "success")
+        })
+        alert.addAction(UIAlertAction(title: "Open Full Dashboard", style: .destructive) { [weak self] _ in
             self?.navigateWebView(to: "/admin", replace: false)
         })
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         topPresentationController().present(alert, animated: true)
+    }
+
+    private func submitNativeSettingsProfile(displayName: String, bio: String, location: String, website: String) {
+        guard let targetURL = URL(string: "/settings", relativeTo: webView?.url)?.absoluteURL else { return }
+        showNativeFlash(message: "Saving settings...", category: "success")
+        fetchCookieHeader(for: targetURL) { [weak self] cookieHeader in
+            guard let self else { return }
+            var components = URLComponents()
+            components.queryItems = [
+                URLQueryItem(name: "display_name", value: displayName.trimmingCharacters(in: .whitespacesAndNewlines)),
+                URLQueryItem(name: "bio", value: bio.trimmingCharacters(in: .whitespacesAndNewlines)),
+                URLQueryItem(name: "location", value: location.trimmingCharacters(in: .whitespacesAndNewlines)),
+                URLQueryItem(name: "website", value: website.trimmingCharacters(in: .whitespacesAndNewlines)),
+                URLQueryItem(name: "profile_public", value: "on"),
+                URLQueryItem(name: "allow_messages", value: "on"),
+                URLQueryItem(name: "push_enabled", value: "on")
+            ]
+            var request = URLRequest(url: targetURL)
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
+            request.setValue("fetch", forHTTPHeaderField: "X-Requested-With")
+            request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
+            if let cookieHeader, !cookieHeader.isEmpty {
+                request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+            }
+            URLSession.shared.dataTask(with: request) { _, response, error in
+                DispatchQueue.main.async {
+                    guard error == nil,
+                          let status = (response as? HTTPURLResponse)?.statusCode,
+                          (200..<400).contains(status) else {
+                        self.showNativeFlash(message: "Settings failed to save.", category: "error")
+                        return
+                    }
+                    self.showNativeFlash(message: "Settings saved.", category: "success")
+                    if self.currentPrimarySection == .profile {
+                        self.loadNativeProfile(username: self.currentUsername, force: true)
+                    }
+                    if self.currentPrimarySection == .feed {
+                        self.loadNativeFeed(force: true)
+                    }
+                }
+            }.resume()
+        }
     }
 
     private func setNativeAuthVisible(_ visible: Bool, animated: Bool) {
@@ -1987,6 +2064,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             return true
         }
         return false
+    }
+
+    private func routeShouldStayNativeFeed(_ route: String) -> Bool {
+        let path = URLComponents(string: "https://local\(route)")?.path ?? route
+        return ["/admin", "/settings", "/saved"].contains(path)
     }
 
     private func routeSupportsNativeFeed(_ route: String) -> Bool {
@@ -2427,6 +2509,19 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 self.currentFeedTab = payload["feedMode"] as? String ?? "home"
                 let payloadRoute = payload["currentRoute"] as? String ?? ""
                 let payloadSection = PrimarySection(rawValue: payload["primarySection"] as? String ?? "feed") ?? .feed
+                if loggedIn && self.routeShouldStayNativeFeed(payloadRoute) {
+                    self.currentPrimarySection = .feed
+                    self.currentRoute = "/"
+                    self.lastRouteBySection[.feed] = "/"
+                    self.currentUsername = username
+                    self.navigateWebView(to: "/", replace: true)
+                    self.handleLoginState(loggedIn: loggedIn, username: username)
+                    self.setComposeButtonVisible(true, animated: true)
+                    self.updateNativeTabSelection(animated: true)
+                    self.prefetchPrimaryRoutesIfNeeded(username: username)
+                    self.updateNativeSectionPresentation()
+                    return
+                }
                 let shouldPreserveNativeRoute = self.shouldPreserveNativeSection(against: payloadRoute)
                 if !shouldPreserveNativeRoute {
                     self.currentPrimarySection = payloadSection
@@ -2491,6 +2586,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeAuthLoginButton.alpha = 1
         if !wasLoggedIn {
             maybeRequestNotificationPermission(for: username)
+            currentPrimarySection = .feed
+            currentRoute = "/"
+            lastRouteBySection[.feed] = "/"
+            navigateWebView(to: "/", replace: true)
         }
         if !username.isEmpty {
             lastRouteBySection[.profile] = "/users/\(username)"
@@ -2923,6 +3022,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func performNativeJSONRequest(path: String, method: String = "GET", bodyObject: Any? = nil, completion: @escaping (Result<Data, Error>) -> Void) {
+        performNativeJSONWebViewRequest(path: path, method: method, bodyObject: bodyObject, completion: completion)
+    }
+
+    private func performNativeURLSessionJSONRequest(path: String, method: String = "GET", bodyObject: Any? = nil, completion: @escaping (Result<Data, Error>) -> Void) {
         let finish: (Result<Data, Error>) -> Void = { result in
             DispatchQueue.main.async {
                 completion(result)
@@ -3423,13 +3526,23 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func loadNativeSearch(query: String) {
-        guard isLoggedIntoWebApp, !isLoadingNativeSearch else { return }
+        guard isLoggedIntoWebApp else { return }
+        if isLoadingNativeSearch {
+            pendingNativeSearchQuery = query
+            return
+        }
         isLoadingNativeSearch = true
         let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         performNativeJSONRequest(path: "/api/search?q=\(encoded)") { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isLoadingNativeSearch = false
+                if let pending = self.pendingNativeSearchQuery, pending != query {
+                    self.pendingNativeSearchQuery = nil
+                    self.loadNativeSearch(query: pending)
+                    return
+                }
+                self.pendingNativeSearchQuery = nil
                 switch result {
                 case .success(let data):
                     guard let payload = try? JSONDecoder().decode(NativeSearchResponse.self, from: data), payload.ok else {
@@ -3894,6 +4007,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             let status = nativeInt(from: payload["status"]) ?? 0
             let preview = String(responseText.prefix(300)).replacingOccurrences(of: "\n", with: " ")
             print("Native DM response status=\(status) body=\(preview)")
+            guard (200..<300).contains(status) else {
+                completion(.failure(NSError(domain: "NativeMessages", code: status, userInfo: [NSLocalizedDescriptionKey: preview.isEmpty ? "Native request failed." : preview])))
+                return
+            }
             completion(.success(responseText.data(using: .utf8) ?? Data()))
             return
         }
@@ -3906,6 +4023,21 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         currentFeedTab = payload["feedMode"] as? String ?? "home"
         let payloadRoute = payload["currentRoute"] as? String ?? ""
         let payloadSection = PrimarySection(rawValue: payload["primarySection"] as? String ?? "feed") ?? .feed
+        if loggedIn && routeShouldStayNativeFeed(payloadRoute) {
+            currentPrimarySection = .feed
+            currentRoute = "/"
+            lastRouteBySection[.feed] = "/"
+            currentUsername = username
+            navigateWebView(to: "/", replace: true)
+            DispatchQueue.main.async {
+                self.handleLoginState(loggedIn: loggedIn, username: username)
+                self.setComposeButtonVisible(true, animated: true)
+                self.updateNativeTabSelection(animated: true)
+                self.prefetchPrimaryRoutesIfNeeded(username: username)
+                self.updateNativeSectionPresentation()
+            }
+            return
+        }
         let shouldPreserveNativeRoute = shouldPreserveNativeSection(against: payloadRoute)
         if !shouldPreserveNativeRoute {
             currentPrimarySection = payloadSection
