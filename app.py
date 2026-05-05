@@ -1622,6 +1622,29 @@ def create_app():
         register_visible_posts(saved, current_user())
         return render_template("index.html", posts=saved, title="Bookmarks", page_mode="bookmarks")
 
+    @app.route("/api/bookmarks")
+    @login_required
+    def api_bookmarks():
+        user = current_user()
+        saved = (
+            Post.query.join(Bookmark, Bookmark.post_id == Post.id)
+            .filter(Bookmark.user_id == user.id)
+            .order_by(Bookmark.created_at.desc())
+            .all()
+        )
+        register_visible_posts(saved, user)
+        return jsonify(
+            {
+                "ok": True,
+                "count": len(saved),
+                "posts": [
+                    serialized
+                    for serialized in (serialize_feed_post(post, user) for post in saved)
+                    if serialized
+                ],
+            }
+        )
+
     @app.route("/report", methods=["POST"])
     @login_required
     def report():
@@ -1661,6 +1684,58 @@ def create_app():
         db.session.commit()
         flash("Vote saved.", "success")
         return redirect(request.referrer or url_for("index"))
+
+    @app.route("/api/admin/summary")
+    @admin_required
+    def api_admin_summary():
+        stats = {
+            "users": User.query.count(),
+            "posts": Post.query.count(),
+            "stories": Story.query.count(),
+            "reports": Report.query.filter_by(status="open").count(),
+            "messages": DirectMessage.query.count(),
+            "banned": User.query.filter_by(is_banned=True).count(),
+            "timeouts": len([user for user in User.query.all() if user.is_timed_out]),
+        }
+        reports = Report.query.filter_by(status="open").order_by(Report.created_at.desc()).limit(8).all()
+        users = User.query.order_by(User.created_at.desc()).limit(12).all()
+        polls = Poll.query.order_by(Poll.created_at.desc()).limit(8).all()
+        return jsonify(
+            {
+                "ok": True,
+                "stats": stats,
+                "reports": [
+                    {
+                        "id": report.id,
+                        "reason": report.reason,
+                        "status": report.status,
+                    }
+                    for report in reports
+                ],
+                "users": [
+                    {
+                        "id": user.id,
+                        "username": user.username,
+                        "display_name": user.display_name,
+                        "email": user.email,
+                        "is_admin": user.is_admin,
+                        "is_verified": user.is_verified,
+                        "is_creator": user.is_creator,
+                        "is_banned": user.is_banned,
+                    }
+                    for user in users
+                ],
+                "polls": [
+                    {
+                        "id": poll.id,
+                        "question": poll.question,
+                        "is_active": poll.is_active,
+                        "is_hidden_results": poll.is_hidden_results,
+                    }
+                    for poll in polls
+                ],
+            }
+        )
 
     @app.route("/admin", methods=["GET", "POST"])
     @admin_required

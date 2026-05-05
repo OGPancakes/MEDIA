@@ -85,6 +85,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeAccountUsernameLabel = UILabel()
     private let nativeAccountCloseButton = UIButton(type: .system)
     private let nativeAccountStack = UIStackView()
+    private let nativeUtilityDimView = UIControl()
+    private let nativeUtilitySheet = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
+    private let nativeUtilityHandle = UIView()
+    private let nativeUtilityTitleLabel = UILabel()
+    private let nativeUtilitySubtitleLabel = UILabel()
+    private let nativeUtilityCloseButton = UIButton(type: .system)
+    private let nativeUtilityScrollView = UIScrollView()
+    private let nativeUtilityStack = UIStackView()
     private let nativeAuthContainer = UIView()
     private let nativeAuthLogoView = UIImageView()
     private let nativeAuthTitleLabel = UILabel()
@@ -206,6 +214,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var activeMentionQuery = ""
     private var isApplyingComposerTextAttributes = false
     private var nativeMessageTarget: NativeUserSummary?
+    private var nativeSavedPosts: [NativeFeedPost] = []
     private var nativeRouteOverrideUntil: Date?
     private var pendingNativeJSONRequests: [String: (Result<Data, Error>) -> Void] = [:]
     private let nativeAvatarImageCache = NSCache<NSString, UIImage>()
@@ -237,6 +246,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         configureNativeStoryViewer()
         configureNativeConnections()
         configureNativeAccountMenu()
+        configureNativeUtilityPanel()
         configureNativeComments()
         configureNativeMessages()
         installKeyboardObservers()
@@ -1458,6 +1468,98 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         ])
     }
 
+    private func configureNativeUtilityPanel() {
+        nativeUtilityDimView.translatesAutoresizingMaskIntoConstraints = false
+        nativeUtilityDimView.backgroundColor = UIColor.black.withAlphaComponent(0.22)
+        nativeUtilityDimView.alpha = 0
+        nativeUtilityDimView.isHidden = true
+        nativeUtilityDimView.layer.zPosition = 92
+        nativeUtilityDimView.addTarget(self, action: #selector(dismissNativeUtilityPanel), for: .touchUpInside)
+        view.addSubview(nativeUtilityDimView)
+
+        nativeUtilitySheet.translatesAutoresizingMaskIntoConstraints = false
+        nativeUtilitySheet.layer.cornerRadius = 30
+        nativeUtilitySheet.layer.cornerCurve = .continuous
+        nativeUtilitySheet.clipsToBounds = true
+        nativeUtilitySheet.alpha = 0
+        nativeUtilitySheet.isHidden = true
+        nativeUtilitySheet.layer.zPosition = 94
+        view.addSubview(nativeUtilitySheet)
+
+        let content = nativeUtilitySheet.contentView
+        content.backgroundColor = UIColor.white.withAlphaComponent(0.96)
+
+        nativeUtilityHandle.translatesAutoresizingMaskIntoConstraints = false
+        nativeUtilityHandle.backgroundColor = UIColor(red: 16.0 / 255.0, green: 24.0 / 255.0, blue: 40.0 / 255.0, alpha: 0.16)
+        nativeUtilityHandle.layer.cornerRadius = 2.5
+        nativeUtilityHandle.layer.cornerCurve = .continuous
+        content.addSubview(nativeUtilityHandle)
+
+        nativeUtilityTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeUtilityTitleLabel.font = .systemFont(ofSize: 26, weight: .bold)
+        nativeUtilityTitleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        content.addSubview(nativeUtilityTitleLabel)
+
+        nativeUtilitySubtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeUtilitySubtitleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        nativeUtilitySubtitleLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+        nativeUtilitySubtitleLabel.numberOfLines = 2
+        content.addSubview(nativeUtilitySubtitleLabel)
+
+        nativeUtilityCloseButton.translatesAutoresizingMaskIntoConstraints = false
+        nativeUtilityCloseButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        nativeUtilityCloseButton.tintColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.72)
+        nativeUtilityCloseButton.backgroundColor = UIColor(red: 242.0 / 255.0, green: 247.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+        nativeUtilityCloseButton.layer.cornerRadius = 18
+        nativeUtilityCloseButton.layer.cornerCurve = .continuous
+        nativeUtilityCloseButton.addTarget(self, action: #selector(dismissNativeUtilityPanel), for: .touchUpInside)
+        content.addSubview(nativeUtilityCloseButton)
+
+        nativeUtilityScrollView.translatesAutoresizingMaskIntoConstraints = false
+        nativeUtilityScrollView.alwaysBounceVertical = true
+        nativeUtilityScrollView.keyboardDismissMode = .interactive
+        content.addSubview(nativeUtilityScrollView)
+
+        nativeUtilityStack.translatesAutoresizingMaskIntoConstraints = false
+        nativeUtilityStack.axis = .vertical
+        nativeUtilityStack.spacing = 14
+        nativeUtilityScrollView.addSubview(nativeUtilityStack)
+
+        NSLayoutConstraint.activate([
+            nativeUtilityDimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            nativeUtilityDimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nativeUtilityDimView.topAnchor.constraint(equalTo: view.topAnchor),
+            nativeUtilityDimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            nativeUtilitySheet.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
+            nativeUtilitySheet.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+            nativeUtilitySheet.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 28),
+            nativeUtilitySheet.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -14),
+            nativeUtilityHandle.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            nativeUtilityHandle.topAnchor.constraint(equalTo: content.topAnchor, constant: 10),
+            nativeUtilityHandle.widthAnchor.constraint(equalToConstant: 44),
+            nativeUtilityHandle.heightAnchor.constraint(equalToConstant: 5),
+            nativeUtilityTitleLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 22),
+            nativeUtilityTitleLabel.trailingAnchor.constraint(equalTo: nativeUtilityCloseButton.leadingAnchor, constant: -12),
+            nativeUtilityTitleLabel.topAnchor.constraint(equalTo: nativeUtilityHandle.bottomAnchor, constant: 22),
+            nativeUtilitySubtitleLabel.leadingAnchor.constraint(equalTo: nativeUtilityTitleLabel.leadingAnchor),
+            nativeUtilitySubtitleLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -22),
+            nativeUtilitySubtitleLabel.topAnchor.constraint(equalTo: nativeUtilityTitleLabel.bottomAnchor, constant: 4),
+            nativeUtilityCloseButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            nativeUtilityCloseButton.centerYAnchor.constraint(equalTo: nativeUtilityTitleLabel.centerYAnchor),
+            nativeUtilityCloseButton.widthAnchor.constraint(equalToConstant: 36),
+            nativeUtilityCloseButton.heightAnchor.constraint(equalToConstant: 36),
+            nativeUtilityScrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            nativeUtilityScrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            nativeUtilityScrollView.topAnchor.constraint(equalTo: nativeUtilitySubtitleLabel.bottomAnchor, constant: 18),
+            nativeUtilityScrollView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            nativeUtilityStack.leadingAnchor.constraint(equalTo: nativeUtilityScrollView.contentLayoutGuide.leadingAnchor, constant: 18),
+            nativeUtilityStack.trailingAnchor.constraint(equalTo: nativeUtilityScrollView.contentLayoutGuide.trailingAnchor, constant: -18),
+            nativeUtilityStack.topAnchor.constraint(equalTo: nativeUtilityScrollView.contentLayoutGuide.topAnchor),
+            nativeUtilityStack.bottomAnchor.constraint(equalTo: nativeUtilityScrollView.contentLayoutGuide.bottomAnchor, constant: -24),
+            nativeUtilityStack.widthAnchor.constraint(equalTo: nativeUtilityScrollView.frameLayoutGuide.widthAnchor, constant: -36)
+        ])
+    }
+
     private func addNativeAccountMenuButton(title: String, symbol: String, route: String?) {
         let button = UIButton(type: .system)
         button.setTitle(title, for: .normal)
@@ -1564,69 +1666,365 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         openPrimarySection(.profile)
     }
 
+    private func presentNativeUtilityPanel(title: String, subtitle: String) {
+        view.endEditing(true)
+        nativeUtilityTitleLabel.text = title
+        nativeUtilitySubtitleLabel.text = subtitle
+        nativeUtilityStack.arrangedSubviews.forEach { view in
+            nativeUtilityStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        nativeUtilityScrollView.setContentOffset(.zero, animated: false)
+        nativeUtilityDimView.isHidden = false
+        nativeUtilitySheet.isHidden = false
+        view.bringSubviewToFront(nativeUtilityDimView)
+        view.bringSubviewToFront(nativeUtilitySheet)
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut]) {
+            self.nativeUtilityDimView.alpha = 1
+            self.nativeUtilitySheet.alpha = 1
+        }
+    }
+
+    @objc private func dismissNativeUtilityPanel() {
+        view.endEditing(true)
+        UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
+            self.nativeUtilityDimView.alpha = 0
+            self.nativeUtilitySheet.alpha = 0
+        } completion: { _ in
+            self.nativeUtilityDimView.isHidden = true
+            self.nativeUtilitySheet.isHidden = true
+        }
+    }
+
     private func presentNativeSettingsPanel() {
+        presentNativeUtilityPanel(title: "Settings", subtitle: "Update profile details, picture, and background without leaving the native app.")
         let currentProfile = nativeProfileUser?.username == currentUsername ? nativeProfileUser : nil
-        let alert = UIAlertController(title: "Settings", message: "Edit profile details or update profile media.", preferredStyle: .alert)
-        alert.addTextField { field in
-            field.placeholder = "Display name"
-            field.text = currentProfile?.display_name ?? self.nativeCurrentUser?.display_name
-            field.clearButtonMode = .whileEditing
+
+        let header = nativeUtilityCard()
+        let headerStack = UIStackView()
+        headerStack.translatesAutoresizingMaskIntoConstraints = false
+        headerStack.axis = .horizontal
+        headerStack.alignment = .center
+        headerStack.spacing = 14
+        header.addSubview(headerStack)
+
+        let avatar = NativeAvatarView()
+        avatar.translatesAutoresizingMaskIntoConstraints = false
+        if let currentUser = nativeCurrentUser {
+            avatar.configure(with: currentUser, imageCache: nativeAvatarImageCache)
         }
-        alert.addTextField { field in
-            field.placeholder = "Bio"
-            field.text = currentProfile?.bio
-            field.clearButtonMode = .whileEditing
-        }
-        alert.addTextField { field in
-            field.placeholder = "Location"
-            field.text = currentProfile?.location
-            field.clearButtonMode = .whileEditing
-        }
-        alert.addTextField { field in
-            field.placeholder = "Website"
-            field.text = currentProfile?.website
-            field.clearButtonMode = .whileEditing
-        }
-        alert.addAction(UIAlertAction(title: "Save Profile", style: .default) { [weak self, weak alert] _ in
-            guard let self else { return }
-            let fields = alert?.textFields ?? []
-            self.submitNativeSettingsProfile(
-                displayName: fields.indices.contains(0) ? fields[0].text ?? "" : "",
-                bio: fields.indices.contains(1) ? fields[1].text ?? "" : "",
-                location: fields.indices.contains(2) ? fields[2].text ?? "" : "",
-                website: fields.indices.contains(3) ? fields[3].text ?? "" : ""
-            )
-        })
-        alert.addAction(UIAlertAction(title: "Profile Picture", style: .default) { [weak self] _ in
+        headerStack.addArrangedSubview(avatar)
+
+        let identityStack = UIStackView()
+        identityStack.axis = .vertical
+        identityStack.spacing = 3
+        let nameLabel = utilityLabel(currentProfile?.display_name ?? nativeCurrentUser?.display_name ?? "Profile", size: 18, weight: .bold)
+        let handleLabel = utilityLabel(currentProfile.map { "@\($0.username)" } ?? "@\(currentUsername)", size: 14, weight: .semibold, color: UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86))
+        identityStack.addArrangedSubview(nameLabel)
+        identityStack.addArrangedSubview(handleLabel)
+        headerStack.addArrangedSubview(identityStack)
+        NSLayoutConstraint.activate([
+            headerStack.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 18),
+            headerStack.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -18),
+            headerStack.topAnchor.constraint(equalTo: header.topAnchor, constant: 18),
+            headerStack.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -18),
+            avatar.widthAnchor.constraint(equalToConstant: 58),
+            avatar.heightAnchor.constraint(equalToConstant: 58)
+        ])
+        nativeUtilityStack.addArrangedSubview(header)
+
+        let displayNameField = utilityTextField(placeholder: "Display name", text: currentProfile?.display_name ?? nativeCurrentUser?.display_name ?? "")
+        let bioField = utilityTextField(placeholder: "Bio", text: currentProfile?.bio ?? "")
+        let locationField = utilityTextField(placeholder: "Location", text: currentProfile?.location ?? "")
+        let websiteField = utilityTextField(placeholder: "Website", text: currentProfile?.website ?? "")
+        [displayNameField, bioField, locationField, websiteField].forEach { nativeUtilityStack.addArrangedSubview($0) }
+
+        nativeUtilityStack.addArrangedSubview(utilityActionRow(title: "Change profile picture", subtitle: "Square crop with zoom and drag.", symbol: "person.crop.circle.fill") { [weak self] in
             self?.presentPhotoPicker(purpose: .profileAvatar, mediaFilter: .images)
         })
-        alert.addAction(UIAlertAction(title: "Profile Background", style: .default) { [weak self] _ in
+        nativeUtilityStack.addArrangedSubview(utilityActionRow(title: "Change profile background", subtitle: "Wide banner crop with zoom and drag.", symbol: "photo.on.rectangle.angled") { [weak self] in
             self?.presentPhotoPicker(purpose: .profileBanner, mediaFilter: .images)
         })
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        topPresentationController().present(alert, animated: true)
+        nativeUtilityStack.addArrangedSubview(utilityPrimaryButton(title: "Save Profile") { [weak self] in
+            guard let self else { return }
+            self.submitNativeSettingsProfile(
+                displayName: displayNameField.text ?? "",
+                bio: bioField.text ?? "",
+                location: locationField.text ?? "",
+                website: websiteField.text ?? ""
+            )
+        })
     }
 
     private func presentNativeSavedPanel() {
-        let alert = UIAlertController(title: "Saved", message: "Saved posts stay in the native shell now. A full saved-posts list is next.", preferredStyle: .actionSheet)
-        alert.addAction(UIAlertAction(title: "Stay on Feed", style: .default))
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        topPresentationController().present(alert, animated: true)
+        presentNativeUtilityPanel(title: "Saved", subtitle: "Your bookmarked posts, kept inside the native shell.")
+        nativeUtilityStack.addArrangedSubview(utilityLoadingCard("Loading saved posts..."))
+        loadNativeSavedPosts()
     }
 
     private func presentNativeAdminPanel() {
-        let alert = UIAlertController(title: "Admin", message: "Native admin actions stay in the app. Open the full dashboard only for advanced tables.", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Create Poll", style: .default) { [weak self] _ in
-            self?.showNativeFlash(message: "Native poll creation is coming next.", category: "success")
+        presentNativeUtilityPanel(title: "Admin", subtitle: "Moderation and app health, native and quick.")
+        nativeUtilityStack.addArrangedSubview(utilityLoadingCard("Loading admin tools..."))
+        loadNativeAdminSummary()
+    }
+
+    private func utilityLabel(_ text: String, size: CGFloat, weight: UIFont.Weight, color: UIColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)) -> UILabel {
+        let label = UILabel()
+        label.text = text
+        label.font = .systemFont(ofSize: size, weight: weight)
+        label.textColor = color
+        label.numberOfLines = 0
+        return label
+    }
+
+    private func nativeUtilityCard() -> UIView {
+        let card = UIView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = UIColor(red: 246.0 / 255.0, green: 249.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+        card.layer.cornerRadius = 22
+        card.layer.cornerCurve = .continuous
+        card.layer.borderWidth = 1
+        card.layer.borderColor = UIColor(red: 222.0 / 255.0, green: 230.0 / 255.0, blue: 244.0 / 255.0, alpha: 1).cgColor
+        return card
+    }
+
+    private func utilityTextField(placeholder: String, text: String) -> UITextField {
+        let field = UITextField()
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.placeholder = placeholder
+        field.text = text
+        field.clearButtonMode = .whileEditing
+        field.autocorrectionType = .yes
+        field.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        field.font = .systemFont(ofSize: 16, weight: .semibold)
+        field.backgroundColor = UIColor(red: 246.0 / 255.0, green: 249.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+        field.layer.cornerRadius = 18
+        field.layer.cornerCurve = .continuous
+        field.layer.borderWidth = 1
+        field.layer.borderColor = UIColor(red: 222.0 / 255.0, green: 230.0 / 255.0, blue: 244.0 / 255.0, alpha: 1).cgColor
+        field.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 16, height: 1))
+        field.leftViewMode = .always
+        field.heightAnchor.constraint(equalToConstant: 54).isActive = true
+        return field
+    }
+
+    private func utilityPrimaryButton(title: String, action: @escaping () -> Void) -> UIButton {
+        let button = UIButton(type: .system)
+        button.setTitle(title, for: .normal)
+        button.setTitleColor(.white, for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 17, weight: .bold)
+        button.backgroundColor = UIColor(red: 26.0 / 255.0, green: 72.0 / 255.0, blue: 154.0 / 255.0, alpha: 1)
+        button.layer.cornerRadius = 20
+        button.layer.cornerCurve = .continuous
+        button.heightAnchor.constraint(equalToConstant: 54).isActive = true
+        button.addAction(UIAction { _ in action() }, for: .touchUpInside)
+        return button
+    }
+
+    private func utilityActionRow(title: String, subtitle: String, symbol: String, action: @escaping () -> Void) -> UIView {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.backgroundColor = UIColor(red: 246.0 / 255.0, green: 249.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+        button.layer.cornerRadius = 20
+        button.layer.cornerCurve = .continuous
+        button.layer.borderWidth = 1
+        button.layer.borderColor = UIColor(red: 222.0 / 255.0, green: 230.0 / 255.0, blue: 244.0 / 255.0, alpha: 1).cgColor
+        button.addAction(UIAction { _ in action() }, for: .touchUpInside)
+
+        let icon = UIImageView(image: UIImage(systemName: symbol))
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.tintColor = UIColor(red: 26.0 / 255.0, green: 72.0 / 255.0, blue: 154.0 / 255.0, alpha: 1)
+        button.addSubview(icon)
+
+        let titleLabel = utilityLabel(title, size: 16, weight: .bold)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(titleLabel)
+
+        let subtitleLabel = utilityLabel(subtitle, size: 13, weight: .semibold, color: UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86))
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(subtitleLabel)
+
+        let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.tintColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.45)
+        button.addSubview(chevron)
+
+        NSLayoutConstraint.activate([
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 70),
+            icon.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 16),
+            icon.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 26),
+            icon.heightAnchor.constraint(equalToConstant: 26),
+            chevron.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -16),
+            chevron.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            titleLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 14),
+            titleLabel.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: -12),
+            titleLabel.topAnchor.constraint(equalTo: button.topAnchor, constant: 15),
+            subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            subtitleLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 3),
+            subtitleLabel.bottomAnchor.constraint(lessThanOrEqualTo: button.bottomAnchor, constant: -15)
+        ])
+        return button
+    }
+
+    private func utilityLoadingCard(_ text: String) -> UIView {
+        let card = nativeUtilityCard()
+        let label = utilityLabel(text, size: 16, weight: .bold, color: UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86))
+        label.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 18),
+            label.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -18),
+            label.topAnchor.constraint(equalTo: card.topAnchor, constant: 22),
+            label.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -22)
+        ])
+        return card
+    }
+
+    private func replaceNativeUtilityContent(with views: [UIView]) {
+        nativeUtilityStack.arrangedSubviews.forEach { view in
+            nativeUtilityStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        views.forEach { nativeUtilityStack.addArrangedSubview($0) }
+    }
+
+    private func loadNativeSavedPosts() {
+        performNativeJSONRequest(path: "/api/bookmarks") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeSavedResponse.self, from: data), payload.ok else {
+                        self.replaceNativeUtilityContent(with: [self.utilityLoadingCard("Saved posts couldn't load.")])
+                        return
+                    }
+                    self.nativeSavedPosts = payload.posts
+                    if payload.posts.isEmpty {
+                        self.replaceNativeUtilityContent(with: [self.utilityLoadingCard("No saved posts yet.")])
+                    } else {
+                        self.replaceNativeUtilityContent(with: payload.posts.map { self.utilitySavedPostCard($0) })
+                    }
+                    self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(8)))
+                case .failure:
+                    self.replaceNativeUtilityContent(with: [self.utilityLoadingCard("Saved posts couldn't load.")])
+                }
+            }
+        }
+    }
+
+    private func utilitySavedPostCard(_ post: NativeFeedPost) -> UIView {
+        let card = nativeUtilityCard()
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 8
+        card.addSubview(stack)
+        stack.addArrangedSubview(utilityLabel(post.author.display_name, size: 16, weight: .bold))
+        stack.addArrangedSubview(utilityLabel(post.body.isEmpty ? "Media post" : post.body, size: 15, weight: .semibold, color: UIColor(red: 38.0 / 255.0, green: 49.0 / 255.0, blue: 80.0 / 255.0, alpha: 0.94)))
+        stack.addArrangedSubview(utilityLabel("\(post.like_count) likes  \(post.comment_count) comments  \(post.repost_count) reposts", size: 13, weight: .bold, color: UIColor(red: 119.0 / 255.0, green: 130.0 / 255.0, blue: 158.0 / 255.0, alpha: 1)))
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleSavedPostTap(_:)))
+        card.addGestureRecognizer(tap)
+        card.isUserInteractionEnabled = true
+        card.tag = post.id
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 18),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -18),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 18),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -18)
+        ])
+        return card
+    }
+
+    @objc private func handleSavedPostTap(_ gesture: UITapGestureRecognizer) {
+        guard let postID = gesture.view?.tag,
+              let post = nativeSavedPosts.first(where: { $0.id == postID }) else { return }
+        dismissNativeUtilityPanel()
+        showNativePostDetail(for: post)
+    }
+
+    private func loadNativeAdminSummary() {
+        performNativeJSONRequest(path: "/api/admin/summary") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeAdminSummaryResponse.self, from: data), payload.ok else {
+                        self.replaceNativeUtilityContent(with: [self.utilityLoadingCard("Admin tools couldn't load.")])
+                        return
+                    }
+                    self.renderNativeAdminSummary(payload)
+                case .failure:
+                    self.replaceNativeUtilityContent(with: [self.utilityLoadingCard("Admin tools couldn't load.")])
+                }
+            }
+        }
+    }
+
+    private func renderNativeAdminSummary(_ summary: NativeAdminSummaryResponse) {
+        var views: [UIView] = []
+        let statsCard = nativeUtilityCard()
+        let grid = UIStackView()
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        grid.axis = .vertical
+        grid.spacing = 10
+        statsCard.addSubview(grid)
+        let rowOne = UIStackView()
+        rowOne.axis = .horizontal
+        rowOne.distribution = .fillEqually
+        rowOne.spacing = 10
+        let rowTwo = UIStackView()
+        rowTwo.axis = .horizontal
+        rowTwo.distribution = .fillEqually
+        rowTwo.spacing = 10
+        rowOne.addArrangedSubview(adminStatTile(title: "Users", value: summary.stats.users))
+        rowOne.addArrangedSubview(adminStatTile(title: "Posts", value: summary.stats.posts))
+        rowTwo.addArrangedSubview(adminStatTile(title: "Reports", value: summary.stats.reports))
+        rowTwo.addArrangedSubview(adminStatTile(title: "Stories", value: summary.stats.stories))
+        grid.addArrangedSubview(rowOne)
+        grid.addArrangedSubview(rowTwo)
+        NSLayoutConstraint.activate([
+            grid.leadingAnchor.constraint(equalTo: statsCard.leadingAnchor, constant: 14),
+            grid.trailingAnchor.constraint(equalTo: statsCard.trailingAnchor, constant: -14),
+            grid.topAnchor.constraint(equalTo: statsCard.topAnchor, constant: 14),
+            grid.bottomAnchor.constraint(equalTo: statsCard.bottomAnchor, constant: -14)
+        ])
+        views.append(statsCard)
+        views.append(utilityActionRow(title: "Create poll", subtitle: "Use the native composer soon; dashboard fallback is disabled.", symbol: "chart.bar.doc.horizontal") { [weak self] in
+            self?.showNativeFlash(message: "Native poll creation is next.", category: "success")
         })
-        alert.addAction(UIAlertAction(title: "Manage Users", style: .default) { [weak self] _ in
-            self?.showNativeFlash(message: "Native user tools are coming next.", category: "success")
+        views.append(utilityActionRow(title: "Manage users", subtitle: "\(summary.users.count) recent accounts loaded here.", symbol: "person.2.fill") { [weak self] in
+            self?.showNativeFlash(message: "Native user editing is next.", category: "success")
         })
-        alert.addAction(UIAlertAction(title: "Open Full Dashboard", style: .destructive) { [weak self] _ in
-            self?.navigateWebView(to: "/admin", replace: false)
-        })
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        topPresentationController().present(alert, animated: true)
+        if !summary.reports.isEmpty {
+            views.append(utilityLoadingCard("\(summary.reports.count) open reports need review."))
+        }
+        if !summary.polls.isEmpty {
+            views.append(utilityLoadingCard("\(summary.polls.count) recent polls are active or archived."))
+        }
+        replaceNativeUtilityContent(with: views)
+    }
+
+    private func adminStatTile(title: String, value: Int) -> UIView {
+        let tile = UIView()
+        tile.backgroundColor = .white
+        tile.layer.cornerRadius = 18
+        tile.layer.cornerCurve = .continuous
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 2
+        tile.addSubview(stack)
+        stack.addArrangedSubview(utilityLabel("\(value)", size: 24, weight: .heavy))
+        stack.addArrangedSubview(utilityLabel(title, size: 13, weight: .bold, color: UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)))
+        NSLayoutConstraint.activate([
+            tile.heightAnchor.constraint(equalToConstant: 74),
+            stack.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -14),
+            stack.centerYAnchor.constraint(equalTo: tile.centerYAnchor)
+        ])
+        return tile
     }
 
     private func submitNativeSettingsProfile(displayName: String, bio: String, location: String, website: String) {
@@ -2593,6 +2991,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         if !username.isEmpty {
             lastRouteBySection[.profile] = "/users/\(username)"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self, self.isLoggedIntoWebApp, self.currentUsername == username else { return }
+                self.loadNativeProfile(username: username, force: false)
+                self.loadNativeSearch(query: "")
+            }
         }
         updateNativeAccountAvatar()
         setNativeAccountButtonVisible(currentPrimarySection == .feed, animated: true)
@@ -4971,6 +5374,19 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
             }
             var body = Data()
+            let profile = self.nativeProfileUser?.username == self.currentUsername ? self.nativeProfileUser : nil
+            let preservedFields: [String: String] = [
+                "display_name": profile?.display_name ?? self.nativeCurrentUser?.display_name ?? self.currentUsername,
+                "bio": profile?.bio ?? "",
+                "location": profile?.location ?? "",
+                "website": profile?.website ?? "",
+                "profile_public": "on",
+                "allow_messages": "on",
+                "push_enabled": "on"
+            ]
+            preservedFields.forEach { key, value in
+                self.appendMultipartField(name: key, value: value, boundary: boundary, to: &body)
+            }
             body.append("--\(boundary)\r\n".data(using: .utf8)!)
             body.append("Content-Disposition: form-data; name=\"\(fieldName)\"; filename=\"\(imageName)\"\r\n".data(using: .utf8)!)
             body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
@@ -4997,6 +5413,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 }
             }.resume()
         }
+    }
+
+    private func appendMultipartField(name: String, value: String, boundary: String, to body: inout Data) {
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+        body.append(value.data(using: .utf8) ?? Data())
+        body.append("\r\n".data(using: .utf8)!)
     }
 
     private func uploadNativeStory(imageData: Data, imageName: String, mimeType: String) {
@@ -5195,6 +5618,54 @@ private struct NativeSearchResponse: Decodable {
     let query: String
     let users: [NativeProfileUser]
     let posts: [NativeFeedPost]
+}
+
+private struct NativeSavedResponse: Decodable {
+    let ok: Bool
+    let count: Int
+    let posts: [NativeFeedPost]
+}
+
+private struct NativeAdminSummaryResponse: Decodable {
+    let ok: Bool
+    let stats: NativeAdminStats
+    let users: [NativeAdminUser]
+    let reports: [NativeAdminReport]
+    let polls: [NativeAdminPoll]
+}
+
+private struct NativeAdminStats: Decodable {
+    let users: Int
+    let posts: Int
+    let stories: Int
+    let reports: Int
+    let messages: Int
+    let banned: Int
+    let timeouts: Int
+}
+
+private struct NativeAdminUser: Decodable {
+    let id: Int
+    let username: String
+    let display_name: String
+    let email: String
+    let is_admin: Bool
+    let is_verified: Bool
+    let is_creator: Bool
+    let is_banned: Bool
+}
+
+private struct NativeAdminReport: Decodable {
+    let id: Int
+    let reason: String
+    let status: String
+}
+
+private struct NativeAdminPoll: Decodable {
+    let id: Int
+    let question: String
+    let is_active: Bool
+    let is_hidden_results: Bool
 }
 
 private struct NativeConnectionsResponse: Decodable {
@@ -5903,15 +6374,16 @@ private final class NativeImageAdjustViewController: UIViewController, UIScrollV
         scrollView.layer.cornerRadius = 22
         scrollView.layer.cornerCurve = .continuous
         scrollView.clipsToBounds = true
-        scrollView.minimumZoomScale = 0.5
-        scrollView.maximumZoomScale = 4
+        scrollView.minimumZoomScale = 1
+        scrollView.maximumZoomScale = 5
+        scrollView.bouncesZoom = true
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
         view.addSubview(scrollView)
 
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.image = image
-        imageView.contentMode = .scaleAspectFit
+        imageView.contentMode = .scaleAspectFill
         scrollView.addSubview(imageView)
 
         cropGuide.translatesAutoresizingMaskIntoConstraints = false
@@ -5946,6 +6418,11 @@ private final class NativeImageAdjustViewController: UIViewController, UIScrollV
             imageView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
             imageView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
         ])
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        cropGuide.layer.cornerRadius = circularGuide ? cropGuide.bounds.width / 2 : 18
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
