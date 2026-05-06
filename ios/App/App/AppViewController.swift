@@ -282,8 +282,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func configureWebView() {
         guard let webView = webView else { return }
-        webView.isHidden = true
-        webView.alpha = 0
+        webView.isHidden = false
+        webView.alpha = 0.01
         webView.isOpaque = true
         webView.backgroundColor = shellBackground
         if #available(iOS 15.0, *) {
@@ -2114,7 +2114,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func setNativeAuthVisible(_ visible: Bool, animated: Bool) {
-        guard isNativeAuthVisible != visible else { return }
+        if visible {
+            nativeAuthContainer.isHidden = false
+            view.bringSubviewToFront(nativeAuthContainer)
+        }
+        guard isNativeAuthVisible != visible || nativeAuthContainer.isHidden == visible else { return }
         isNativeAuthVisible = visible
         let changes = { self.nativeAuthContainer.alpha = visible ? 1 : 0 }
         let completion: (Bool) -> Void = { _ in
@@ -2126,6 +2130,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         } else {
             nativeAuthContainer.isHidden = !visible
             changes()
+            if visible {
+                view.bringSubviewToFront(nativeAuthContainer)
+            }
         }
     }
 
@@ -3005,6 +3012,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             hideNativeProfileIfNeeded()
             hideNativeSearchIfNeeded()
             setNativeAccountButtonVisible(false, animated: true)
+            setNativeAuthVisible(true, animated: false)
             return
         }
         nativeAuthUsernameField.resignFirstResponder()
