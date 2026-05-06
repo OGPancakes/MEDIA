@@ -2995,6 +2995,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.updateNativeSectionPresentation()
                     return
                 }
+                if !loggedIn, self.isLoggedIntoWebApp, self.nativeCurrentUser != nil {
+                    return
+                }
                 let shouldPreserveNativeRoute = self.shouldPreserveNativeSection(against: payloadRoute)
                 if !shouldPreserveNativeRoute {
                     self.currentPrimarySection = payloadSection
@@ -4571,6 +4574,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 self.prefetchPrimaryRoutesIfNeeded(username: username)
                 self.updateNativeSectionPresentation()
             }
+            return
+        }
+        if !loggedIn, isLoggedIntoWebApp, nativeCurrentUser != nil {
             return
         }
         let shouldPreserveNativeRoute = shouldPreserveNativeSection(against: payloadRoute)
