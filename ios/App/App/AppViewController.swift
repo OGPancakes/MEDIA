@@ -466,6 +466,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         field.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 16, height: 1))
         field.leftViewMode = .always
         field.isSecureTextEntry = secure
+        field.textContentType = secure ? .password : .username
         field.autocapitalizationType = .none
         field.autocorrectionType = .no
         field.returnKeyType = secure ? .go : .next
@@ -2149,6 +2150,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func setNativeAuthVisible(_ visible: Bool, animated: Bool) {
         if visible {
             nativeAuthContainer.isHidden = false
+            webView?.isUserInteractionEnabled = false
             view.bringSubviewToFront(nativeAuthContainer)
         }
         guard isNativeAuthVisible != visible || nativeAuthContainer.isHidden == visible else { return }
@@ -2156,6 +2158,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let changes = { self.nativeAuthContainer.alpha = visible ? 1 : 0 }
         let completion: (Bool) -> Void = { _ in
             self.nativeAuthContainer.isHidden = !visible
+            self.webView?.isUserInteractionEnabled = !visible && !self.isLoggedIntoWebApp
         }
         if animated {
             if visible { nativeAuthContainer.isHidden = false }
@@ -2937,6 +2940,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func syncComposerAvailabilityFromPage() {
+        guard isLoggedIntoWebApp || nativeAuthContainer.isHidden else { return }
         let script = """
         (function() {
           if (document.body) {
@@ -3024,6 +3028,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         setNativeAuthVisible(!loggedIn, animated: true)
         setNativeTabBarVisible(loggedIn, animated: true)
         guard loggedIn else {
+            if !wasLoggedIn {
+                setNativeAuthVisible(true, animated: false)
+                return
+            }
             lastRegisteredPushToken = nil
             warmedRoutesForUsername = nil
             currentUsername = ""
