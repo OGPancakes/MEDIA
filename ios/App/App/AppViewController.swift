@@ -311,11 +311,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func bringActiveNativeLayersToFront() {
-        if isLoggedIntoWebApp {
-            webView?.isUserInteractionEnabled = false
-        } else {
-            webView?.isUserInteractionEnabled = nativeAuthContainer.isHidden
-        }
+        webView?.isUserInteractionEnabled = true
         if !nativeFeedContainer.isHidden {
             view.bringSubviewToFront(nativeFeedContainer)
         }
@@ -2150,7 +2146,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func setNativeAuthVisible(_ visible: Bool, animated: Bool) {
         if visible {
             nativeAuthContainer.isHidden = false
-            webView?.isUserInteractionEnabled = false
+            nativeAuthContainer.isUserInteractionEnabled = true
             view.bringSubviewToFront(nativeAuthContainer)
         }
         guard isNativeAuthVisible != visible || nativeAuthContainer.isHidden == visible else { return }
@@ -2158,13 +2154,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let changes = { self.nativeAuthContainer.alpha = visible ? 1 : 0 }
         let completion: (Bool) -> Void = { _ in
             self.nativeAuthContainer.isHidden = !visible
-            self.webView?.isUserInteractionEnabled = !visible && !self.isLoggedIntoWebApp
+            self.nativeAuthContainer.isUserInteractionEnabled = visible
         }
         if animated {
             if visible { nativeAuthContainer.isHidden = false }
             UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut], animations: changes, completion: completion)
         } else {
             nativeAuthContainer.isHidden = !visible
+            nativeAuthContainer.isUserInteractionEnabled = visible
             changes()
             if visible {
                 view.bringSubviewToFront(nativeAuthContainer)
@@ -3024,7 +3021,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func handleLoginState(loggedIn: Bool, username: String) {
         let wasLoggedIn = isLoggedIntoWebApp
         isLoggedIntoWebApp = loggedIn
-        webView?.isUserInteractionEnabled = !loggedIn
+        webView?.isUserInteractionEnabled = true
         setNativeAuthVisible(!loggedIn, animated: true)
         setNativeTabBarVisible(loggedIn, animated: true)
         guard loggedIn else {
