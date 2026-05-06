@@ -1718,12 +1718,19 @@ def create_app():
     def vote_poll(poll_id):
         poll = Poll.query.get_or_404(poll_id)
         if not poll.is_active:
+            if wants_partial_response():
+                return jsonify({"ok": False, "error": "That poll is closed."}), 400
             flash("That poll is closed.", "error")
             return redirect(request.referrer or url_for("index"))
         payload = request.get_json(silent=True) or request.form
-        option_id = int(payload.get("option_id", 0))
+        try:
+            option_id = int(payload.get("option_id", 0))
+        except (TypeError, ValueError):
+            option_id = 0
         option = PollOption.query.filter_by(id=option_id, poll_id=poll.id).first()
         if not option:
+            if wants_partial_response():
+                return jsonify({"ok": False, "error": "Choose a valid option."}), 400
             flash("Choose a valid option.", "error")
             return redirect(request.referrer or url_for("index"))
         existing_vote = PollVote.query.filter_by(poll_id=poll.id, user_id=current_user().id).first()
@@ -1732,6 +1739,8 @@ def create_app():
         else:
             db.session.add(PollVote(poll_id=poll.id, option_id=option.id, user_id=current_user().id))
         db.session.commit()
+        if wants_partial_response():
+            return jsonify({"ok": True, "poll": serialize_feed_poll(poll, current_user())})
         flash("Vote saved.", "success")
         return redirect(request.referrer or url_for("index"))
 

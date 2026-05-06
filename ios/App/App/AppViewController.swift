@@ -218,6 +218,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var nativeSavedPosts: [NativeFeedPost] = []
     private var nativeRouteOverrideUntil: Date?
     private var pendingNativeJSONRequests: [String: (Result<Data, Error>) -> Void] = [:]
+    private var preloadingNativeImageURLs = Set<String>()
     private let nativeAvatarImageCache = NSCache<NSString, UIImage>()
     private let nativeFeedImageCache = NSCache<NSString, UIImage>()
     private let nativeBaseURL = URL(string: "https://media-production-0abd.up.railway.app")!
@@ -229,6 +230,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         super.capacitorDidLoad()
 
         view.backgroundColor = shellBackground
+        nativeAvatarImageCache.countLimit = 160
+        nativeFeedImageCache.countLimit = 80
         gradientLayer.colors = [topGradient, shellBackground.cgColor, bottomGradient]
         gradientLayer.locations = [0.0, 0.58, 1.0]
         gradientLayer.startPoint = CGPoint(x: 0.5, y: 0.0)
@@ -2041,7 +2044,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     } else {
                         self.replaceNativeUtilityContent(with: payload.posts.map { self.utilitySavedPostCard($0) })
                     }
-                    self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(8)))
+                    self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(4)))
                 case .failure:
                     self.replaceNativeUtilityContent(with: [self.utilityLoadingCard("Saved posts couldn't load.")])
                 }
@@ -2999,10 +3002,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func startStateSyncTimer() {
         stateSyncTimer?.invalidate()
-        stateSyncTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
+        stateSyncTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
             self?.syncComposerAvailabilityFromPage()
         }
-        stateSyncTimer?.tolerance = 0.2
+        stateSyncTimer?.tolerance = 0.6
         syncComposerAvailabilityFromPage()
     }
 
@@ -3541,6 +3544,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let imageData = selectedImageData
         let imageName = selectedImageName
         let imageMimeType = selectedImageMimeType
+        let targetFeedTab = currentFeedTab == "breaking" ? "breaking" : "home"
 
         composerTextView.text = ""
         clearSelectedImage()
@@ -3561,7 +3565,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             request.httpBody = self.multipartBody(
                 boundary: boundary,
                 body: body,
-                feedTab: self.currentFeedTab == "breaking" ? "breaking" : "home",
+                feedTab: targetFeedTab,
                 imageData: imageData,
                 imageName: imageName,
                 mimeType: imageMimeType
@@ -3583,6 +3587,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
                     let latestPostID = (json["latest_post_id"] as? NSNumber)?.intValue ?? (json["post_id"] as? NSNumber)?.intValue ?? 0
                     self.injectPostedCard(html: html, latestPostID: latestPostID)
+                    if self.currentPrimarySection == .feed, self.currentFeedTab != targetFeedTab {
+                        self.currentFeedTab = targetFeedTab
+                        self.currentRoute = targetFeedTab == "breaking" ? "/?tab=breaking" : "/"
+                        self.lastRouteBySection[.feed] = self.currentRoute
+                        self.syncNativeFeedSegment()
+                    }
                     if self.isShowingNativeFeed {
                         self.loadNativeFeed(force: true)
                     }
@@ -4053,9 +4063,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         guard !urlString.isEmpty else { return }
         let key = NSString(string: urlString)
         guard cache.object(forKey: key) == nil, let url = URL(string: urlString) else { return }
-        URLSession.shared.dataTask(with: url) { data, _, _ in
-            guard let data, let image = UIImage(data: data) else { return }
-            cache.setObject(image, forKey: key)
+        guard !preloadingNativeImageURLs.contains(urlString) else { return }
+        preloadingNativeImageURLs.insert(urlString)
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let self else { return }
+            let image = data.flatMap { UIImage(data: $0) }
+            DispatchQueue.main.async {
+                self.preloadingNativeImageURLs.remove(urlString)
+                if let image {
+                    cache.setObject(image, forKey: key)
+                }
+            }
         }.resume()
     }
 
@@ -4117,7 +4135,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.nativeProfileHeaderView.configure(user: payload.user, imageCache: self.nativeAvatarImageCache)
                     self.resizeNativeProfileHeader()
                     self.nativeProfileTableView.reloadData()
-                    self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(8)))
+                    self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(4)))
                     self.nativeProfileEmptyLabel.text = "No posts yet."
                     self.nativeProfileEmptyLabel.isHidden = !payload.posts.isEmpty
                 case .failure(let error):
@@ -4178,7 +4196,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.nativeSearchUsers = payload.users
                     self.nativeSearchPosts = payload.posts
                     self.nativeSearchTableView.reloadData()
-                    self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(8)))
+                    self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(4)))
                     self.nativeSearchEmptyLabel.text = payload.query.isEmpty ? "Discover people and fresh posts." : "No results yet."
                     self.nativeSearchEmptyLabel.isHidden = !(payload.users.isEmpty && payload.posts.isEmpty)
                 case .failure(let error):
@@ -5012,8 +5030,16 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
-                case .success:
-                    self.loadNativeFeed(force: true)
+                case .success(let data):
+                    if let payload = try? JSONDecoder().decode(NativePollVoteResponse.self, from: data),
+                       payload.ok,
+                       let updatedPoll = payload.poll,
+                       let pollIndex = self.nativeFeedPolls.firstIndex(where: { $0.id == updatedPoll.id }) {
+                        self.nativeFeedPolls[pollIndex] = updatedPoll
+                        self.nativeFeedTableView.reloadRows(at: [IndexPath(row: pollIndex, section: 0)], with: .automatic)
+                    } else {
+                        self.loadNativeFeed(force: true)
+                    }
                 case .failure(let error):
                     self.showNativeFlash(message: error.localizedDescription, category: "error")
                 }
@@ -5791,6 +5817,11 @@ fileprivate struct NativeFeedPollOption: Decodable {
     let id: Int
     let label: String
     let votes: Int
+}
+
+private struct NativePollVoteResponse: Decodable {
+    let ok: Bool
+    let poll: NativeFeedPoll?
 }
 
 fileprivate struct NativeMentionResponse: Decodable {
