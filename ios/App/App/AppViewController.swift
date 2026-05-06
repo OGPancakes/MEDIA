@@ -332,6 +332,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             view.bringSubviewToFront(nativeAuthContainer)
         }
         bringPersistentNativeControlsToFront()
+        bringVisibleNativeSheetsToFront()
     }
 
     private func bringPersistentNativeControlsToFront() {
@@ -346,6 +347,42 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         if !nativeTabBar.isHidden {
             view.bringSubviewToFront(nativeTabBar)
+        }
+    }
+
+    private func bringVisibleNativeSheetsToFront() {
+        if !composerDimView.isHidden {
+            view.bringSubviewToFront(composerDimView)
+        }
+        if !composerSheet.isHidden {
+            view.bringSubviewToFront(composerSheet)
+        }
+        if !nativeConnectionsDimView.isHidden {
+            view.bringSubviewToFront(nativeConnectionsDimView)
+        }
+        if !nativeConnectionsSheet.isHidden {
+            view.bringSubviewToFront(nativeConnectionsSheet)
+        }
+        if !nativeAccountDimView.isHidden {
+            view.bringSubviewToFront(nativeAccountDimView)
+        }
+        if !nativeAccountSheet.isHidden {
+            view.bringSubviewToFront(nativeAccountSheet)
+        }
+        if !nativeUtilityDimView.isHidden {
+            view.bringSubviewToFront(nativeUtilityDimView)
+        }
+        if !nativeUtilitySheet.isHidden {
+            view.bringSubviewToFront(nativeUtilitySheet)
+        }
+        if !nativeCommentsDimView.isHidden {
+            view.bringSubviewToFront(nativeCommentsDimView)
+        }
+        if !nativeCommentsSheet.isHidden {
+            view.bringSubviewToFront(nativeCommentsSheet)
+        }
+        if !nativeStoryViewer.isHidden {
+            view.bringSubviewToFront(nativeStoryViewer)
         }
     }
 
@@ -1671,6 +1708,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         updateNativeAccountAvatar()
         nativeAccountDimView.isHidden = false
         nativeAccountSheet.isHidden = false
+        nativeAccountDimView.isUserInteractionEnabled = true
+        nativeAccountSheet.isUserInteractionEnabled = true
         view.bringSubviewToFront(nativeAccountDimView)
         view.bringSubviewToFront(nativeAccountSheet)
         UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut]) {
@@ -1687,6 +1726,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if endingEditing {
             view.endEditing(true)
         }
+        nativeAccountDimView.isUserInteractionEnabled = false
+        nativeAccountSheet.isUserInteractionEnabled = false
         UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
             self.nativeAccountDimView.alpha = 0
             self.nativeAccountSheet.alpha = 0
@@ -1742,6 +1783,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeUtilityScrollView.setContentOffset(.zero, animated: false)
         nativeUtilityDimView.isHidden = false
         nativeUtilitySheet.isHidden = false
+        nativeUtilityDimView.isUserInteractionEnabled = true
+        nativeUtilitySheet.isUserInteractionEnabled = true
         view.bringSubviewToFront(nativeUtilityDimView)
         view.bringSubviewToFront(nativeUtilitySheet)
         UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut]) {
@@ -1752,6 +1795,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     @objc private func dismissNativeUtilityPanel() {
         view.endEditing(true)
+        nativeUtilityDimView.isUserInteractionEnabled = false
+        nativeUtilitySheet.isUserInteractionEnabled = false
         UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
             self.nativeUtilityDimView.alpha = 0
             self.nativeUtilitySheet.alpha = 0
@@ -4715,6 +4760,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeCommentsTableView.reloadData()
         nativeCommentsDimView.isHidden = false
         nativeCommentsSheet.isHidden = false
+        nativeCommentsDimView.isUserInteractionEnabled = true
+        nativeCommentsSheet.isUserInteractionEnabled = true
         view.bringSubviewToFront(nativeCommentsDimView)
         view.bringSubviewToFront(nativeCommentsSheet)
         view.layoutIfNeeded()
@@ -4732,6 +4779,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         guard !nativeCommentsSheet.isHidden else { return }
         isDismissingNativeComments = true
         nativeCommentsTextView.resignFirstResponder()
+        nativeCommentsDimView.isUserInteractionEnabled = false
+        nativeCommentsSheet.isUserInteractionEnabled = false
         let reset = {
             self.nativeCommentsDimView.alpha = 0
             self.nativeCommentsSheet.alpha = 0
