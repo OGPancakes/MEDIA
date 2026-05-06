@@ -311,6 +311,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func bringActiveNativeLayersToFront() {
+        if isLoggedIntoWebApp {
+            webView?.isUserInteractionEnabled = false
+        } else {
+            webView?.isUserInteractionEnabled = nativeAuthContainer.isHidden
+        }
         if !nativeFeedContainer.isHidden {
             view.bringSubviewToFront(nativeFeedContainer)
         }
@@ -2195,6 +2200,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.currentUsername = user.username
                     self.nativeCurrentUser = user
                     self.handleLoginState(loggedIn: true, username: user.username)
+                    self.updateNativeTabSelection(animated: true)
+                    self.updateNativeSectionPresentation()
+                    self.setComposeButtonVisible(true, animated: true)
+                    self.bringActiveNativeLayersToFront()
                     self.loadNativeFeed(force: true)
                 case .failure(let error):
                     self.nativeAuthErrorLabel.text = error.localizedDescription
@@ -3011,6 +3020,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func handleLoginState(loggedIn: Bool, username: String) {
         let wasLoggedIn = isLoggedIntoWebApp
         isLoggedIntoWebApp = loggedIn
+        webView?.isUserInteractionEnabled = !loggedIn
         setNativeAuthVisible(!loggedIn, animated: true)
         setNativeTabBarVisible(loggedIn, animated: true)
         guard loggedIn else {
@@ -3050,10 +3060,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeAuthLoginButton.setTitle("Sign in", for: .normal)
         nativeAuthLoginButton.alpha = 1
         if !wasLoggedIn {
-            maybeRequestNotificationPermission(for: username)
             currentPrimarySection = .feed
             currentRoute = "/"
             lastRouteBySection[.feed] = "/"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
+                guard let self, self.isLoggedIntoWebApp, self.currentUsername == username else { return }
+                self.maybeRequestNotificationPermission(for: username)
+            }
         }
         if !username.isEmpty {
             lastRouteBySection[.profile] = "/users/\(username)"
@@ -3064,6 +3077,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         updateNativeAccountAvatar()
         setNativeAccountButtonVisible(currentPrimarySection == .feed, animated: true)
+        updateNativeTabSelection(animated: false)
+        updateNativeSectionPresentation()
+        bringActiveNativeLayersToFront()
         openPendingPushRouteIfPossible()
     }
 
