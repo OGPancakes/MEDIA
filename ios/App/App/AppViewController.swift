@@ -161,6 +161,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var isLoadingNativeFeed = false
     private var isLoadingNativePostDetail = false
     private var isLoadingNativeProfile = false
+    private var nativeProfileLoadID: UUID?
     private var isShowingNativeSearch = false
     private var isLoadingNativeSearch = false
     private var pendingNativeSearchQuery: String?
@@ -3396,8 +3397,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     @objc private func showComposer() {
+        view.endEditing(true)
         composerDimView.isHidden = false
         composerSheet.isHidden = false
+        composerDimView.isUserInteractionEnabled = true
+        composerSheet.isUserInteractionEnabled = true
+        composerCloseButton.isUserInteractionEnabled = true
+        composerAttachButton.isUserInteractionEnabled = true
+        composerPostButton.isUserInteractionEnabled = true
         composerPlaceholder.isHidden = !composerTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         view.bringSubviewToFront(composerDimView)
         view.bringSubviewToFront(composerSheet)
@@ -3419,6 +3426,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func dismissComposerSheet(animated: Bool) {
         composerTextView.resignFirstResponder()
         renderComposerMentionSuggestions([])
+        composerDimView.isUserInteractionEnabled = false
+        composerSheet.isUserInteractionEnabled = false
         let reset = {
             self.composerDimView.alpha = 0
             self.composerSheet.alpha = 0
@@ -3561,13 +3570,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             let task = URLSession.shared.dataTask(with: request) { data, response, error in
                 DispatchQueue.main.async {
                     self.isPostingComposer = false
+                    let responseData = data ?? Data()
                     guard error == nil,
-                          let data,
-                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
                           let ok = json["ok"] as? Bool,
                           ok,
                           let html = json["html"] as? String else {
-                        self.showNativeFlash(message: "Post failed. Try again.", category: "error")
+                        let message = ((try? JSONSerialization.jsonObject(with: responseData) as? [String: Any])?["error"] as? String) ?? "Post failed. Try again."
+                        self.showNativeFlash(message: message, category: "error")
                         return
                     }
 
@@ -4078,20 +4088,28 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func loadNativeProfile(username: String, force: Bool) {
-        guard !isLoadingNativeProfile else { return }
         if !force, nativeProfileUser?.username == username { return }
+        let loadID = UUID()
+        nativeProfileLoadID = loadID
         isLoadingNativeProfile = true
         nativeProfileEmptyLabel.text = "Loading profile..."
         nativeProfileEmptyLabel.isHidden = false
         performNativeJSONRequest(path: "/api/users/\(username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? username)") { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
+                guard self.nativeProfileLoadID == loadID else { return }
                 self.isLoadingNativeProfile = false
                 switch result {
                 case .success(let data):
                     guard let payload = try? JSONDecoder().decode(NativeProfileResponse.self, from: data), payload.ok else {
                         self.nativeProfileEmptyLabel.text = "Profile couldn't load."
                         self.nativeProfileEmptyLabel.isHidden = false
+                        return
+                    }
+                    let requestedUsername = username.lowercased()
+                    let routedUsername = self.nativeProfileUsername(from: self.currentRoute)?.lowercased()
+                    let loadedUsername = payload.user.username.lowercased()
+                    guard loadedUsername == requestedUsername || routedUsername == loadedUsername else {
                         return
                     }
                     self.nativeProfileUser = payload.user
@@ -5114,6 +5132,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         webView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
+    private func syncWebViewToNativeProfile(username: String, route: String) {
+        let escapedUsername = username
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let escapedRoute = route
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "window.nativeOpenPrimaryRoute && window.nativeOpenPrimaryRoute(\"profile\", \"\(escapedUsername)\", \"\(escapedRoute)\", true);"
+        webView?.evaluateJavaScript(script, completionHandler: nil)
+    }
+
     @objc private func handleNativeThreadBack() {
         nativeThreadTextView.resignFirstResponder()
         stopNativeThreadRefresh()
@@ -5351,13 +5380,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if tableView === nativeSearchTableView {
             if indexPath.row < nativeSearchUsers.count {
                 let user = nativeSearchUsers[indexPath.row]
-                nativeRouteOverrideUntil = Date().addingTimeInterval(3)
+                nativeRouteOverrideUntil = Date().addingTimeInterval(12)
                 currentPrimarySection = .profile
                 currentRoute = "/users/\(user.username)"
                 lastRouteBySection[.profile] = currentRoute
                 updateNativeTabSelection(animated: true)
                 dismissNativeConnections()
                 updateNativeSectionPresentation()
+                syncWebViewToNativeProfile(username: user.username, route: currentRoute)
             } else {
                 showNativePostDetail(for: nativeSearchPosts[indexPath.row - nativeSearchUsers.count])
             }
@@ -5366,12 +5396,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if tableView === nativeConnectionsTableView {
             let user = nativeConnectionsUsers[indexPath.row]
             dismissNativeConnections()
-            nativeRouteOverrideUntil = Date().addingTimeInterval(3)
+            nativeRouteOverrideUntil = Date().addingTimeInterval(12)
             currentPrimarySection = .profile
             currentRoute = "/users/\(user.username)"
             lastRouteBySection[.profile] = currentRoute
             updateNativeTabSelection(animated: true)
             updateNativeSectionPresentation()
+            syncWebViewToNativeProfile(username: user.username, route: currentRoute)
             return
         }
         if tableView === nativePostDetailTableView {
@@ -5424,6 +5455,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     @objc private func openPhotoPicker() {
+        view.endEditing(true)
+        guard !composerSheet.isHidden else { return }
+        view.bringSubviewToFront(composerDimView)
+        view.bringSubviewToFront(composerSheet)
         presentPhotoPicker(purpose: .post, mediaFilter: .any(of: [.images, .videos]))
     }
 
@@ -5436,13 +5471,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             let picker = PHPickerViewController(configuration: configuration)
             picker.delegate = self
             picker.modalPresentationStyle = .pageSheet
-            if self.presentedViewController != nil {
-                self.dismiss(animated: false) {
-                    self.topPresentationController().present(picker, animated: true)
-                }
-            } else {
-                self.topPresentationController().present(picker, animated: true)
-            }
+            self.topPresentationController().present(picker, animated: true)
         }
     }
 
@@ -5472,7 +5501,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         let purpose = photoPickerPurpose
         picker.dismiss(animated: true) { [weak self] in
-            self?.handlePhotoPickerResults(results, purpose: purpose)
+            guard let self else { return }
+            self.handlePhotoPickerResults(results, purpose: purpose)
+            self.bringVisibleNativeSheetsToFront()
         }
     }
 
