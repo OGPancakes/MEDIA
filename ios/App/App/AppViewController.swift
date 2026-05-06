@@ -331,6 +331,22 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeAuthContainer.layer.zPosition = 1000
             view.bringSubviewToFront(nativeAuthContainer)
         }
+        bringPersistentNativeControlsToFront()
+    }
+
+    private func bringPersistentNativeControlsToFront() {
+        if !composeButton.isHidden {
+            view.bringSubviewToFront(composeButton)
+        }
+        if !nativeAccountButton.isHidden {
+            view.bringSubviewToFront(nativeAccountButton)
+        }
+        if !nativeTabBarBackdrop.isHidden {
+            view.bringSubviewToFront(nativeTabBarBackdrop)
+        }
+        if !nativeTabBar.isHidden {
+            view.bringSubviewToFront(nativeTabBar)
+        }
     }
 
     private func configureNativeAuth() {
@@ -2147,7 +2163,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if visible {
             nativeAuthContainer.isHidden = false
             nativeAuthContainer.isUserInteractionEnabled = true
+            nativeAuthContainer.layer.zPosition = 1000
             view.bringSubviewToFront(nativeAuthContainer)
+        } else {
+            nativeAuthContainer.isUserInteractionEnabled = false
+            nativeAuthContainer.layer.zPosition = 0
         }
         guard isNativeAuthVisible != visible || nativeAuthContainer.isHidden == visible else { return }
         isNativeAuthVisible = visible
@@ -2155,6 +2175,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let completion: (Bool) -> Void = { _ in
             self.nativeAuthContainer.isHidden = !visible
             self.nativeAuthContainer.isUserInteractionEnabled = visible
+            self.nativeAuthContainer.layer.zPosition = visible ? 1000 : 0
         }
         if animated {
             if visible { nativeAuthContainer.isHidden = false }
@@ -2562,12 +2583,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         isShowingNativeFeed = true
         syncNativeFeedSegment()
         nativeFeedContainer.isHidden = false
+        nativeFeedContainer.isUserInteractionEnabled = true
         nativeFeedContainer.alpha = 1
         view.bringSubviewToFront(nativeFeedContainer)
-        view.bringSubviewToFront(composeButton)
-        view.bringSubviewToFront(nativeAccountButton)
-        view.bringSubviewToFront(nativeTabBarBackdrop)
-        view.bringSubviewToFront(nativeTabBar)
+        bringPersistentNativeControlsToFront()
         if nativeFeedPosts.isEmpty && nativeFeedPolls.isEmpty {
             loadNativeFeed(force: false)
         }
@@ -2576,6 +2595,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func hideNativeFeedIfNeeded() {
         guard isShowingNativeFeed else { return }
         isShowingNativeFeed = false
+        nativeFeedContainer.isUserInteractionEnabled = false
         UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
             self.nativeFeedContainer.alpha = 0
         } completion: { _ in
@@ -2591,10 +2611,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativePostDetailTableView.reloadData()
         isShowingNativePostDetail = true
         nativePostDetailContainer.isHidden = false
+        nativePostDetailContainer.isUserInteractionEnabled = true
         nativePostDetailContainer.alpha = 1
         view.bringSubviewToFront(nativePostDetailContainer)
-        view.bringSubviewToFront(nativeTabBarBackdrop)
-        view.bringSubviewToFront(nativeTabBar)
+        bringPersistentNativeControlsToFront()
         loadNativePostDetail(postID: post.id)
     }
 
@@ -2605,6 +2625,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func hideNativePostDetailIfNeeded() {
         guard isShowingNativePostDetail else { return }
         isShowingNativePostDetail = false
+        nativePostDetailContainer.isUserInteractionEnabled = false
         UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
             self.nativePostDetailContainer.alpha = 0
         } completion: { _ in
@@ -2619,16 +2640,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         guard !username.isEmpty else { return }
         isShowingNativeProfile = true
         nativeProfileContainer.isHidden = false
+        nativeProfileContainer.isUserInteractionEnabled = true
         nativeProfileContainer.alpha = 1
         view.bringSubviewToFront(nativeProfileContainer)
-        view.bringSubviewToFront(nativeTabBarBackdrop)
-        view.bringSubviewToFront(nativeTabBar)
+        bringPersistentNativeControlsToFront()
         loadNativeProfile(username: username, force: nativeProfileUser?.username != username)
     }
 
     private func hideNativeProfileIfNeeded() {
         guard isShowingNativeProfile else { return }
         isShowingNativeProfile = false
+        nativeProfileContainer.isUserInteractionEnabled = false
         UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
             self.nativeProfileContainer.alpha = 0
         } completion: { _ in
@@ -2640,10 +2662,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         guard !isShowingNativeSearch else { return }
         isShowingNativeSearch = true
         nativeSearchContainer.isHidden = false
+        nativeSearchContainer.isUserInteractionEnabled = true
         nativeSearchContainer.alpha = 1
         view.bringSubviewToFront(nativeSearchContainer)
-        view.bringSubviewToFront(nativeTabBarBackdrop)
-        view.bringSubviewToFront(nativeTabBar)
+        bringPersistentNativeControlsToFront()
         if nativeSearchUsers.isEmpty && nativeSearchPosts.isEmpty {
             loadNativeSearch(query: nativeSearchField.text ?? "")
         }
@@ -2652,6 +2674,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private func hideNativeSearchIfNeeded() {
         guard isShowingNativeSearch else { return }
         isShowingNativeSearch = false
+        nativeSearchContainer.isUserInteractionEnabled = false
         nativeSearchField.resignFirstResponder()
         UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
             self.nativeSearchContainer.alpha = 0
@@ -2677,16 +2700,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         isShowingNativeMessages = true
         composeButton.isHidden = true
         nativeMessagesContainer.isHidden = false
+        nativeMessagesContainer.isUserInteractionEnabled = true
         nativeMessagesContainer.alpha = 1
         view.bringSubviewToFront(nativeMessagesContainer)
-        view.bringSubviewToFront(nativeTabBarBackdrop)
-        view.bringSubviewToFront(nativeTabBar)
+        bringPersistentNativeControlsToFront()
         loadNativeInbox()
     }
 
     private func hideNativeMessagesIfNeeded() {
         guard isShowingNativeMessages else { return }
         isShowingNativeMessages = false
+        nativeMessagesContainer.isUserInteractionEnabled = false
         stopNativeThreadRefresh()
         UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseInOut]) {
             self.nativeMessagesContainer.alpha = 0
