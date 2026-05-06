@@ -715,6 +715,56 @@ def create_app():
             return redirect(url_for("admin" if user.is_admin else "index"))
         return render_template("auth.html", mode="login", title="Sign in")
 
+    @app.route("/api/session")
+    def api_session():
+        user = current_user()
+        if not user:
+            return jsonify({"ok": True, "logged_in": False, "user": None})
+        return jsonify(
+            {
+                "ok": True,
+                "logged_in": True,
+                "accepted_terms": bool(user.accepted_terms_at),
+                "user": serialize_user_brief(user),
+            }
+        )
+
+    @app.route("/api/login", methods=["POST"])
+    def api_login():
+        payload = request.get_json(silent=True) or request.form
+        username = (payload.get("username") or "").strip().lower()
+        password = payload.get("password") or ""
+        user = User.query.filter((User.username == username) | (User.email == username)).first()
+        if not user or not user.check_password(password):
+            return jsonify({"ok": False, "error": "Login details did not match."}), 401
+        if user.is_banned:
+            return jsonify({"ok": False, "error": "This account has been banned."}), 403
+        if user.is_timed_out:
+            return jsonify({"ok": False, "error": "This account is temporarily timed out."}), 403
+        session["user_id"] = user.id
+        remember_account(user)
+        return jsonify(
+            {
+                "ok": True,
+                "logged_in": True,
+                "accepted_terms": bool(user.accepted_terms_at),
+                "user": serialize_user_brief(user),
+            }
+        )
+
+    @app.route("/api/logout", methods=["POST"])
+    def api_logout():
+        session.pop("user_id", None)
+        return jsonify({"ok": True, "logged_in": False})
+
+    @app.route("/api/terms/accept", methods=["POST"])
+    @login_required
+    def api_accept_terms():
+        user = current_user()
+        user.accepted_terms_at = datetime.now(timezone.utc)
+        db.session.commit()
+        return jsonify({"ok": True, "accepted_terms": True, "user": serialize_user_brief(user)})
+
     @app.route("/privacy")
     def privacy():
         return render_template("privacy.html", title="Privacy Policy")

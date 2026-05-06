@@ -219,6 +219,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var pendingNativeJSONRequests: [String: (Result<Data, Error>) -> Void] = [:]
     private let nativeAvatarImageCache = NSCache<NSString, UIImage>()
     private let nativeFeedImageCache = NSCache<NSString, UIImage>()
+    private let nativeBaseURL = URL(string: "https://media-production-0abd.up.railway.app")!
 
     private let composerScriptMessageName = "nativeComposerState"
     private let nativeJSONScriptMessageName = "nativeJSONResponse"
@@ -249,11 +250,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         configureNativeUtilityPanel()
         configureNativeComments()
         configureNativeMessages()
+        setNativeAuthVisible(true, animated: false)
         installKeyboardObservers()
         observePushToken()
         observePushNotificationTaps()
         installComposerBridge()
         startStateSyncTimer()
+        syncNativeSessionFromAPI()
         consumeStoredPushRoute()
     }
 
@@ -279,6 +282,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func configureWebView() {
         guard let webView = webView else { return }
+        webView.isHidden = true
+        webView.alpha = 0
         webView.isOpaque = true
         webView.backgroundColor = shellBackground
         if #available(iOS 15.0, *) {
@@ -1663,7 +1668,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             currentRoute = route
             currentPrimarySection = primarySection(for: route)
             if route == "/logout" {
-                setNativeAccountButtonVisible(false, animated: true)
+                performNativeJSONRequest(path: "/api/logout", method: "POST", bodyObject: [:]) { [weak self] _ in
+                    DispatchQueue.main.async {
+                        self?.handleLoginState(loggedIn: false, username: "")
+                    }
+                }
+                return
             }
             hideNativeFeedIfNeeded()
             hideNativeProfileIfNeeded()
@@ -2061,7 +2071,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func submitNativeSettingsProfile(displayName: String, bio: String, location: String, website: String) {
-        guard let targetURL = URL(string: "/settings", relativeTo: webView?.url)?.absoluteURL else { return }
+        guard let targetURL = nativeAPIURL(path: "/settings") else { return }
         showNativeFlash(message: "Saving settings...", category: "success")
         fetchCookieHeader(for: targetURL) { [weak self] cookieHeader in
             guard let self else { return }
@@ -2131,38 +2141,28 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeAuthLoginButton.setTitle("Signing in...", for: .normal)
         nativeAuthLoginButton.alpha = 0.72
         nativeAuthErrorLabel.isHidden = true
-        let payload: [String: String] = ["username": username, "password": password]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
-              let json = String(data: data, encoding: .utf8) else { return }
-        let submitScript = """
-        (function() {
-          const creds = \(json);
-          function submit() {
-            const form = document.querySelector('form');
-            const username = document.querySelector('input[name="username"]');
-            const password = document.querySelector('input[name="password"]');
-            if (!form || !username || !password) return false;
-            username.value = creds.username;
-            password.value = creds.password;
-            form.submit();
-            return true;
-          }
-          if ((window.location.pathname || '') !== '/login') {
-            window.location.assign('/login');
-            setTimeout(submit, 450);
-            return true;
-          }
-          return submit();
-        })();
-        """
-        webView?.evaluateJavaScript(submitScript) { [weak self] _, _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+        performNativeJSONRequest(path: "/api/login", method: "POST", bodyObject: ["username": username, "password": password]) { [weak self] result in
+            DispatchQueue.main.async {
                 guard let self else { return }
                 self.isSubmittingNativeAuth = false
                 self.nativeAuthLoginButton.setTitle("Sign in", for: .normal)
                 self.nativeAuthLoginButton.alpha = 1
-                if !self.isLoggedIntoWebApp {
-                    self.nativeAuthErrorLabel.text = "If that did not work, check your login details and try again."
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeSessionResponse.self, from: data),
+                          payload.ok,
+                          payload.logged_in,
+                          let user = payload.user else {
+                        self.nativeAuthErrorLabel.text = "Login failed. Try again."
+                        self.nativeAuthErrorLabel.isHidden = false
+                        return
+                    }
+                    self.currentUsername = user.username
+                    self.nativeCurrentUser = user
+                    self.handleLoginState(loggedIn: true, username: user.username)
+                    self.loadNativeFeed(force: true)
+                case .failure(let error):
+                    self.nativeAuthErrorLabel.text = error.localizedDescription
                     self.nativeAuthErrorLabel.isHidden = false
                 }
             }
@@ -2526,9 +2526,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         view.bringSubviewToFront(nativeTabBar)
         if nativeFeedPosts.isEmpty && nativeFeedPolls.isEmpty {
             loadNativeFeed(force: false)
-        }
-        if webView?.isHidden == true {
-            webView?.isHidden = false
         }
     }
 
@@ -2984,6 +2981,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         guard loggedIn else {
             lastRegisteredPushToken = nil
             warmedRoutesForUsername = nil
+            currentUsername = ""
             currentRoute = "/"
             nativeMessageTarget = nil
             nativeMessageConversations = []
@@ -3020,7 +3018,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             currentPrimarySection = .feed
             currentRoute = "/"
             lastRouteBySection[.feed] = "/"
-            navigateWebView(to: "/", replace: true)
         }
         if !username.isEmpty {
             lastRouteBySection[.profile] = "/users/\(username)"
@@ -3032,6 +3029,31 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         updateNativeAccountAvatar()
         setNativeAccountButtonVisible(currentPrimarySection == .feed, animated: true)
         openPendingPushRouteIfPossible()
+    }
+
+    private func syncNativeSessionFromAPI() {
+        performNativeJSONRequest(path: "/api/session") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeSessionResponse.self, from: data), payload.ok else {
+                        self.handleLoginState(loggedIn: false, username: "")
+                        return
+                    }
+                    if payload.logged_in, let user = payload.user {
+                        self.currentUsername = user.username
+                        self.nativeCurrentUser = user
+                        self.handleLoginState(loggedIn: true, username: user.username)
+                        self.loadNativeFeed(force: true)
+                    } else {
+                        self.handleLoginState(loggedIn: false, username: "")
+                    }
+                case .failure:
+                    self.handleLoginState(loggedIn: false, username: "")
+                }
+            }
+        }
     }
 
     private func observePushToken() {
@@ -3097,7 +3119,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func registerPushToken(_ token: String) {
-        guard let targetURL = URL(string: "/push/register", relativeTo: webView?.url)?.absoluteURL else { return }
+        guard let targetURL = nativeAPIURL(path: "/push/register") else { return }
         fetchCookieHeader(for: targetURL) { [weak self] cookieHeader in
             var request = URLRequest(url: targetURL)
             request.httpMethod = "POST"
@@ -3372,7 +3394,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     @objc private func postFromNativeComposer() {
         let body = composerTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty || selectedImageData != nil else { return }
-        guard let targetURL = URL(string: "/post/create", relativeTo: webView?.url)?.absoluteURL else { return }
+        guard let targetURL = nativeAPIURL(path: "/post/create") else { return }
 
         isPostingComposer = true
         composerPostButton.isEnabled = false
@@ -3470,7 +3492,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func performNativeJSONRequest(path: String, method: String = "GET", bodyObject: Any? = nil, completion: @escaping (Result<Data, Error>) -> Void) {
-        performNativeJSONWebViewRequest(path: path, method: method, bodyObject: bodyObject, completion: completion)
+        performNativeURLSessionJSONRequest(path: path, method: method, bodyObject: bodyObject, completion: completion)
     }
 
     private func performNativeURLSessionJSONRequest(path: String, method: String = "GET", bodyObject: Any? = nil, completion: @escaping (Result<Data, Error>) -> Void) {
@@ -3479,7 +3501,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 completion(result)
             }
         }
-        guard let targetURL = URL(string: path, relativeTo: webView?.url)?.absoluteURL else {
+        guard let targetURL = nativeAPIURL(path: path) else {
             finish(.failure(NSError(domain: "NativeMessages", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid request URL."])))
             return
         }
@@ -3510,7 +3532,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 let preview = String(data: responseData, encoding: .utf8)?.prefix(300) ?? ""
                 print("Native API response status=\(status) body=\(preview)")
                 guard (200..<300).contains(status) else {
-                    self?.performNativeJSONWebViewRequest(path: path, method: method, bodyObject: bodyObject, completion: completion)
+                    let message = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: responseData).error) ?? "Request failed (\(status))."
+                    finish(.failure(NSError(domain: "NativeMessages", code: status, userInfo: [NSLocalizedDescriptionKey: message])))
                     return
                 }
                 let trimmed = String(data: responseData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -3521,6 +3544,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 finish(.success(responseData))
             }.resume()
         }
+    }
+
+    private func nativeAPIURL(path: String) -> URL? {
+        if let absolute = URL(string: path), absolute.scheme != nil {
+            return absolute
+        }
+        return URL(string: path, relativeTo: webView?.url ?? nativeBaseURL)?.absoluteURL
     }
 
     private func performNativeJSONWebViewRequest(path: String, method: String, bodyObject: Any?, completion: @escaping (Result<Data, Error>) -> Void) {
@@ -5410,7 +5440,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func uploadNativeSettingsImage(imageData: Data, fieldName: String, imageName: String) {
-        guard let targetURL = URL(string: "/settings", relativeTo: webView?.url)?.absoluteURL else { return }
+        guard let targetURL = nativeAPIURL(path: "/settings") else { return }
         showNativeFlash(message: "Saving profile media...", category: "success")
         fetchCookieHeader(for: targetURL) { [weak self] cookieHeader in
             guard let self else { return }
@@ -5473,7 +5503,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func uploadNativeStory(imageData: Data, imageName: String, mimeType: String) {
-        guard let targetURL = URL(string: "/story/create", relativeTo: webView?.url)?.absoluteURL else { return }
+        guard let targetURL = nativeAPIURL(path: "/story/create") else { return }
         showNativeFlash(message: "Uploading story...", category: "success")
         fetchCookieHeader(for: targetURL) { [weak self] cookieHeader in
             guard let self else { return }
@@ -5543,6 +5573,31 @@ private struct NativeFeedResponse: Decodable {
         polls = try container.decodeIfPresent([NativeFeedPoll].self, forKey: .polls) ?? []
         current_user = try container.decodeIfPresent(NativeUserSummary.self, forKey: .current_user)
         current_user_story = try container.decodeIfPresent(Bool.self, forKey: .current_user_story) ?? false
+    }
+}
+
+private struct NativeSessionResponse: Decodable {
+    let ok: Bool
+    let logged_in: Bool
+    let accepted_terms: Bool?
+    let user: NativeUserSummary?
+    let error: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case ok
+        case logged_in
+        case accepted_terms
+        case user
+        case error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decodeIfPresent(Bool.self, forKey: .ok) ?? false
+        logged_in = try container.decodeIfPresent(Bool.self, forKey: .logged_in) ?? false
+        accepted_terms = try container.decodeIfPresent(Bool.self, forKey: .accepted_terms)
+        user = try container.decodeIfPresent(NativeUserSummary.self, forKey: .user)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
     }
 }
 
