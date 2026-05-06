@@ -27,6 +27,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let topGradient = UIColor(red: 247.0 / 255.0, green: 250.0 / 255.0, blue: 255.0 / 255.0, alpha: 1).cgColor
     private let bottomGradient = UIColor(red: 255.0 / 255.0, green: 247.0 / 255.0, blue: 239.0 / 255.0, alpha: 1).cgColor
     private let gradientLayer = CAGradientLayer()
+    private let nativeLaunchOverlay = UIView()
+    private let nativeLaunchLogoWrap = UIView()
+    private let nativeLaunchLogoView = UIImageView()
+    private let nativeLaunchTitleLabel = UILabel()
+    private let nativeLaunchSubtitleLabel = UILabel()
+    private let nativeLaunchSpinner = UIActivityIndicatorView(style: .medium)
 
     private let composerDimView = UIControl()
     private let composerSheet = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
@@ -241,6 +247,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             view.layer.insertSublayer(gradientLayer, at: 0)
         }
 
+        configureNativeLaunchOverlay()
         configureWebView()
         configureNativeAuth()
         configureNativeComposer()
@@ -263,6 +270,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         syncComposerAvailabilityFromPage()
         syncNativeSessionFromAPI()
         consumeStoredPushRoute()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
+            self?.hideNativeLaunchOverlay()
+        }
     }
 
     deinit {
@@ -276,6 +286,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         gradientLayer.frame = view.bounds
+        nativeLaunchOverlay.layer.sublayers?.first(where: { $0.name == "nativeLaunchGradient" })?.frame = nativeLaunchOverlay.bounds
         bringActiveNativeLayersToFront()
         if nativeFeedTableView.tableHeaderView === nativeFeedStoriesHeader,
            nativeFeedStoriesHeader.frame.width != nativeFeedTableView.bounds.width {
@@ -289,6 +300,96 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         bringActiveNativeLayersToFront()
+    }
+
+    private func configureNativeLaunchOverlay() {
+        nativeLaunchOverlay.translatesAutoresizingMaskIntoConstraints = false
+        nativeLaunchOverlay.backgroundColor = shellBackground
+        nativeLaunchOverlay.layer.zPosition = 3000
+        nativeLaunchOverlay.isUserInteractionEnabled = true
+        view.addSubview(nativeLaunchOverlay)
+
+        let launchGradient = CAGradientLayer()
+        launchGradient.colors = [topGradient, shellBackground.cgColor, bottomGradient]
+        launchGradient.locations = [0.0, 0.62, 1.0]
+        launchGradient.startPoint = CGPoint(x: 0.5, y: 0.0)
+        launchGradient.endPoint = CGPoint(x: 0.5, y: 1.0)
+        launchGradient.name = "nativeLaunchGradient"
+        nativeLaunchOverlay.layer.insertSublayer(launchGradient, at: 0)
+
+        nativeLaunchLogoWrap.translatesAutoresizingMaskIntoConstraints = false
+        nativeLaunchLogoWrap.backgroundColor = UIColor.white.withAlphaComponent(0.92)
+        nativeLaunchLogoWrap.layer.cornerRadius = 34
+        nativeLaunchLogoWrap.layer.cornerCurve = .continuous
+        nativeLaunchLogoWrap.layer.borderWidth = 1
+        nativeLaunchLogoWrap.layer.borderColor = UIColor(red: 207.0 / 255.0, green: 218.0 / 255.0, blue: 236.0 / 255.0, alpha: 0.9).cgColor
+        nativeLaunchLogoWrap.layer.shadowColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1).cgColor
+        nativeLaunchLogoWrap.layer.shadowOpacity = 0.12
+        nativeLaunchLogoWrap.layer.shadowRadius = 24
+        nativeLaunchLogoWrap.layer.shadowOffset = CGSize(width: 0, height: 12)
+        nativeLaunchOverlay.addSubview(nativeLaunchLogoWrap)
+
+        nativeLaunchLogoView.translatesAutoresizingMaskIntoConstraints = false
+        nativeLaunchLogoView.image = UIImage(named: "Splash") ?? UIImage(systemName: "building.columns.fill")
+        nativeLaunchLogoView.contentMode = .scaleAspectFill
+        nativeLaunchLogoView.clipsToBounds = true
+        nativeLaunchLogoView.layer.cornerRadius = 24
+        nativeLaunchLogoView.layer.cornerCurve = .continuous
+        nativeLaunchLogoView.tintColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        nativeLaunchLogoWrap.addSubview(nativeLaunchLogoView)
+
+        nativeLaunchTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeLaunchTitleLabel.text = "PIA"
+        nativeLaunchTitleLabel.font = .systemFont(ofSize: 42, weight: .black)
+        nativeLaunchTitleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nativeLaunchTitleLabel.textAlignment = .center
+        nativeLaunchOverlay.addSubview(nativeLaunchTitleLabel)
+
+        nativeLaunchSubtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeLaunchSubtitleLabel.text = "Politics In Action"
+        nativeLaunchSubtitleLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        nativeLaunchSubtitleLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.84)
+        nativeLaunchSubtitleLabel.textAlignment = .center
+        nativeLaunchOverlay.addSubview(nativeLaunchSubtitleLabel)
+
+        nativeLaunchSpinner.translatesAutoresizingMaskIntoConstraints = false
+        nativeLaunchSpinner.color = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        nativeLaunchSpinner.startAnimating()
+        nativeLaunchOverlay.addSubview(nativeLaunchSpinner)
+
+        NSLayoutConstraint.activate([
+            nativeLaunchOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            nativeLaunchOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nativeLaunchOverlay.topAnchor.constraint(equalTo: view.topAnchor),
+            nativeLaunchOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            nativeLaunchLogoWrap.centerXAnchor.constraint(equalTo: nativeLaunchOverlay.centerXAnchor),
+            nativeLaunchLogoWrap.centerYAnchor.constraint(equalTo: nativeLaunchOverlay.centerYAnchor, constant: -56),
+            nativeLaunchLogoWrap.widthAnchor.constraint(equalToConstant: 112),
+            nativeLaunchLogoWrap.heightAnchor.constraint(equalToConstant: 112),
+            nativeLaunchLogoView.leadingAnchor.constraint(equalTo: nativeLaunchLogoWrap.leadingAnchor, constant: 12),
+            nativeLaunchLogoView.trailingAnchor.constraint(equalTo: nativeLaunchLogoWrap.trailingAnchor, constant: -12),
+            nativeLaunchLogoView.topAnchor.constraint(equalTo: nativeLaunchLogoWrap.topAnchor, constant: 12),
+            nativeLaunchLogoView.bottomAnchor.constraint(equalTo: nativeLaunchLogoWrap.bottomAnchor, constant: -12),
+            nativeLaunchTitleLabel.leadingAnchor.constraint(equalTo: nativeLaunchOverlay.leadingAnchor, constant: 28),
+            nativeLaunchTitleLabel.trailingAnchor.constraint(equalTo: nativeLaunchOverlay.trailingAnchor, constant: -28),
+            nativeLaunchTitleLabel.topAnchor.constraint(equalTo: nativeLaunchLogoWrap.bottomAnchor, constant: 24),
+            nativeLaunchSubtitleLabel.leadingAnchor.constraint(equalTo: nativeLaunchTitleLabel.leadingAnchor),
+            nativeLaunchSubtitleLabel.trailingAnchor.constraint(equalTo: nativeLaunchTitleLabel.trailingAnchor),
+            nativeLaunchSubtitleLabel.topAnchor.constraint(equalTo: nativeLaunchTitleLabel.bottomAnchor, constant: 4),
+            nativeLaunchSpinner.centerXAnchor.constraint(equalTo: nativeLaunchOverlay.centerXAnchor),
+            nativeLaunchSpinner.topAnchor.constraint(equalTo: nativeLaunchSubtitleLabel.bottomAnchor, constant: 26)
+        ])
+    }
+
+    private func hideNativeLaunchOverlay() {
+        guard !nativeLaunchOverlay.isHidden else { return }
+        nativeLaunchOverlay.isUserInteractionEnabled = false
+        UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut]) {
+            self.nativeLaunchOverlay.alpha = 0
+        } completion: { _ in
+            self.nativeLaunchSpinner.stopAnimating()
+            self.nativeLaunchOverlay.isHidden = true
+        }
     }
 
     private func configureWebView() {
@@ -3093,6 +3194,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         guard loggedIn else {
             if !wasLoggedIn {
                 setNativeAuthVisible(true, animated: false)
+                hideNativeLaunchOverlay()
                 return
             }
             lastRegisteredPushToken = nil
@@ -3122,6 +3224,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             hideNativeSearchIfNeeded()
             setNativeAccountButtonVisible(false, animated: true)
             setNativeAuthVisible(true, animated: false)
+            hideNativeLaunchOverlay()
             return
         }
         nativeAuthUsernameField.resignFirstResponder()
@@ -3153,6 +3256,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         updateNativeTabSelection(animated: false)
         updateNativeSectionPresentation()
         bringActiveNativeLayersToFront()
+        hideNativeLaunchOverlay()
         openPendingPushRouteIfPossible()
     }
 
