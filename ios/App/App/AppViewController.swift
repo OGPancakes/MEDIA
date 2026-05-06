@@ -271,6 +271,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         gradientLayer.frame = view.bounds
+        bringActiveNativeLayersToFront()
         if nativeFeedTableView.tableHeaderView === nativeFeedStoriesHeader,
            nativeFeedStoriesHeader.frame.width != nativeFeedTableView.bounds.width {
             resizeNativeFeedHeader()
@@ -280,10 +281,15 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        bringActiveNativeLayersToFront()
+    }
+
     private func configureWebView() {
         guard let webView = webView else { return }
         webView.isHidden = false
-        webView.alpha = 0.01
+        webView.alpha = 1
         webView.isOpaque = true
         webView.backgroundColor = shellBackground
         if #available(iOS 15.0, *) {
@@ -302,6 +308,28 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         webView.scrollView.showsVerticalScrollIndicator = false
         webView.scrollView.showsHorizontalScrollIndicator = false
         webView.scrollView.keyboardDismissMode = .interactive
+    }
+
+    private func bringActiveNativeLayersToFront() {
+        if !nativeFeedContainer.isHidden {
+            view.bringSubviewToFront(nativeFeedContainer)
+        }
+        if !nativeProfileContainer.isHidden {
+            view.bringSubviewToFront(nativeProfileContainer)
+        }
+        if !nativeSearchContainer.isHidden {
+            view.bringSubviewToFront(nativeSearchContainer)
+        }
+        if !nativeMessagesContainer.isHidden {
+            view.bringSubviewToFront(nativeMessagesContainer)
+        }
+        if !nativePostDetailContainer.isHidden {
+            view.bringSubviewToFront(nativePostDetailContainer)
+        }
+        if !nativeAuthContainer.isHidden {
+            nativeAuthContainer.layer.zPosition = 1000
+            view.bringSubviewToFront(nativeAuthContainer)
+        }
     }
 
     private func configureNativeAuth() {
