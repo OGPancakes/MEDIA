@@ -223,6 +223,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var isApplyingComposerTextAttributes = false
     private var nativeMessageTarget: NativeUserSummary?
     private var nativeSavedPosts: [NativeFeedPost] = []
+    private var nativeSwitchableAccounts: [NativeUserSummary] = []
     private var nativeRouteOverrideUntil: Date?
     private var pendingNativeJSONRequests: [String: (Result<Data, Error>) -> Void] = [:]
     private var preloadingNativeImageURLs = Set<String>()
@@ -1623,11 +1624,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeAccountStack.spacing = 10
         content.addSubview(nativeAccountStack)
 
-        addNativeAccountMenuButton(title: "View Profile", symbol: "person.crop.circle", route: nil)
-        addNativeAccountMenuButton(title: "Settings", symbol: "gearshape.fill", route: "/settings")
-        addNativeAccountMenuButton(title: "Saved", symbol: "bookmark.fill", route: "/saved")
-        addNativeAccountMenuButton(title: "Admin", symbol: "shield.lefthalf.filled", route: "/admin")
-        addNativeAccountMenuButton(title: "Log Out", symbol: "rectangle.portrait.and.arrow.right", route: "/logout")
+        rebuildNativeAccountMenu()
 
         NSLayoutConstraint.activate([
             nativeAccountButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -18),
@@ -1645,7 +1642,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeAccountSheet.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
             nativeAccountSheet.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
             nativeAccountSheet.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -14),
-            nativeAccountSheet.heightAnchor.constraint(equalToConstant: 390),
+            nativeAccountSheet.heightAnchor.constraint(equalToConstant: 500),
             nativeAccountHandle.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             nativeAccountHandle.topAnchor.constraint(equalTo: content.topAnchor, constant: 10),
             nativeAccountHandle.widthAnchor.constraint(equalToConstant: 44),
@@ -1783,6 +1780,89 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeAccountStack.addArrangedSubview(button)
     }
 
+    private func addNativeAccountMenuLabel(_ text: String) {
+        let label = UILabel()
+        label.text = text
+        label.font = .systemFont(ofSize: 12, weight: .bold)
+        label.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.8)
+        label.text = text.uppercased()
+        label.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        nativeAccountStack.addArrangedSubview(label)
+    }
+
+    private func addNativeAccountSwitchButton(user: NativeUserSummary) {
+        let button = UIButton(type: .system)
+        button.backgroundColor = UIColor(red: 242.0 / 255.0, green: 247.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
+        button.layer.cornerRadius = 18
+        button.layer.cornerCurve = .continuous
+        button.contentHorizontalAlignment = .leading
+        button.heightAnchor.constraint(equalToConstant: 58).isActive = true
+        button.addAction(UIAction { [weak self] _ in
+            self?.switchNativeAccount(username: user.username)
+        }, for: .touchUpInside)
+
+        let avatar = NativeAvatarView()
+        avatar.translatesAutoresizingMaskIntoConstraints = false
+        avatar.configure(with: user, imageCache: nativeAvatarImageCache)
+        avatar.isUserInteractionEnabled = false
+        button.addSubview(avatar)
+
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 2
+        stack.isUserInteractionEnabled = false
+        button.addSubview(stack)
+
+        let nameLabel = UILabel()
+        nameLabel.text = user.display_name
+        nameLabel.font = .systemFont(ofSize: 15, weight: .bold)
+        nameLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        let handleLabel = UILabel()
+        handleLabel.text = "@\(user.username)"
+        handleLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        handleLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+        stack.addArrangedSubview(nameLabel)
+        stack.addArrangedSubview(handleLabel)
+
+        let switchIcon = UIImageView(image: UIImage(systemName: "arrow.triangle.2.circlepath"))
+        switchIcon.translatesAutoresizingMaskIntoConstraints = false
+        switchIcon.tintColor = UIColor(red: 26.0 / 255.0, green: 72.0 / 255.0, blue: 154.0 / 255.0, alpha: 0.9)
+        switchIcon.isUserInteractionEnabled = false
+        button.addSubview(switchIcon)
+
+        NSLayoutConstraint.activate([
+            avatar.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 14),
+            avatar.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            avatar.widthAnchor.constraint(equalToConstant: 38),
+            avatar.heightAnchor.constraint(equalToConstant: 38),
+            stack.leadingAnchor.constraint(equalTo: avatar.trailingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: switchIcon.leadingAnchor, constant: -12),
+            stack.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            switchIcon.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -16),
+            switchIcon.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            switchIcon.widthAnchor.constraint(equalToConstant: 20),
+            switchIcon.heightAnchor.constraint(equalToConstant: 20)
+        ])
+        nativeAccountStack.addArrangedSubview(button)
+    }
+
+    private func rebuildNativeAccountMenu() {
+        nativeAccountStack.arrangedSubviews.forEach { view in
+            nativeAccountStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        addNativeAccountMenuButton(title: "View Profile", symbol: "person.crop.circle", route: nil)
+        addNativeAccountMenuButton(title: "Settings", symbol: "gearshape.fill", route: "/settings")
+        addNativeAccountMenuButton(title: "Saved", symbol: "bookmark.fill", route: "/saved")
+        addNativeAccountMenuButton(title: "Admin", symbol: "shield.lefthalf.filled", route: "/admin")
+        if !nativeSwitchableAccounts.isEmpty {
+            addNativeAccountMenuLabel("Switch account")
+            nativeSwitchableAccounts.prefix(2).forEach { addNativeAccountSwitchButton(user: $0) }
+        }
+        addNativeAccountMenuButton(title: "Log Out", symbol: "rectangle.portrait.and.arrow.right", route: "/logout")
+    }
+
     private func updateNativeAccountAvatar() {
         guard let currentUser = nativeCurrentUser else { return }
         nativeAccountAvatarView.configure(with: currentUser, imageCache: nativeAvatarImageCache)
@@ -1812,6 +1892,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     @objc private func presentNativeAccountMenu() {
         updateNativeAccountAvatar()
+        refreshNativeSwitchableAccounts()
         nativeAccountDimView.isHidden = false
         nativeAccountSheet.isHidden = false
         nativeAccountDimView.isUserInteractionEnabled = true
@@ -1828,9 +1909,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         hideNativeAccountMenu(endingEditing: true)
     }
 
-    private func hideNativeAccountMenu(endingEditing: Bool) {
+    private func hideNativeAccountMenu(endingEditing: Bool, completion: (() -> Void)? = nil) {
         if endingEditing {
             view.endEditing(true)
+        }
+        guard !nativeAccountSheet.isHidden else {
+            completion?()
+            return
         }
         nativeAccountDimView.isUserInteractionEnabled = false
         nativeAccountSheet.isUserInteractionEnabled = false
@@ -1840,34 +1925,39 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         } completion: { _ in
             self.nativeAccountDimView.isHidden = true
             self.nativeAccountSheet.isHidden = true
+            completion?()
         }
     }
 
     private func handleNativeAccountMenuSelection(route: String?) {
-        dismissNativeAccountMenu()
         if let route {
             if route == "/settings" {
-                presentNativeSettingsPanel()
+                hideNativeAccountMenu(endingEditing: true) { [weak self] in
+                    self?.presentNativeSettingsPanel()
+                }
                 return
             }
             if route == "/saved" {
-                presentNativeSavedPanel()
+                hideNativeAccountMenu(endingEditing: true) { [weak self] in
+                    self?.presentNativeSavedPanel()
+                }
                 return
             }
             if route == "/admin" {
-                presentNativeAdminPanel()
+                hideNativeAccountMenu(endingEditing: true) { [weak self] in
+                    self?.presentNativeAdminPanel()
+                }
                 return
             }
             currentRoute = route
             currentPrimarySection = primarySection(for: route)
             if route == "/logout" {
-                performNativeJSONRequest(path: "/api/logout", method: "POST", bodyObject: [:]) { [weak self] _ in
-                    DispatchQueue.main.async {
-                        self?.handleLoginState(loggedIn: false, username: "")
-                    }
+                hideNativeAccountMenu(endingEditing: true) { [weak self] in
+                    self?.performNativeLogout()
                 }
                 return
             }
+            dismissNativeAccountMenu()
             hideNativeFeedIfNeeded()
             hideNativeProfileIfNeeded()
             hideNativeSearchIfNeeded()
@@ -1875,7 +1965,145 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             navigateWebView(to: route, replace: false)
             return
         }
-        openPrimarySection(.profile)
+        hideNativeAccountMenu(endingEditing: true) { [weak self] in
+            self?.openPrimarySection(.profile)
+        }
+    }
+
+    private func refreshNativeSwitchableAccounts() {
+        performNativeJSONRequest(path: "/api/accounts") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard case .success(let data) = result,
+                      let payload = try? JSONDecoder().decode(NativeAccountsResponse.self, from: data),
+                      payload.ok else { return }
+                self.nativeSwitchableAccounts = payload.accounts.filter { $0.username != self.currentUsername }
+                if !self.nativeAccountSheet.isHidden {
+                    self.rebuildNativeAccountMenu()
+                }
+            }
+        }
+    }
+
+    private func switchNativeAccount(username: String) {
+        hideNativeAccountMenu(endingEditing: true) { [weak self] in
+            guard let self else { return }
+            self.showNativeFlash(message: "Switching accounts...", category: "success")
+            self.performNativeJSONRequest(path: "/api/switch-account", method: "POST", bodyObject: ["username": username]) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    switch result {
+                    case .success(let data):
+                        guard let payload = try? JSONDecoder().decode(NativeSessionResponse.self, from: data),
+                              payload.ok,
+                              payload.logged_in,
+                              let user = payload.user else {
+                            self.showNativeFlash(message: "Could not switch accounts.", category: "error")
+                            return
+                        }
+                        self.applyNativeLoggedInUser(user, resetContent: true)
+                        self.showNativeFlash(message: "Switched to @\(user.username).", category: "success")
+                    case .failure(let error):
+                        self.showNativeFlash(message: error.localizedDescription, category: "error")
+                    }
+                }
+            }
+        }
+    }
+
+    private func performNativeLogout() {
+        clearNativeContentForAccountChange(clearIdentity: true)
+        performNativeJSONRequest(path: "/api/logout", method: "POST", bodyObject: [:]) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.handleLoginState(loggedIn: false, username: "")
+            }
+        }
+    }
+
+    private func applyNativeLoggedInUser(_ user: NativeUserSummary, resetContent: Bool) {
+        if resetContent || currentUsername != user.username {
+            clearNativeContentForAccountChange(clearIdentity: false)
+        }
+        currentUsername = user.username
+        nativeCurrentUser = user
+        handleLoginState(loggedIn: true, username: user.username)
+        updateNativeTabSelection(animated: true)
+        updateNativeSectionPresentation()
+        setComposeButtonVisible(true, animated: true)
+        bringActiveNativeLayersToFront()
+        loadNativeFeed(force: true)
+    }
+
+    private func clearNativeContentForAccountChange(clearIdentity: Bool) {
+        view.endEditing(true)
+        stopNativeThreadRefresh()
+        if !composerSheet.isHidden {
+            dismissComposerSheet(animated: false)
+        }
+        nativeCommentsDimView.alpha = 0
+        nativeCommentsSheet.alpha = 0
+        nativeCommentsDimView.isHidden = true
+        nativeCommentsSheet.isHidden = true
+        nativeCommentsDimView.isUserInteractionEnabled = false
+        nativeCommentsSheet.isUserInteractionEnabled = false
+        nativeUtilityDimView.alpha = 0
+        nativeUtilitySheet.alpha = 0
+        nativeUtilityDimView.isHidden = true
+        nativeUtilitySheet.isHidden = true
+        nativeUtilityDimView.isUserInteractionEnabled = false
+        nativeUtilitySheet.isUserInteractionEnabled = false
+        nativeAccountDimView.alpha = 0
+        nativeAccountSheet.alpha = 0
+        nativeAccountDimView.isHidden = true
+        nativeAccountSheet.isHidden = true
+        nativeAccountDimView.isUserInteractionEnabled = false
+        nativeAccountSheet.isUserInteractionEnabled = false
+        nativeStoryViewer.alpha = 0
+        nativeStoryViewer.isHidden = true
+        nativeStoryViewer.prepareForReuse()
+
+        nativeMessageTarget = nil
+        nativeMessageConversations = []
+        nativeThreadMessages = []
+        nativeFeedPosts = []
+        nativeFeedStories = []
+        nativeFeedPolls = []
+        nativePostDetailPost = nil
+        nativePostDetailComments = []
+        nativeProfileUser = nil
+        nativeProfilePosts = []
+        nativeSearchUsers = []
+        nativeSearchPosts = []
+        nativeConnectionsUsers = []
+        nativeCommentsPost = nil
+        nativeComments = []
+        nativeCommentsReplyTarget = nil
+        nativeSavedPosts = []
+        nativeSwitchableAccounts = []
+        nativeFeedLatestPostID = 0
+        warmedRoutesForUsername = nil
+        preloadingNativeImageURLs.removeAll()
+        if clearIdentity {
+            currentUsername = ""
+            nativeCurrentUser = nil
+        }
+        lastRouteBySection = [
+            .messages: "/messages",
+            .feed: "/",
+            .search: "/search"
+        ]
+        nativeFeedStoriesHeader.configure(stories: [], currentUser: nil, hasCurrentUserStory: false, imageCache: nativeAvatarImageCache)
+        nativeFeedTableView.reloadData()
+        nativeProfileTableView.reloadData()
+        nativeSearchTableView.reloadData()
+        nativeMessagesListTableView.reloadData()
+        nativePostDetailTableView.reloadData()
+        nativeConnectionsTableView.reloadData()
+        renderNativeThreadMessages()
+        nativeSearchEmptyLabel.isHidden = false
+        nativeSearchEmptyLabel.text = "Search for people or posts."
+        nativeMessagesEmptyLabel.isHidden = true
+        rebuildNativeAccountMenu()
     }
 
     private func presentNativeUtilityPanel(title: String, subtitle: String) {
@@ -1891,6 +2119,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeUtilitySheet.isHidden = false
         nativeUtilityDimView.isUserInteractionEnabled = true
         nativeUtilitySheet.isUserInteractionEnabled = true
+        nativeUtilitySheet.contentView.isUserInteractionEnabled = true
+        nativeUtilityScrollView.isUserInteractionEnabled = true
+        nativeUtilityStack.isUserInteractionEnabled = true
         view.bringSubviewToFront(nativeUtilityDimView)
         view.bringSubviewToFront(nativeUtilitySheet)
         UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseOut]) {
@@ -2231,11 +2462,17 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             grid.bottomAnchor.constraint(equalTo: statsCard.bottomAnchor, constant: -14)
         ])
         views.append(statsCard)
-        views.append(utilityActionRow(title: "Create poll", subtitle: "Use the native composer soon; dashboard fallback is disabled.", symbol: "chart.bar.doc.horizontal") { [weak self] in
-            self?.showNativeFlash(message: "Native poll creation is next.", category: "success")
+        views.append(utilityActionRow(title: "Refresh dashboard", subtitle: "Reload users, reports, polls, and app health.", symbol: "arrow.clockwise") { [weak self] in
+            self?.presentNativeAdminPanel()
         })
         views.append(utilityActionRow(title: "Manage users", subtitle: "\(summary.users.count) recent accounts loaded here.", symbol: "person.2.fill") { [weak self] in
-            self?.showNativeFlash(message: "Native user editing is next.", category: "success")
+            self?.renderNativeAdminUsers(summary.users, summary: summary)
+        })
+        views.append(utilityActionRow(title: "Review reports", subtitle: "\(summary.reports.count) open reports in the native panel.", symbol: "exclamationmark.bubble.fill") { [weak self] in
+            self?.renderNativeAdminReports(summary.reports, summary: summary)
+        })
+        views.append(utilityActionRow(title: "Polls", subtitle: "\(summary.polls.count) recent polls are active or archived.", symbol: "chart.bar.doc.horizontal") { [weak self] in
+            self?.renderNativeAdminPolls(summary.polls, summary: summary)
         })
         if !summary.reports.isEmpty {
             views.append(utilityLoadingCard("\(summary.reports.count) open reports need review."))
@@ -2244,6 +2481,97 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             views.append(utilityLoadingCard("\(summary.polls.count) recent polls are active or archived."))
         }
         replaceNativeUtilityContent(with: views)
+    }
+
+    private func renderNativeAdminUsers(_ users: [NativeAdminUser], summary: NativeAdminSummaryResponse) {
+        nativeUtilityTitleLabel.text = "Admin Users"
+        nativeUtilitySubtitleLabel.text = "Recent accounts and moderation flags."
+        var views: [UIView] = [
+            utilityActionRow(title: "Back to admin", subtitle: "Return to dashboard stats and tools.", symbol: "chevron.left") { [weak self] in
+                self?.renderNativeAdminSummary(summary)
+            }
+        ]
+        if users.isEmpty {
+            views.append(utilityLoadingCard("No recent users loaded."))
+        } else {
+            views.append(contentsOf: users.map { adminUserCard($0) })
+        }
+        replaceNativeUtilityContent(with: views)
+    }
+
+    private func renderNativeAdminReports(_ reports: [NativeAdminReport], summary: NativeAdminSummaryResponse) {
+        nativeUtilityTitleLabel.text = "Reports"
+        nativeUtilitySubtitleLabel.text = "Open reports that need review."
+        var views: [UIView] = [
+            utilityActionRow(title: "Back to admin", subtitle: "Return to dashboard stats and tools.", symbol: "chevron.left") { [weak self] in
+                self?.renderNativeAdminSummary(summary)
+            }
+        ]
+        if reports.isEmpty {
+            views.append(utilityLoadingCard("No open reports right now."))
+        } else {
+            views.append(contentsOf: reports.map { adminReportCard($0) })
+        }
+        replaceNativeUtilityContent(with: views)
+    }
+
+    private func renderNativeAdminPolls(_ polls: [NativeAdminPoll], summary: NativeAdminSummaryResponse) {
+        nativeUtilityTitleLabel.text = "Polls"
+        nativeUtilitySubtitleLabel.text = "Recent poll status."
+        var views: [UIView] = [
+            utilityActionRow(title: "Back to admin", subtitle: "Return to dashboard stats and tools.", symbol: "chevron.left") { [weak self] in
+                self?.renderNativeAdminSummary(summary)
+            }
+        ]
+        if polls.isEmpty {
+            views.append(utilityLoadingCard("No recent polls loaded."))
+        } else {
+            views.append(contentsOf: polls.map { adminPollCard($0) })
+        }
+        replaceNativeUtilityContent(with: views)
+    }
+
+    private func adminUserCard(_ user: NativeAdminUser) -> UIView {
+        let status = [
+            user.is_admin ? "admin" : nil,
+            user.is_verified ? "verified" : nil,
+            user.is_creator ? "creator" : nil,
+            user.is_banned ? "banned" : nil
+        ].compactMap { $0 }.joined(separator: " • ")
+        return adminInfoCard(
+            title: user.display_name,
+            subtitle: "@\(user.username)  \(user.email)",
+            detail: status.isEmpty ? "No moderation flags." : status
+        )
+    }
+
+    private func adminReportCard(_ report: NativeAdminReport) -> UIView {
+        adminInfoCard(title: "Report #\(report.id)", subtitle: report.status.capitalized, detail: report.reason)
+    }
+
+    private func adminPollCard(_ poll: NativeAdminPoll) -> UIView {
+        let status = poll.is_active ? "Active" : "Archived"
+        let visibility = poll.is_hidden_results ? "Hidden results" : "Public results"
+        return adminInfoCard(title: poll.question, subtitle: status, detail: visibility)
+    }
+
+    private func adminInfoCard(title: String, subtitle: String, detail: String) -> UIView {
+        let card = nativeUtilityCard()
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 6
+        card.addSubview(stack)
+        stack.addArrangedSubview(utilityLabel(title, size: 16, weight: .bold))
+        stack.addArrangedSubview(utilityLabel(subtitle, size: 13, weight: .semibold, color: UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)))
+        stack.addArrangedSubview(utilityLabel(detail, size: 14, weight: .semibold, color: UIColor(red: 38.0 / 255.0, green: 49.0 / 255.0, blue: 80.0 / 255.0, alpha: 0.94)))
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 18),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -18),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16)
+        ])
+        return card
     }
 
     private func adminStatTile(title: String, value: Int) -> UIView {
@@ -2369,14 +2697,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                         self.nativeAuthErrorLabel.isHidden = false
                         return
                     }
-                    self.currentUsername = user.username
-                    self.nativeCurrentUser = user
-                    self.handleLoginState(loggedIn: true, username: user.username)
-                    self.updateNativeTabSelection(animated: true)
-                    self.updateNativeSectionPresentation()
-                    self.setComposeButtonVisible(true, animated: true)
-                    self.bringActiveNativeLayersToFront()
-                    self.loadNativeFeed(force: true)
+                    self.applyNativeLoggedInUser(user, resetContent: true)
                 case .failure(let error):
                     self.nativeAuthErrorLabel.text = error.localizedDescription
                     self.nativeAuthErrorLabel.isHidden = false
@@ -3192,6 +3513,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         setNativeAuthVisible(!loggedIn, animated: true)
         setNativeTabBarVisible(loggedIn, animated: true)
         guard loggedIn else {
+            clearNativeContentForAccountChange(clearIdentity: true)
             if !wasLoggedIn {
                 setNativeAuthVisible(true, animated: false)
                 hideNativeLaunchOverlay()
@@ -3201,23 +3523,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             warmedRoutesForUsername = nil
             currentUsername = ""
             currentRoute = "/"
-            nativeMessageTarget = nil
-            nativeMessageConversations = []
-            nativeThreadMessages = []
-            nativeFeedPosts = []
-            nativeFeedStories = []
-            nativeFeedPolls = []
-            nativeFeedLatestPostID = 0
-            nativeCurrentUser = nil
-            nativeFeedStoriesHeader.configure(stories: [], currentUser: nil, hasCurrentUserStory: false, imageCache: nativeAvatarImageCache)
-            lastRouteBySection = [
-                .messages: "/messages",
-                .feed: "/",
-                .search: "/search"
-            ]
-            nativeFeedTableView.reloadData()
-            nativeMessagesListTableView.reloadData()
-            renderNativeThreadMessages()
             hideNativeFeedIfNeeded()
             hideNativeMessagesIfNeeded()
             hideNativeProfileIfNeeded()
@@ -3271,10 +3576,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                         return
                     }
                     if payload.logged_in, let user = payload.user {
-                        self.currentUsername = user.username
-                        self.nativeCurrentUser = user
-                        self.handleLoginState(loggedIn: true, username: user.username)
-                        self.loadNativeFeed(force: true)
+                        self.applyNativeLoggedInUser(user, resetContent: self.currentUsername != user.username)
                     } else {
                         self.handleLoginState(loggedIn: false, username: "")
                     }
@@ -5876,6 +6178,25 @@ private struct NativeSessionResponse: Decodable {
         accepted_terms = try container.decodeIfPresent(Bool.self, forKey: .accepted_terms)
         user = try container.decodeIfPresent(NativeUserSummary.self, forKey: .user)
         error = try container.decodeIfPresent(String.self, forKey: .error)
+    }
+}
+
+private struct NativeAccountsResponse: Decodable {
+    let ok: Bool
+    let current_user: NativeUserSummary?
+    let accounts: [NativeUserSummary]
+
+    private enum CodingKeys: String, CodingKey {
+        case ok
+        case current_user
+        case accounts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decodeIfPresent(Bool.self, forKey: .ok) ?? false
+        current_user = try container.decodeIfPresent(NativeUserSummary.self, forKey: .current_user)
+        accounts = try container.decodeIfPresent([NativeUserSummary].self, forKey: .accounts) ?? []
     }
 }
 

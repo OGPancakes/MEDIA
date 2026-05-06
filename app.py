@@ -757,6 +757,45 @@ def create_app():
         session.pop("user_id", None)
         return jsonify({"ok": True, "logged_in": False})
 
+    @app.route("/api/accounts")
+    def api_accounts():
+        user = current_user()
+        accounts = get_switchable_accounts(user)
+        return jsonify(
+            {
+                "ok": True,
+                "logged_in": bool(user),
+                "current_user": serialize_user_brief(user) if user else None,
+                "accounts": [serialize_user_brief(account) for account in accounts],
+            }
+        )
+
+    @app.route("/api/switch-account", methods=["POST"])
+    def api_switch_account():
+        payload = request.get_json(silent=True) or request.form
+        username = (payload.get("username") or "").strip().lower()
+        saved = session.get("saved_accounts", [])
+        if username not in saved:
+            return jsonify({"ok": False, "error": "That account is not saved on this device."}), 403
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            session["saved_accounts"] = [item for item in saved if item != username]
+            return jsonify({"ok": False, "error": "That saved account no longer exists."}), 404
+        if user.is_banned:
+            return jsonify({"ok": False, "error": "This account has been banned."}), 403
+        if user.is_timed_out:
+            return jsonify({"ok": False, "error": "This account is temporarily timed out."}), 403
+        session["user_id"] = user.id
+        remember_account(user)
+        return jsonify(
+            {
+                "ok": True,
+                "logged_in": True,
+                "accepted_terms": bool(user.accepted_terms_at),
+                "user": serialize_user_brief(user),
+            }
+        )
+
     @app.route("/api/terms/accept", methods=["POST"])
     @login_required
     def api_accept_terms():
