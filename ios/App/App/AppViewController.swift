@@ -6,6 +6,7 @@ import PhotosUI
 import UserNotifications
 import AVKit
 import UniformTypeIdentifiers
+import ImageIO
 
 final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, UITextViewDelegate, PHPickerViewControllerDelegate, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UITableViewDataSource, UITableViewDelegate, UITableViewDataSourcePrefetching {
     private enum PrimarySection: String {
@@ -259,7 +260,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         observePushToken()
         observePushNotificationTaps()
         installComposerBridge()
-        startStateSyncTimer()
+        syncComposerAvailabilityFromPage()
         syncNativeSessionFromAPI()
         consumeStoredPushRoute()
     }
@@ -2942,11 +2943,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             window.location.assign(targetUrl);
           };
           window.nativePrefetchPrimaryRoutes = function(profileUsername) {
-            if (!window.prefetchRoute) return;
-            const urls = ['/messages', '/', '/search', normalizedProfilePath(profileUsername || '')];
-            urls.forEach(function(url) {
-              window.prefetchRoute(url);
-            });
+            return;
           };
           function notify() {
             try {
@@ -2978,9 +2975,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
           window.addEventListener('load', notify);
           window.addEventListener('pageshow', notify);
           window.addEventListener('popstate', notify);
-          new MutationObserver(function() {
-            requestAnimationFrame(notify);
-          }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
           notify();
         })();
         """
@@ -3002,10 +2996,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func startStateSyncTimer() {
         stateSyncTimer?.invalidate()
-        stateSyncTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
-            self?.syncComposerAvailabilityFromPage()
-        }
-        stateSyncTimer?.tolerance = 0.6
         syncComposerAvailabilityFromPage()
     }
 
@@ -3136,6 +3126,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         nativeAuthUsernameField.resignFirstResponder()
         nativeAuthPasswordField.resignFirstResponder()
+        stateSyncTimer?.invalidate()
+        stateSyncTimer = nil
         nativeAuthErrorLabel.isHidden = true
         isSubmittingNativeAuth = false
         nativeAuthLoginButton.setTitle("Sign in", for: .normal)
@@ -3941,8 +3933,8 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     }
                     self.syncNativeFeedSegment()
                     self.nativeFeedTableView.reloadData()
-                    self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(8)))
-                    self.prefetchNativeStoryImages(for: payload.stories)
+                    self.prefetchNativeFeedImages(for: Array(payload.posts.prefix(2)))
+                    self.prefetchNativeStoryImages(for: Array(payload.stories.prefix(4)))
                     self.nativeFeedEmptyLabel.text = "No posts yet."
                     self.nativeFeedEmptyLabel.isHidden = !(payload.posts.isEmpty && payload.polls.isEmpty)
                 case .failure(let error):
@@ -4067,7 +4059,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         preloadingNativeImageURLs.insert(urlString)
         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
             guard let self else { return }
-            let image = data.flatMap { UIImage(data: $0) }
+            let image = data.flatMap { downsampledImage(data: $0, maxPixelSize: 900) }
             DispatchQueue.main.async {
                 self.preloadingNativeImageURLs.remove(urlString)
                 if let image {
@@ -4659,6 +4651,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         guard message.name == composerScriptMessageName,
               let payload = message.body as? [String: Any] else { return }
+        if isLoggedIntoWebApp, nativeCurrentUser != nil {
+            return
+        }
         let loggedIn = payload["loggedIn"] as? Bool ?? false
         let isFeed = payload["isFeed"] as? Bool ?? false
         let canCompose = payload["canCompose"] as? Bool ?? false
@@ -4708,13 +4703,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func prefetchPrimaryRoutesIfNeeded(username: String) {
-        guard isLoggedIntoWebApp, !username.isEmpty, warmedRoutesForUsername != username else { return }
         warmedRoutesForUsername = username
-        let escapedUsername = username
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        let script = "window.nativePrefetchPrimaryRoutes && window.nativePrefetchPrimaryRoutes(\"\(escapedUsername)\");"
-        webView?.evaluateJavaScript(script, completionHandler: nil)
     }
 
     @objc private func handleNativeTabTap(_ sender: UIButton) {
@@ -5457,27 +5446,6 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
-        let posts: [NativeFeedPost]
-        if tableView === nativeFeedTableView {
-            posts = indexPaths.compactMap { indexPath in
-                let postIndex = indexPath.row - nativeFeedPolls.count
-                return postIndex >= 0 && postIndex < nativeFeedPosts.count ? nativeFeedPosts[postIndex] : nil
-            }
-        } else if tableView === nativeProfileTableView {
-            posts = indexPaths.compactMap { indexPath in
-                indexPath.row < nativeProfilePosts.count ? nativeProfilePosts[indexPath.row] : nil
-            }
-        } else if tableView === nativePostDetailTableView {
-            posts = nativePostDetailPost.map { [$0] } ?? []
-        } else if tableView === nativeSearchTableView {
-            posts = indexPaths.compactMap { indexPath in
-                let postIndex = indexPath.row - nativeSearchUsers.count
-                return postIndex >= 0 && postIndex < nativeSearchPosts.count ? nativeSearchPosts[postIndex] : nil
-            }
-        } else {
-            return
-        }
-        prefetchNativeFeedImages(for: posts)
     }
 
     @objc private func openPhotoPicker() {
@@ -5733,6 +5701,19 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             }.resume()
         }
     }
+}
+
+private func downsampledImage(data: Data, maxPixelSize: CGFloat) -> UIImage? {
+    let options = [kCGImageSourceShouldCache: false] as CFDictionary
+    guard let source = CGImageSourceCreateWithData(data as CFData, options) else { return nil }
+    let downsampleOptions = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceShouldCacheImmediately: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceThumbnailMaxPixelSize: Int(maxPixelSize)
+    ] as CFDictionary
+    guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions) else { return nil }
+    return UIImage(cgImage: cgImage)
 }
 
 private struct NativeFeedResponse: Decodable {
@@ -6212,7 +6193,7 @@ private final class NativeAvatarView: UIView {
         imageView.image = nil
         guard let url = URL(string: user.avatar_url) else { return }
         URLSession.shared.dataTask(with: url) { data, _, _ in
-            guard let data, let image = UIImage(data: data) else { return }
+            guard let data, let image = downsampledImage(data: data, maxPixelSize: 180) else { return }
             imageCache.setObject(image, forKey: cacheKey)
             DispatchQueue.main.async {
                 guard self.currentAvatarKey == user.avatar_url else { return }
@@ -6450,7 +6431,7 @@ private final class NativeProfileHeaderView: UIView {
         }
         guard let url = URL(string: urlString) else { return }
         URLSession.shared.dataTask(with: url) { data, _, _ in
-            guard let data, let image = UIImage(data: data) else { return }
+            guard let data, let image = downsampledImage(data: data, maxPixelSize: 1000) else { return }
             imageCache.setObject(image, forKey: key)
             DispatchQueue.main.async {
                 guard self.currentBannerKey == urlString else { return }
@@ -6594,7 +6575,7 @@ private final class NativeStoryViewerView: UIView {
         }
         guard let url = URL(string: story.media_url) else { return }
         URLSession.shared.dataTask(with: url) { data, _, _ in
-            guard let data, let image = UIImage(data: data) else { return }
+            guard let data, let image = downsampledImage(data: data, maxPixelSize: 1200) else { return }
             mediaCache.setObject(image, forKey: key)
             DispatchQueue.main.async {
                 guard self.currentMediaKey == story.media_url else { return }
@@ -7024,7 +7005,7 @@ private final class NativeFeedMediaView: UIView {
         }
         guard let url = URL(string: urlString) else { return }
         URLSession.shared.dataTask(with: url) { data, _, _ in
-            guard let data, let image = UIImage(data: data) else { return }
+            guard let data, let image = downsampledImage(data: data, maxPixelSize: 1000) else { return }
             cache.setObject(image, forKey: key)
             DispatchQueue.main.async {
                 guard self.currentURL == urlString else { return }
