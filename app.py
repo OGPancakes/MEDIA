@@ -1268,7 +1268,7 @@ def create_app():
                 .limit(15)
                 .all()
             )
-        hidden_user_ids = moderation_hidden_user_ids(viewer, include_muted=True)
+        hidden_user_ids = moderation_hidden_user_ids(viewer, include_muted=not bool(query))
         users = [user for user in users if user.id not in hidden_user_ids]
         posts = [post for post in posts if viewer_can_see_post(viewer, post) and post.user_id not in hidden_user_ids]
         reset_post_display_state(posts)
@@ -1639,6 +1639,30 @@ def create_app():
         db.session.commit()
         return jsonify({"ok": True, "message": "Report sent to moderation.", "report": serialize_admin_report(report)})
 
+    @app.route("/api/settings/moderation")
+    @login_required
+    def api_settings_moderation():
+        user = current_user()
+        blocked_users = (
+            User.query.join(Block, Block.blocked_id == User.id)
+            .filter(Block.blocker_id == user.id)
+            .order_by(User.display_name.asc(), User.username.asc())
+            .all()
+        )
+        muted_users = (
+            User.query.join(Mute, Mute.muted_id == User.id)
+            .filter(Mute.muter_id == user.id)
+            .order_by(User.display_name.asc(), User.username.asc())
+            .all()
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "blocked": [serialize_profile_user(blocked_user, user) for blocked_user in blocked_users],
+                "muted": [serialize_profile_user(muted_user, user) for muted_user in muted_users],
+            }
+        )
+
     @app.route("/api/users/<username>/connections")
     @login_required
     def api_profile_connections(username):
@@ -1782,6 +1806,12 @@ def create_app():
             .order_by(User.display_name.asc(), User.username.asc())
             .all()
         )
+        muted_users = (
+            User.query.join(Mute, Mute.muted_id == User.id)
+            .filter(Mute.muter_id == user.id)
+            .order_by(User.display_name.asc(), User.username.asc())
+            .all()
+        )
         audit_username = request.args.get("audit_user", "").strip().lstrip("@").lower()
         audit_target = None
         audit_threads = []
@@ -1795,6 +1825,7 @@ def create_app():
             "settings.html",
             title="Settings",
             blocked_users=blocked_users,
+            muted_users=muted_users,
             audit_target=audit_target,
             audit_threads=audit_threads,
             audit_username=audit_username,
@@ -2165,6 +2196,14 @@ def create_app():
             return jsonify({"ok": True, "message": "Account deleted.", "deleted_id": payload.get("target_id")})
 
         return jsonify({"ok": False, "error": "Unknown admin action."}), 400
+
+    @app.route("/api/admin/reports/<int:report_id>/resolve", methods=["POST"])
+    @admin_required
+    def api_admin_resolve_report(report_id):
+        report_item = Report.query.get_or_404(report_id)
+        report_item.status = "resolved"
+        db.session.commit()
+        return jsonify({"ok": True, "message": "Report resolved.", "report": serialize_admin_report(report_item)})
 
     @app.route("/admin", methods=["GET", "POST"])
     @admin_required

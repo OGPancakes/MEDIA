@@ -39,8 +39,9 @@
 </section>
 
 <section class="card">
-    <h3>Blocked users</h3>
+    <h3>Blocked and muted accounts</h3>
     {% if blocked_users %}
+    <h4>Blocked</h4>
     <div class="stack-list">
         {% for blocked_user in blocked_users %}
         <div class="settings-user-row">
@@ -59,6 +60,27 @@
     </div>
     {% else %}
     <p class="muted">You have not blocked anyone.</p>
+    {% endif %}
+    {% if muted_users %}
+    <h4>Muted</h4>
+    <div class="stack-list">
+        {% for muted_user in muted_users %}
+        <div class="settings-user-row">
+            <a class="user-row" href="{{ url_for('profile', username=muted_user.username) }}">
+                {{ render_avatar(muted_user, "user-avatar") }}
+                <div class="settings-user-copy">
+                    <strong class="name-line">{{ muted_user.display_name }}{{ render_verified(muted_user) }}</strong>
+                    <span>@{{ muted_user.username }}</span>
+                </div>
+            </a>
+            <form method="post" action="{{ url_for('mute_user', username=muted_user.username) }}">
+                <button type="submit" class="button ghost">Unmute</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">You have not muted anyone.</p>
     {% endif %}
 </section>
 

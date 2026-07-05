@@ -5,6 +5,7 @@ import ObjectiveC.runtime
 import PhotosUI
 import UserNotifications
 import AVKit
+import AVFoundation
 import UniformTypeIdentifiers
 import ImageIO
 
@@ -14,6 +15,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         case messages
         case search
         case profile
+    }
+
+    private struct NativeRouteSnapshot {
+        let section: PrimarySection
+        let route: String
+        let feedTab: String
     }
 
     private enum NativePhotoPickerPurpose {
@@ -32,7 +39,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeLaunchLogoView = UIImageView()
     private let nativeLaunchTitleLabel = UILabel()
     private let nativeLaunchSubtitleLabel = UILabel()
+    private let nativeLaunchActionLabel = UILabel()
     private let nativeLaunchSpinner = UIActivityIndicatorView(style: .medium)
+    private let nativeLaunchPulseOne = UIView()
+    private let nativeLaunchPulseTwo = UIView()
 
     private let composerDimView = UIControl()
     private let composerSheet = UIVisualEffectView(effect: UIBlurEffect(style: .systemChromeMaterial))
@@ -75,7 +85,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeThreadLoadingView = UIActivityIndicatorView(style: .large)
     private let nativeThreadEmptyLabel = UILabel()
     private let nativeFeedContainer = UIView()
-    private let nativeFeedHeader = UILabel()
+    private let nativeFeedHeader = UIImageView()
     private let nativeFeedSegment = UISegmentedControl(items: ["Home", "FYP", "Breaking"])
     private let nativeFeedTableView = UITableView(frame: .zero, style: .plain)
     private let nativeFeedEmptyLabel = UILabel()
@@ -101,7 +111,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private let nativeUtilityScrollView = UIScrollView()
     private let nativeUtilityStack = UIStackView()
     private let nativeAuthContainer = UIView()
+    private let nativeAuthBackdrop = UIView()
     private let nativeAuthLogoView = UIImageView()
+    private let nativeAuthBadgeLabel = UILabel()
     private let nativeAuthTitleLabel = UILabel()
     private let nativeAuthSubtitleLabel = UILabel()
     private let nativeAuthUsernameField = UITextField()
@@ -206,6 +218,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var nativeFeedPosts: [NativeFeedPost] = []
     private var nativeFeedStories: [NativeFeedStory] = []
     private var nativeFeedPolls: [NativeFeedPoll] = []
+    private var nativeOpenStory: NativeFeedStory?
     private var nativePostDetailPost: NativeFeedPost?
     private var nativePostDetailComments: [NativeComment] = []
     private var nativeProfileUser: NativeProfileUser?
@@ -223,7 +236,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     private var isApplyingComposerTextAttributes = false
     private var nativeMessageTarget: NativeUserSummary?
     private var nativeSavedPosts: [NativeFeedPost] = []
+    private var nativeAdminSearchQuery = ""
+    private var nativeAdminLoadedUsers: [NativeAdminUser] = []
+    private var nativeSettingsPreviewAvatarImage: UIImage?
+    private weak var nativeSettingsPreviewAvatarView: NativeAvatarView?
     private var nativeSwitchableAccounts: [NativeUserSummary] = []
+    private var nativeRouteHistory: [NativeRouteSnapshot] = []
     private var nativeRouteOverrideUntil: Date?
     private var pendingNativeJSONRequests: [String: (Result<Data, Error>) -> Void] = [:]
     private var preloadingNativeImageURLs = Set<String>()
@@ -268,12 +286,19 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         observePushToken()
         observePushNotificationTaps()
         installComposerBridge()
+        installNativeBackSwipeGesture()
         syncComposerAvailabilityFromPage()
         syncNativeSessionFromAPI()
         consumeStoredPushRoute()
         DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
             self?.hideNativeLaunchOverlay()
         }
+    }
+
+    private func installNativeBackSwipeGesture() {
+        let swipeBack = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleNativeBackSwipe(_:)))
+        swipeBack.edges = .left
+        view.addGestureRecognizer(swipeBack)
     }
 
     deinit {
@@ -288,6 +313,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         super.viewDidLayoutSubviews()
         gradientLayer.frame = view.bounds
         nativeLaunchOverlay.layer.sublayers?.first(where: { $0.name == "nativeLaunchGradient" })?.frame = nativeLaunchOverlay.bounds
+        nativeAuthContainer.layer.sublayers?.first(where: { $0.name == "nativeAuthGradient" })?.frame = nativeAuthContainer.bounds
         bringActiveNativeLayersToFront()
         if nativeFeedTableView.tableHeaderView === nativeFeedStoriesHeader,
            nativeFeedStoriesHeader.frame.width != nativeFeedTableView.bounds.width {
@@ -318,23 +344,33 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         launchGradient.name = "nativeLaunchGradient"
         nativeLaunchOverlay.layer.insertSublayer(launchGradient, at: 0)
 
+        [nativeLaunchPulseOne, nativeLaunchPulseTwo].enumerated().forEach { index, pulse in
+            pulse.translatesAutoresizingMaskIntoConstraints = false
+            pulse.backgroundColor = UIColor.clear
+            pulse.layer.cornerRadius = index == 0 ? 106 : 84
+            pulse.layer.cornerCurve = .continuous
+            pulse.layer.borderWidth = index == 0 ? 2 : 1
+            pulse.layer.borderColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: index == 0 ? 0.2 : 0.14).cgColor
+            pulse.alpha = 0.9
+            nativeLaunchOverlay.addSubview(pulse)
+        }
+
         nativeLaunchLogoWrap.translatesAutoresizingMaskIntoConstraints = false
-        nativeLaunchLogoWrap.backgroundColor = UIColor.white.withAlphaComponent(0.92)
+        nativeLaunchLogoWrap.backgroundColor = .clear
         nativeLaunchLogoWrap.layer.cornerRadius = 34
         nativeLaunchLogoWrap.layer.cornerCurve = .continuous
-        nativeLaunchLogoWrap.layer.borderWidth = 1
-        nativeLaunchLogoWrap.layer.borderColor = UIColor(red: 207.0 / 255.0, green: 218.0 / 255.0, blue: 236.0 / 255.0, alpha: 0.9).cgColor
+        nativeLaunchLogoWrap.layer.borderWidth = 0
         nativeLaunchLogoWrap.layer.shadowColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1).cgColor
-        nativeLaunchLogoWrap.layer.shadowOpacity = 0.12
-        nativeLaunchLogoWrap.layer.shadowRadius = 24
-        nativeLaunchLogoWrap.layer.shadowOffset = CGSize(width: 0, height: 12)
+        nativeLaunchLogoWrap.layer.shadowOpacity = 0.08
+        nativeLaunchLogoWrap.layer.shadowRadius = 18
+        nativeLaunchLogoWrap.layer.shadowOffset = CGSize(width: 0, height: 8)
         nativeLaunchOverlay.addSubview(nativeLaunchLogoWrap)
 
         nativeLaunchLogoView.translatesAutoresizingMaskIntoConstraints = false
-        nativeLaunchLogoView.image = UIImage(named: "Splash") ?? UIImage(systemName: "building.columns.fill")
-        nativeLaunchLogoView.contentMode = .scaleAspectFill
-        nativeLaunchLogoView.clipsToBounds = true
-        nativeLaunchLogoView.layer.cornerRadius = 24
+        nativeLaunchLogoView.image = UIImage(named: "PIALogo") ?? UIImage(named: "Splash") ?? UIImage(systemName: "building.columns.fill")
+        nativeLaunchLogoView.contentMode = .scaleAspectFit
+        nativeLaunchLogoView.clipsToBounds = false
+        nativeLaunchLogoView.layer.cornerRadius = 0
         nativeLaunchLogoView.layer.cornerCurve = .continuous
         nativeLaunchLogoView.tintColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
         nativeLaunchLogoWrap.addSubview(nativeLaunchLogoView)
@@ -353,6 +389,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeLaunchSubtitleLabel.textAlignment = .center
         nativeLaunchOverlay.addSubview(nativeLaunchSubtitleLabel)
 
+        nativeLaunchActionLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeLaunchActionLabel.text = "LIVE FEED  /  CAMPAIGN ROOM  /  ACTION"
+        nativeLaunchActionLabel.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
+        nativeLaunchActionLabel.textColor = UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 0.82)
+        nativeLaunchActionLabel.textAlignment = .center
+        nativeLaunchActionLabel.numberOfLines = 1
+        nativeLaunchOverlay.addSubview(nativeLaunchActionLabel)
+
         nativeLaunchSpinner.translatesAutoresizingMaskIntoConstraints = false
         nativeLaunchSpinner.color = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
         nativeLaunchSpinner.startAnimating()
@@ -363,6 +407,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeLaunchOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             nativeLaunchOverlay.topAnchor.constraint(equalTo: view.topAnchor),
             nativeLaunchOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            nativeLaunchPulseOne.centerXAnchor.constraint(equalTo: nativeLaunchLogoWrap.centerXAnchor),
+            nativeLaunchPulseOne.centerYAnchor.constraint(equalTo: nativeLaunchLogoWrap.centerYAnchor),
+            nativeLaunchPulseOne.widthAnchor.constraint(equalToConstant: 212),
+            nativeLaunchPulseOne.heightAnchor.constraint(equalToConstant: 212),
+            nativeLaunchPulseTwo.centerXAnchor.constraint(equalTo: nativeLaunchLogoWrap.centerXAnchor),
+            nativeLaunchPulseTwo.centerYAnchor.constraint(equalTo: nativeLaunchLogoWrap.centerYAnchor),
+            nativeLaunchPulseTwo.widthAnchor.constraint(equalToConstant: 168),
+            nativeLaunchPulseTwo.heightAnchor.constraint(equalToConstant: 168),
             nativeLaunchLogoWrap.centerXAnchor.constraint(equalTo: nativeLaunchOverlay.centerXAnchor),
             nativeLaunchLogoWrap.centerYAnchor.constraint(equalTo: nativeLaunchOverlay.centerYAnchor, constant: -56),
             nativeLaunchLogoWrap.widthAnchor.constraint(equalToConstant: 112),
@@ -377,9 +429,13 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeLaunchSubtitleLabel.leadingAnchor.constraint(equalTo: nativeLaunchTitleLabel.leadingAnchor),
             nativeLaunchSubtitleLabel.trailingAnchor.constraint(equalTo: nativeLaunchTitleLabel.trailingAnchor),
             nativeLaunchSubtitleLabel.topAnchor.constraint(equalTo: nativeLaunchTitleLabel.bottomAnchor, constant: 4),
+            nativeLaunchActionLabel.leadingAnchor.constraint(equalTo: nativeLaunchTitleLabel.leadingAnchor),
+            nativeLaunchActionLabel.trailingAnchor.constraint(equalTo: nativeLaunchTitleLabel.trailingAnchor),
+            nativeLaunchActionLabel.topAnchor.constraint(equalTo: nativeLaunchSubtitleLabel.bottomAnchor, constant: 13),
             nativeLaunchSpinner.centerXAnchor.constraint(equalTo: nativeLaunchOverlay.centerXAnchor),
-            nativeLaunchSpinner.topAnchor.constraint(equalTo: nativeLaunchSubtitleLabel.bottomAnchor, constant: 26)
+            nativeLaunchSpinner.topAnchor.constraint(equalTo: nativeLaunchActionLabel.bottomAnchor, constant: 22)
         ])
+        animateNativeLaunchIntro()
     }
 
     private func hideNativeLaunchOverlay() {
@@ -390,6 +446,46 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         } completion: { _ in
             self.nativeLaunchSpinner.stopAnimating()
             self.nativeLaunchOverlay.isHidden = true
+        }
+    }
+
+    private func animateNativeLaunchIntro() {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        nativeLaunchLogoWrap.transform = CGAffineTransform(scaleX: 0.82, y: 0.82)
+        nativeLaunchLogoWrap.alpha = 0
+        nativeLaunchTitleLabel.transform = CGAffineTransform(translationX: 0, y: 18)
+        nativeLaunchTitleLabel.alpha = 0
+        nativeLaunchSubtitleLabel.alpha = 0
+        nativeLaunchActionLabel.alpha = 0
+
+        UIView.animate(withDuration: 0.58, delay: 0.04, usingSpringWithDamping: 0.68, initialSpringVelocity: 0.72, options: [.allowUserInteraction]) {
+            self.nativeLaunchLogoWrap.transform = .identity
+            self.nativeLaunchLogoWrap.alpha = 1
+        }
+        UIView.animate(withDuration: 0.42, delay: 0.16, options: [.curveEaseOut]) {
+            self.nativeLaunchTitleLabel.transform = .identity
+            self.nativeLaunchTitleLabel.alpha = 1
+            self.nativeLaunchSubtitleLabel.alpha = 1
+            self.nativeLaunchActionLabel.alpha = 1
+        }
+        [nativeLaunchPulseOne, nativeLaunchPulseTwo].enumerated().forEach { index, pulse in
+            let animation = CABasicAnimation(keyPath: "transform.scale")
+            animation.fromValue = 0.84
+            animation.toValue = 1.12
+            animation.duration = index == 0 ? 1.7 : 1.35
+            animation.autoreverses = true
+            animation.repeatCount = .infinity
+            animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            pulse.layer.add(animation, forKey: "piaPulseScale")
+
+            let opacity = CABasicAnimation(keyPath: "opacity")
+            opacity.fromValue = index == 0 ? 0.42 : 0.34
+            opacity.toValue = index == 0 ? 0.12 : 0.08
+            opacity.duration = animation.duration
+            opacity.autoreverses = true
+            opacity.repeatCount = .infinity
+            opacity.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            pulse.layer.add(opacity, forKey: "piaPulseOpacity")
         }
     }
 
@@ -501,24 +597,62 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeAuthContainer.alpha = 0
         view.addSubview(nativeAuthContainer)
 
+        let authGradient = CAGradientLayer()
+        authGradient.colors = [
+            UIColor(red: 247.0 / 255.0, green: 250.0 / 255.0, blue: 255.0 / 255.0, alpha: 1).cgColor,
+            shellBackground.cgColor,
+            UIColor(red: 255.0 / 255.0, green: 244.0 / 255.0, blue: 238.0 / 255.0, alpha: 1).cgColor
+        ]
+        authGradient.locations = [0.0, 0.52, 1.0]
+        authGradient.startPoint = CGPoint(x: 0.15, y: 0.0)
+        authGradient.endPoint = CGPoint(x: 0.9, y: 1.0)
+        authGradient.name = "nativeAuthGradient"
+        nativeAuthContainer.layer.insertSublayer(authGradient, at: 0)
+
+        nativeAuthBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        nativeAuthBackdrop.backgroundColor = UIColor.white.withAlphaComponent(0.16)
+        nativeAuthBackdrop.layer.cornerRadius = 42
+        nativeAuthBackdrop.layer.cornerCurve = .continuous
+        nativeAuthBackdrop.layer.borderWidth = 1
+        nativeAuthBackdrop.layer.borderColor = UIColor.white.withAlphaComponent(0.55).cgColor
+        nativeAuthBackdrop.layer.shadowColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1).cgColor
+        nativeAuthBackdrop.layer.shadowOpacity = 0.1
+        nativeAuthBackdrop.layer.shadowRadius = 28
+        nativeAuthBackdrop.layer.shadowOffset = CGSize(width: 0, height: 18)
+        nativeAuthContainer.addSubview(nativeAuthBackdrop)
+
         nativeAuthLogoView.translatesAutoresizingMaskIntoConstraints = false
-        nativeAuthLogoView.image = UIImage(systemName: "building.columns.fill")
+        nativeAuthLogoView.image = UIImage(named: "PIALogo") ?? UIImage(systemName: "building.columns.fill")
         nativeAuthLogoView.tintColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
-        nativeAuthLogoView.contentMode = .center
-        nativeAuthLogoView.clipsToBounds = true
-        nativeAuthLogoView.layer.cornerRadius = 34
-        nativeAuthLogoView.backgroundColor = UIColor.white.withAlphaComponent(0.8)
+        nativeAuthLogoView.contentMode = .scaleAspectFit
+        nativeAuthLogoView.clipsToBounds = false
+        nativeAuthLogoView.layer.cornerRadius = 24
+        nativeAuthLogoView.layer.cornerCurve = .continuous
+        nativeAuthLogoView.layer.borderWidth = 0
+        nativeAuthLogoView.layer.borderColor = UIColor.clear.cgColor
+        nativeAuthLogoView.backgroundColor = UIColor.clear
         nativeAuthContainer.addSubview(nativeAuthLogoView)
+
+        nativeAuthBadgeLabel.translatesAutoresizingMaskIntoConstraints = false
+        nativeAuthBadgeLabel.text = "LIVE POLITICS"
+        nativeAuthBadgeLabel.font = .monospacedSystemFont(ofSize: 12, weight: .bold)
+        nativeAuthBadgeLabel.textColor = UIColor.white
+        nativeAuthBadgeLabel.textAlignment = .center
+        nativeAuthBadgeLabel.backgroundColor = UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 1)
+        nativeAuthBadgeLabel.layer.cornerRadius = 14
+        nativeAuthBadgeLabel.layer.cornerCurve = .continuous
+        nativeAuthBadgeLabel.clipsToBounds = true
+        nativeAuthContainer.addSubview(nativeAuthBadgeLabel)
 
         nativeAuthTitleLabel.translatesAutoresizingMaskIntoConstraints = false
         nativeAuthTitleLabel.text = "Politics In Action"
-        nativeAuthTitleLabel.font = .systemFont(ofSize: 34, weight: .bold)
+        nativeAuthTitleLabel.font = .systemFont(ofSize: 38, weight: .black)
         nativeAuthTitleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
         nativeAuthTitleLabel.numberOfLines = 2
         nativeAuthContainer.addSubview(nativeAuthTitleLabel)
 
         nativeAuthSubtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        nativeAuthSubtitleLabel.text = "Sign in with the account your camp admin gave you."
+        nativeAuthSubtitleLabel.text = "Step into the feed, messages, and campaign-room conversations as they happen."
         nativeAuthSubtitleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
         nativeAuthSubtitleLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.9)
         nativeAuthSubtitleLabel.numberOfLines = 0
@@ -534,8 +668,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeAuthLoginButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .bold)
         nativeAuthLoginButton.setTitleColor(.white, for: .normal)
         nativeAuthLoginButton.backgroundColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
-        nativeAuthLoginButton.layer.cornerRadius = 22
+        nativeAuthLoginButton.layer.cornerRadius = 24
         nativeAuthLoginButton.layer.cornerCurve = .continuous
+        nativeAuthLoginButton.layer.shadowColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1).cgColor
+        nativeAuthLoginButton.layer.shadowOpacity = 0.22
+        nativeAuthLoginButton.layer.shadowRadius = 18
+        nativeAuthLoginButton.layer.shadowOffset = CGSize(width: 0, height: 10)
         nativeAuthLoginButton.addTarget(self, action: #selector(submitNativeLogin), for: .touchUpInside)
         nativeAuthContainer.addSubview(nativeAuthLoginButton)
 
@@ -570,10 +708,18 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeAuthContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             nativeAuthContainer.topAnchor.constraint(equalTo: view.topAnchor),
             nativeAuthContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            nativeAuthBackdrop.leadingAnchor.constraint(equalTo: nativeAuthContainer.leadingAnchor, constant: 16),
+            nativeAuthBackdrop.trailingAnchor.constraint(equalTo: nativeAuthContainer.trailingAnchor, constant: -16),
+            nativeAuthBackdrop.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 28),
+            nativeAuthBackdrop.bottomAnchor.constraint(equalTo: nativeAuthPrivacyButton.bottomAnchor, constant: 24),
             nativeAuthLogoView.leadingAnchor.constraint(equalTo: nativeAuthContainer.leadingAnchor, constant: 26),
             nativeAuthLogoView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 44),
-            nativeAuthLogoView.widthAnchor.constraint(equalToConstant: 68),
-            nativeAuthLogoView.heightAnchor.constraint(equalToConstant: 68),
+            nativeAuthLogoView.widthAnchor.constraint(equalToConstant: 92),
+            nativeAuthLogoView.heightAnchor.constraint(equalToConstant: 76),
+            nativeAuthBadgeLabel.leadingAnchor.constraint(equalTo: nativeAuthLogoView.trailingAnchor, constant: 12),
+            nativeAuthBadgeLabel.centerYAnchor.constraint(equalTo: nativeAuthLogoView.centerYAnchor),
+            nativeAuthBadgeLabel.widthAnchor.constraint(equalToConstant: 122),
+            nativeAuthBadgeLabel.heightAnchor.constraint(equalToConstant: 28),
             nativeAuthTitleLabel.leadingAnchor.constraint(equalTo: nativeAuthContainer.leadingAnchor, constant: 26),
             nativeAuthTitleLabel.trailingAnchor.constraint(equalTo: nativeAuthContainer.trailingAnchor, constant: -26),
             nativeAuthTitleLabel.topAnchor.constraint(equalTo: nativeAuthLogoView.bottomAnchor, constant: 24),
@@ -1185,9 +1331,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         view.addSubview(nativeFeedContainer)
 
         nativeFeedHeader.translatesAutoresizingMaskIntoConstraints = false
-        nativeFeedHeader.text = "Feed"
-        nativeFeedHeader.font = .systemFont(ofSize: 34, weight: .bold)
-        nativeFeedHeader.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nativeFeedHeader.image = UIImage(named: "PIALogo") ?? UIImage(named: "Splash") ?? UIImage(systemName: "building.columns.fill")
+        nativeFeedHeader.contentMode = .scaleAspectFit
+        nativeFeedHeader.clipsToBounds = false
+        nativeFeedHeader.tintColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        nativeFeedHeader.isUserInteractionEnabled = true
+        nativeFeedHeader.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleNativeFeedLogoTap)))
         nativeFeedContainer.addSubview(nativeFeedHeader)
 
         nativeFeedSegment.translatesAutoresizingMaskIntoConstraints = false
@@ -1237,16 +1386,18 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeFeedContainer.topAnchor.constraint(equalTo: view.topAnchor),
             nativeFeedContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            nativeFeedHeader.leadingAnchor.constraint(equalTo: nativeFeedContainer.leadingAnchor, constant: 20),
-            nativeFeedHeader.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
+            nativeFeedHeader.centerXAnchor.constraint(equalTo: nativeFeedContainer.centerXAnchor),
+            nativeFeedHeader.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
+            nativeFeedHeader.widthAnchor.constraint(equalToConstant: 96),
+            nativeFeedHeader.heightAnchor.constraint(equalToConstant: 88),
 
-            nativeFeedSegment.leadingAnchor.constraint(equalTo: nativeFeedHeader.trailingAnchor, constant: 16),
+            nativeFeedSegment.leadingAnchor.constraint(equalTo: nativeFeedContainer.leadingAnchor, constant: 20),
             nativeFeedSegment.trailingAnchor.constraint(equalTo: nativeFeedContainer.trailingAnchor, constant: -20),
-            nativeFeedSegment.centerYAnchor.constraint(equalTo: nativeFeedHeader.centerYAnchor),
+            nativeFeedSegment.topAnchor.constraint(equalTo: nativeFeedHeader.bottomAnchor, constant: 4),
 
             nativeFeedTableView.leadingAnchor.constraint(equalTo: nativeFeedContainer.leadingAnchor, constant: 10),
             nativeFeedTableView.trailingAnchor.constraint(equalTo: nativeFeedContainer.trailingAnchor, constant: -10),
-            nativeFeedTableView.topAnchor.constraint(equalTo: nativeFeedHeader.bottomAnchor, constant: 14),
+            nativeFeedTableView.topAnchor.constraint(equalTo: nativeFeedSegment.bottomAnchor, constant: 12),
             nativeFeedTableView.bottomAnchor.constraint(equalTo: nativeTabBar.topAnchor, constant: -16),
 
             nativeFeedEmptyLabel.centerXAnchor.constraint(equalTo: nativeFeedTableView.centerXAnchor),
@@ -1335,6 +1486,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeProfileHeaderView.onFollowTap = { [weak self] in
             self?.toggleNativeProfileFollow()
         }
+        nativeProfileHeaderView.onBlockTap = { [weak self] in
+            self?.presentNativeProfileActions()
+        }
         nativeProfileHeaderView.onFollowersTap = { [weak self] in
             self?.presentNativeConnections(tab: "followers")
         }
@@ -1374,10 +1528,20 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeSearchContainer.layer.zPosition = 31
         view.addSubview(nativeSearchContainer)
 
+        let searchBackdrop = UIView()
+        searchBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        searchBackdrop.backgroundColor = UIColor.white.withAlphaComponent(0.7)
+        searchBackdrop.layer.cornerRadius = 26
+        searchBackdrop.layer.cornerCurve = .continuous
+        searchBackdrop.layer.borderWidth = 1
+        searchBackdrop.layer.borderColor = UIColor(red: 222.0 / 255.0, green: 230.0 / 255.0, blue: 244.0 / 255.0, alpha: 0.9).cgColor
+        nativeSearchContainer.addSubview(searchBackdrop)
+
         nativeSearchTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        nativeSearchTitleLabel.text = "Search"
-        nativeSearchTitleLabel.font = .systemFont(ofSize: 42, weight: .bold)
+        nativeSearchTitleLabel.text = "Find people, posts, and moments"
+        nativeSearchTitleLabel.font = .systemFont(ofSize: 28, weight: .heavy)
         nativeSearchTitleLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nativeSearchTitleLabel.numberOfLines = 2
         nativeSearchContainer.addSubview(nativeSearchTitleLabel)
 
         nativeSearchField.translatesAutoresizingMaskIntoConstraints = false
@@ -1388,7 +1552,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         )
         nativeSearchField.font = .systemFont(ofSize: 16, weight: .semibold)
         nativeSearchField.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
-        nativeSearchField.backgroundColor = UIColor.white.withAlphaComponent(0.92)
+        nativeSearchField.backgroundColor = UIColor.white
         nativeSearchField.layer.cornerRadius = 22
         nativeSearchField.layer.cornerCurve = .continuous
         nativeSearchField.layer.borderWidth = 1
@@ -1431,11 +1595,16 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             nativeSearchContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             nativeSearchContainer.topAnchor.constraint(equalTo: view.topAnchor),
             nativeSearchContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            nativeSearchTitleLabel.leadingAnchor.constraint(equalTo: nativeSearchContainer.leadingAnchor, constant: 24),
-            nativeSearchTitleLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
-            nativeSearchField.leadingAnchor.constraint(equalTo: nativeSearchContainer.leadingAnchor, constant: 24),
-            nativeSearchField.trailingAnchor.constraint(equalTo: nativeSearchContainer.trailingAnchor, constant: -24),
-            nativeSearchField.topAnchor.constraint(equalTo: nativeSearchTitleLabel.bottomAnchor, constant: 18),
+            searchBackdrop.leadingAnchor.constraint(equalTo: nativeSearchContainer.leadingAnchor, constant: 16),
+            searchBackdrop.trailingAnchor.constraint(equalTo: nativeSearchContainer.trailingAnchor, constant: -16),
+            searchBackdrop.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 14),
+            searchBackdrop.bottomAnchor.constraint(equalTo: nativeSearchField.bottomAnchor, constant: 16),
+            nativeSearchTitleLabel.leadingAnchor.constraint(equalTo: searchBackdrop.leadingAnchor, constant: 18),
+            nativeSearchTitleLabel.trailingAnchor.constraint(equalTo: searchBackdrop.trailingAnchor, constant: -18),
+            nativeSearchTitleLabel.topAnchor.constraint(equalTo: searchBackdrop.topAnchor, constant: 16),
+            nativeSearchField.leadingAnchor.constraint(equalTo: searchBackdrop.leadingAnchor, constant: 14),
+            nativeSearchField.trailingAnchor.constraint(equalTo: searchBackdrop.trailingAnchor, constant: -14),
+            nativeSearchField.topAnchor.constraint(equalTo: nativeSearchTitleLabel.bottomAnchor, constant: 14),
             nativeSearchField.heightAnchor.constraint(equalToConstant: 46),
             nativeSearchTableView.leadingAnchor.constraint(equalTo: nativeSearchContainer.leadingAnchor, constant: 10),
             nativeSearchTableView.trailingAnchor.constraint(equalTo: nativeSearchContainer.trailingAnchor, constant: -10),
@@ -1458,6 +1627,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         nativeStoryViewer.onOpenVideo = { [weak self] url in
             self?.presentNativeVideo(url: url)
+        }
+        nativeStoryViewer.onDelete = { [weak self] in
+            self?.confirmDeleteNativeStory()
         }
         view.addSubview(nativeStoryViewer)
         NSLayoutConstraint.activate([
@@ -1628,7 +1800,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
         NSLayoutConstraint.activate([
             nativeAccountButton.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -18),
-            nativeAccountButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 62),
+            nativeAccountButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 10),
             nativeAccountButton.widthAnchor.constraint(equalToConstant: 44),
             nativeAccountButton.heightAnchor.constraint(equalToConstant: 44),
             nativeAccountAvatarView.centerXAnchor.constraint(equalTo: nativeAccountButton.centerXAnchor),
@@ -2002,6 +2174,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                             return
                         }
                         self.applyNativeLoggedInUser(user, resetContent: true)
+                        if payload.must_change_password {
+                            self.presentNativeRequiredPasswordChange()
+                            return
+                        }
                         self.showNativeFlash(message: "Switched to @\(user.username).", category: "success")
                     case .failure(let error):
                         self.showNativeFlash(message: error.localizedDescription, category: "error")
@@ -2157,7 +2333,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
         let avatar = NativeAvatarView()
         avatar.translatesAutoresizingMaskIntoConstraints = false
-        if let currentUser = nativeCurrentUser {
+        nativeSettingsPreviewAvatarView = avatar
+        if let preview = nativeSettingsPreviewAvatarImage {
+            avatar.configure(image: preview)
+        } else if let currentUser = nativeCurrentUser {
             avatar.configure(with: currentUser, imageCache: nativeAvatarImageCache)
         }
         headerStack.addArrangedSubview(avatar)
@@ -2184,6 +2363,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let bioField = utilityTextField(placeholder: "Bio", text: currentProfile?.bio ?? "")
         let locationField = utilityTextField(placeholder: "Location", text: currentProfile?.location ?? "")
         let websiteField = utilityTextField(placeholder: "Website", text: currentProfile?.website ?? "")
+        displayNameField.addAction(UIAction { [weak nameLabel, weak displayNameField] _ in
+            let text = displayNameField?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            nameLabel?.text = text.isEmpty ? "Profile" : text
+        }, for: .editingChanged)
         [displayNameField, bioField, locationField, websiteField].forEach { nativeUtilityStack.addArrangedSubview($0) }
 
         nativeUtilityStack.addArrangedSubview(utilityActionRow(title: "Change profile picture", subtitle: "Square crop with zoom and drag.", symbol: "person.crop.circle.fill") { [weak self] in
@@ -2191,6 +2374,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         })
         nativeUtilityStack.addArrangedSubview(utilityActionRow(title: "Change profile background", subtitle: "Wide banner crop with zoom and drag.", symbol: "photo.on.rectangle.angled") { [weak self] in
             self?.presentPhotoPicker(purpose: .profileBanner, mediaFilter: .images)
+        })
+        nativeUtilityStack.addArrangedSubview(utilityActionRow(title: "Blocked & Muted", subtitle: "Unblock or unmute accounts from one place.", symbol: "person.crop.circle.badge.xmark") { [weak self] in
+            self?.loadNativeModerationList()
         })
         nativeUtilityStack.addArrangedSubview(utilityPrimaryButton(title: "Save Profile") { [weak self] in
             guard let self else { return }
@@ -2201,6 +2387,97 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 website: websiteField.text ?? ""
             )
         })
+    }
+
+    private func loadNativeModerationList() {
+        nativeUtilityTitleLabel.text = "Blocked & Muted"
+        nativeUtilitySubtitleLabel.text = "Manage people you have hidden from your experience."
+        replaceNativeUtilityContent(with: [utilityLoadingCard("Loading moderation list...")])
+        performNativeJSONRequest(path: "/api/settings/moderation") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeModerationListResponse.self, from: data), payload.ok else {
+                        let error = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.displayMessage
+                        self.replaceNativeUtilityContent(with: [self.utilityLoadingCard(error ?? "Moderation list couldn't load.")])
+                        return
+                    }
+                    self.renderNativeModerationList(payload)
+                case .failure(let error):
+                    self.replaceNativeUtilityContent(with: [self.utilityLoadingCard(error.localizedDescription)])
+                }
+            }
+        }
+    }
+
+    private func renderNativeModerationList(_ payload: NativeModerationListResponse) {
+        var views: [UIView] = [
+            utilityActionRow(title: "Back to settings", subtitle: "Return to profile and account controls.", symbol: "chevron.left") { [weak self] in
+                self?.presentNativeSettingsPanel()
+            }
+        ]
+        if payload.blocked.isEmpty && payload.muted.isEmpty {
+            views.append(utilityLoadingCard("No blocked or muted accounts."))
+        } else {
+            if !payload.blocked.isEmpty {
+                views.append(utilityLabel("Blocked", size: 17, weight: .heavy))
+                views.append(contentsOf: payload.blocked.map { moderationUserCard($0, actionTitle: "Unblock", endpoint: "block") })
+            }
+            if !payload.muted.isEmpty {
+                views.append(utilityLabel("Muted", size: 17, weight: .heavy))
+                views.append(contentsOf: payload.muted.map { moderationUserCard($0, actionTitle: "Unmute", endpoint: "mute") })
+            }
+        }
+        replaceNativeUtilityContent(with: views)
+    }
+
+    private func moderationUserCard(_ user: NativeProfileUser, actionTitle: String, endpoint: String) -> UIView {
+        let card = nativeUtilityCard()
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 10
+        card.addSubview(stack)
+        stack.addArrangedSubview(utilityLabel(user.display_name, size: 16, weight: .bold))
+        stack.addArrangedSubview(utilityLabel("@\(user.username)", size: 13, weight: .semibold, color: UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)))
+        stack.addArrangedSubview(nativeAdminButtonRow([
+            ("Profile", "person.crop.circle", { [weak self] in
+                self?.dismissNativeUtilityPanel()
+                self?.loadNativeProfile(username: user.username, force: true)
+            }),
+            (actionTitle, endpoint == "block" ? "person.fill.checkmark" : "speaker.wave.2.fill", { [weak self] in
+                self?.submitNativeModerationToggle(username: user.username, endpoint: endpoint, actionTitle: actionTitle)
+            })
+        ]))
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16)
+        ])
+        return card
+    }
+
+    private func submitNativeModerationToggle(username: String, endpoint: String, actionTitle: String) {
+        let encodedUsername = username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? username
+        showNativeFlash(message: "Updating @\(username)...", category: "success")
+        performNativeJSONRequest(path: "/api/users/\(encodedUsername)/\(endpoint)", method: "POST", bodyObject: [:]) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    if let error = try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data), error.ok == false {
+                        self.showNativeFlash(message: error.displayMessage ?? "Update failed.", category: "error")
+                        return
+                    }
+                    self.showNativeFlash(message: "\(actionTitle)d @\(username).", category: "success")
+                    self.loadNativeModerationList()
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
     }
 
     private func presentNativeSavedPanel() {
@@ -2422,15 +2699,23 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 switch result {
                 case .success(let data):
                     guard let payload = try? JSONDecoder().decode(NativeAdminSummaryResponse.self, from: data), payload.ok else {
-                        self.replaceNativeUtilityContent(with: [self.utilityLoadingCard("Admin tools couldn't load.")])
+                        let apiError = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.error
+                        self.replaceNativeUtilityContent(with: [self.utilityLoadingCard(apiError ?? "Admin tools couldn't load: \(self.nativeResponsePreview(from: data))")])
                         return
                     }
                     self.renderNativeAdminSummary(payload)
-                case .failure:
-                    self.replaceNativeUtilityContent(with: [self.utilityLoadingCard("Admin tools couldn't load.")])
+                case .failure(let error):
+                    self.replaceNativeUtilityContent(with: [self.utilityLoadingCard(error.localizedDescription)])
                 }
             }
         }
+    }
+
+    private func nativeAdminLoadError(from data: Data, fallback: String) -> String {
+        if let apiError = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.error, !apiError.isEmpty {
+            return apiError
+        }
+        return "\(fallback): \(nativeResponsePreview(from: data))"
     }
 
     private func renderNativeAdminSummary(_ summary: NativeAdminSummaryResponse) {
@@ -2465,8 +2750,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         views.append(utilityActionRow(title: "Refresh dashboard", subtitle: "Reload users, reports, polls, and app health.", symbol: "arrow.clockwise") { [weak self] in
             self?.presentNativeAdminPanel()
         })
-        views.append(utilityActionRow(title: "Manage users", subtitle: "\(summary.users.count) recent accounts loaded here.", symbol: "person.2.fill") { [weak self] in
-            self?.renderNativeAdminUsers(summary.users, summary: summary)
+        views.append(utilityActionRow(title: "Manage users", subtitle: "\(summary.stats.users) total accounts. Search, edit, ban, timeout, reset passwords.", symbol: "person.2.fill") { [weak self] in
+            self?.nativeAdminSearchQuery = ""
+            self?.loadNativeAdminUsers(query: "")
         })
         views.append(utilityActionRow(title: "Review reports", subtitle: "\(summary.reports.count) open reports in the native panel.", symbol: "exclamationmark.bubble.fill") { [weak self] in
             self?.renderNativeAdminReports(summary.reports, summary: summary)
@@ -2485,18 +2771,97 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func renderNativeAdminUsers(_ users: [NativeAdminUser], summary: NativeAdminSummaryResponse) {
         nativeUtilityTitleLabel.text = "Admin Users"
-        nativeUtilitySubtitleLabel.text = "Recent accounts and moderation flags."
+        nativeUtilitySubtitleLabel.text = "Showing \(users.count) of \(summary.stats.users) accounts. Search, create, edit, reset, timeout, ban, or delete accounts."
+        nativeAdminLoadedUsers = users
+        let searchField = utilityTextField(placeholder: "Search all users", text: nativeAdminSearchQuery)
+        searchField.autocapitalizationType = .none
+        searchField.autocorrectionType = .no
         var views: [UIView] = [
             utilityActionRow(title: "Back to admin", subtitle: "Return to dashboard stats and tools.", symbol: "chevron.left") { [weak self] in
                 self?.renderNativeAdminSummary(summary)
+            },
+            searchField,
+            utilityPrimaryButton(title: "Search Users") { [weak self, weak searchField] in
+                self?.nativeAdminSearchQuery = searchField?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                self?.loadNativeAdminUsers(query: self?.nativeAdminSearchQuery ?? "")
+            },
+            utilityActionRow(title: "Add account", subtitle: "Create a login with username, email, and temporary password.", symbol: "person.badge.plus") { [weak self] in
+                self?.presentNativeAdminCreateUser()
             }
         ]
         if users.isEmpty {
-            views.append(utilityLoadingCard("No recent users loaded."))
+            views.append(utilityLoadingCard("No users found."))
         } else {
             views.append(contentsOf: users.map { adminUserCard($0) })
         }
         replaceNativeUtilityContent(with: views)
+    }
+
+    private func loadNativeAdminUsers(query: String) {
+        nativeUtilityTitleLabel.text = "Admin Users"
+        nativeUtilitySubtitleLabel.text = "Loading account controls..."
+        replaceNativeUtilityContent(with: [utilityLoadingCard("Loading users...")])
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        loadNativeAdminUsersFrom(path: "/api/admin/users/list?q=\(encoded)&limit=500", query: query, canFallback: true)
+    }
+
+    private func loadNativeAdminUsersFrom(path: String, query: String, canFallback: Bool) {
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        performNativeJSONRequest(path: path) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeAdminUsersResponse.self, from: data), payload.ok else {
+                        if canFallback {
+                            self.loadNativeAdminUsersFrom(path: "/api/admin/users?q=\(encoded)&limit=500", query: query, canFallback: false)
+                            return
+                        }
+                        if !self.nativeAdminLoadedUsers.isEmpty {
+                            let shim = NativeAdminSummaryResponse(
+                                ok: true,
+                                stats: NativeAdminStats(users: self.nativeAdminLoadedUsers.count, posts: 0, stories: 0, reports: 0, messages: 0, banned: self.nativeAdminLoadedUsers.filter { $0.is_banned }.count, timeouts: self.nativeAdminLoadedUsers.filter { $0.is_timed_out }.count),
+                                users: self.nativeAdminLoadedUsers,
+                                reports: [],
+                                polls: []
+                            )
+                            self.renderNativeAdminUsers(self.nativeAdminLoadedUsers, summary: shim)
+                            self.showNativeFlash(message: self.nativeAdminLoadError(from: data, fallback: "Search unavailable"), category: "error")
+                        } else {
+                            self.replaceNativeUtilityContent(with: [self.utilityLoadingCard(self.nativeAdminLoadError(from: data, fallback: "Users couldn't load"))])
+                        }
+                        return
+                    }
+                    self.nativeAdminSearchQuery = payload.query
+                    let shim = NativeAdminSummaryResponse(
+                        ok: true,
+                        stats: NativeAdminStats(users: payload.count, posts: 0, stories: 0, reports: 0, messages: 0, banned: payload.users.filter { $0.is_banned }.count, timeouts: payload.users.filter { $0.is_timed_out }.count),
+                        users: payload.users,
+                        reports: [],
+                        polls: []
+                    )
+                        self.renderNativeAdminUsers(payload.users, summary: shim)
+                case .failure(let error):
+                    if canFallback {
+                        self.loadNativeAdminUsersFrom(path: "/api/admin/users?q=\(encoded)&limit=500", query: query, canFallback: false)
+                        return
+                    }
+                    if !self.nativeAdminLoadedUsers.isEmpty {
+                        let shim = NativeAdminSummaryResponse(
+                            ok: true,
+                            stats: NativeAdminStats(users: self.nativeAdminLoadedUsers.count, posts: 0, stories: 0, reports: 0, messages: 0, banned: self.nativeAdminLoadedUsers.filter { $0.is_banned }.count, timeouts: self.nativeAdminLoadedUsers.filter { $0.is_timed_out }.count),
+                            users: self.nativeAdminLoadedUsers,
+                            reports: [],
+                            polls: []
+                        )
+                        self.renderNativeAdminUsers(self.nativeAdminLoadedUsers, summary: shim)
+                        self.showNativeFlash(message: error.localizedDescription, category: "error")
+                    } else {
+                        self.replaceNativeUtilityContent(with: [self.utilityLoadingCard(error.localizedDescription)])
+                    }
+                }
+            }
+        }
     }
 
     private func renderNativeAdminReports(_ reports: [NativeAdminReport], summary: NativeAdminSummaryResponse) {
@@ -2535,18 +2900,78 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         let status = [
             user.is_admin ? "admin" : nil,
             user.is_verified ? "verified" : nil,
-            user.is_creator ? "creator" : nil,
+            user.is_creator ? "creator/curator" : nil,
+            user.is_breaking_news ? "news tab" : nil,
             user.is_banned ? "banned" : nil
         ].compactMap { $0 }.joined(separator: " • ")
-        return adminInfoCard(
-            title: user.display_name,
-            subtitle: "@\(user.username)  \(user.email)",
-            detail: status.isEmpty ? "No moderation flags." : status
-        )
+        let card = nativeUtilityCard()
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 10
+        card.addSubview(stack)
+        stack.addArrangedSubview(utilityLabel(user.display_name, size: 16, weight: .bold))
+        stack.addArrangedSubview(utilityLabel("@\(user.username)  \(user.email)", size: 13, weight: .semibold, color: UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)))
+        stack.addArrangedSubview(utilityLabel(status.isEmpty ? "Active account. \(user.password_note)" : "\(status). \(user.password_note)", size: 13, weight: .semibold, color: UIColor(red: 38.0 / 255.0, green: 49.0 / 255.0, blue: 80.0 / 255.0, alpha: 0.94)))
+        let rowOne = nativeAdminButtonRow([
+            ("Edit", "pencil", { [weak self] in self?.presentNativeAdminEditUser(user) }),
+            ("Password", "key.fill", { [weak self] in self?.presentNativeAdminPasswordReset(user) }),
+            (user.is_banned ? "Unban" : "Ban", "hand.raised.fill", { [weak self] in self?.submitNativeAdminUserAction(action: "toggle_flag", user: user, body: ["flag": "is_banned"]) })
+        ])
+        let rowTwo = nativeAdminButtonRow([
+            (user.is_timed_out ? "Clear timeout" : "Timeout", "timer", { [weak self] in self?.presentNativeAdminTimeout(user) }),
+            (user.is_creator ? "Uncurator" : "Curator", "sparkles", { [weak self] in self?.submitNativeAdminUserAction(action: "toggle_flag", user: user, body: ["flag": "is_creator"]) }),
+            (user.is_breaking_news ? "Remove news" : "News", "newspaper.fill", { [weak self] in self?.submitNativeAdminUserAction(action: "toggle_flag", user: user, body: ["flag": "is_breaking_news"]) })
+        ])
+        let rowThree = nativeAdminButtonRow([
+            (user.is_verified ? "Unverify" : "Verify", "checkmark.seal.fill", { [weak self] in self?.submitNativeAdminUserAction(action: "toggle_flag", user: user, body: ["flag": "is_verified"]) }),
+            (user.is_admin ? "Remove admin" : "Make admin", "person.crop.circle.badge.checkmark", { [weak self] in self?.submitNativeAdminUserAction(action: "set_admin", user: user, body: ["is_admin": !user.is_admin]) }),
+            ("Delete", "trash.fill", { [weak self] in self?.confirmNativeAdminDelete(user) })
+        ])
+        stack.addArrangedSubview(rowOne)
+        stack.addArrangedSubview(rowTwo)
+        stack.addArrangedSubview(rowThree)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16)
+        ])
+        return card
     }
 
     private func adminReportCard(_ report: NativeAdminReport) -> UIView {
-        adminInfoCard(title: "Report #\(report.id)", subtitle: report.status.capitalized, detail: report.reason)
+        let reporter = report.reporter.map { "Reported by @\($0.username)" } ?? "Reporter unknown"
+        let target = report.post?.author.map { "Post by @\($0.username)" }
+            ?? report.reported_user.map { "Profile @\($0.username)" }
+            ?? "Target unknown"
+        let postPreview = report.post?.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detailParts = [
+            report.reason,
+            postPreview?.isEmpty == false ? "\"\(postPreview!)\"" : nil,
+            report.created_at.isEmpty ? nil : report.created_at
+        ].compactMap { $0 }
+        let card = nativeUtilityCard()
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 10
+        card.addSubview(stack)
+        stack.addArrangedSubview(utilityLabel("Report #\(report.id) - \(target)", size: 16, weight: .bold))
+        stack.addArrangedSubview(utilityLabel("\(reporter) - \(report.status.capitalized)", size: 13, weight: .semibold, color: UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)))
+        stack.addArrangedSubview(utilityLabel(detailParts.joined(separator: "\n"), size: 14, weight: .semibold, color: UIColor(red: 38.0 / 255.0, green: 49.0 / 255.0, blue: 80.0 / 255.0, alpha: 0.94)))
+        stack.addArrangedSubview(nativeAdminButtonRow([
+            ("Resolve", "checkmark.circle.fill", { [weak self] in
+                self?.submitNativeAdminReportResolve(report)
+            })
+        ]))
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 18),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -18),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16)
+        ])
+        return card
     }
 
     private func adminPollCard(_ poll: NativeAdminPoll) -> UIView {
@@ -2572,6 +2997,180 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16)
         ])
         return card
+    }
+
+    private func nativeAdminButtonRow(_ buttons: [(String, String, () -> Void)]) -> UIStackView {
+        let row = UIStackView()
+        row.axis = .horizontal
+        row.distribution = .fillEqually
+        row.spacing = 8
+        buttons.forEach { title, symbol, action in
+            let button = UIButton(type: .system)
+            button.setTitle(title, for: .normal)
+            button.setImage(UIImage(systemName: symbol), for: .normal)
+            button.titleLabel?.font = .systemFont(ofSize: 12, weight: .bold)
+            button.tintColor = UIColor(red: 26.0 / 255.0, green: 72.0 / 255.0, blue: 154.0 / 255.0, alpha: 1)
+            button.setTitleColor(UIColor(red: 26.0 / 255.0, green: 72.0 / 255.0, blue: 154.0 / 255.0, alpha: 1), for: .normal)
+            button.backgroundColor = .white
+            button.layer.cornerRadius = 14
+            button.layer.cornerCurve = .continuous
+            button.contentEdgeInsets = UIEdgeInsets(top: 8, left: 6, bottom: 8, right: 6)
+            button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: -4)
+            button.heightAnchor.constraint(equalToConstant: 38).isActive = true
+            button.addAction(UIAction { _ in action() }, for: .touchUpInside)
+            row.addArrangedSubview(button)
+        }
+        return row
+    }
+
+    private func presentNativeAdminCreateUser() {
+        let alert = UIAlertController(title: "Add account", message: "Create a user login. Password must be at least 8 characters.", preferredStyle: .alert)
+        alert.addTextField { $0.placeholder = "Display name" }
+        alert.addTextField {
+            $0.placeholder = "Username"
+            $0.autocapitalizationType = .none
+        }
+        alert.addTextField {
+            $0.placeholder = "Email"
+            $0.keyboardType = .emailAddress
+            $0.autocapitalizationType = .none
+        }
+        alert.addTextField {
+            $0.placeholder = "Temporary password"
+            $0.text = "Welcome to PIA 2026!"
+            $0.isSecureTextEntry = false
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Create", style: .default) { [weak self, weak alert] _ in
+            guard let fields = alert?.textFields else { return }
+            self?.submitNativeAdminUserAction(action: "create_user", user: nil, body: [
+                "display_name": fields[safe: 0]?.text ?? "",
+                "username": fields[safe: 1]?.text ?? "",
+                "email": fields[safe: 2]?.text ?? "",
+                "password": fields[safe: 3]?.text ?? ""
+            ])
+        })
+        topPresentationController().present(alert, animated: true)
+    }
+
+    private func presentNativeAdminEditUser(_ user: NativeAdminUser) {
+        let alert = UIAlertController(title: "Edit @\(user.username)", message: "Update account info. Use Password for credential resets.", preferredStyle: .alert)
+        alert.addTextField { $0.text = user.display_name; $0.placeholder = "Display name" }
+        alert.addTextField { $0.text = user.username; $0.placeholder = "Username"; $0.autocapitalizationType = .none }
+        alert.addTextField { $0.text = user.email; $0.placeholder = "Email"; $0.keyboardType = .emailAddress; $0.autocapitalizationType = .none }
+        alert.addTextField { $0.text = user.bio; $0.placeholder = "Bio" }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Save", style: .default) { [weak self, weak alert] _ in
+            guard let fields = alert?.textFields else { return }
+            self?.submitNativeAdminUserAction(action: "update_user", user: user, body: [
+                "display_name": fields[safe: 0]?.text ?? user.display_name,
+                "username": fields[safe: 1]?.text ?? user.username,
+                "email": fields[safe: 2]?.text ?? user.email,
+                "bio": fields[safe: 3]?.text ?? user.bio,
+                "is_verified": user.is_verified,
+                "is_creator": user.is_creator,
+                "is_breaking_news": user.is_breaking_news,
+                "is_banned": user.is_banned
+            ])
+        })
+        topPresentationController().present(alert, animated: true)
+    }
+
+    private func presentNativeAdminPasswordReset(_ user: NativeAdminUser) {
+        let alert = UIAlertController(title: "Set password", message: "Existing passwords are hashed and cannot be viewed. Set a new temporary password for @\(user.username).", preferredStyle: .alert)
+        alert.addTextField {
+            $0.placeholder = "New temporary password"
+            $0.isSecureTextEntry = false
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Set", style: .default) { [weak self, weak alert] _ in
+            let password = alert?.textFields?.first?.text ?? ""
+            self?.submitNativeAdminUserAction(action: "update_user", user: user, body: [
+                "display_name": user.display_name,
+                "username": user.username,
+                "email": user.email,
+                "bio": user.bio,
+                "password": password,
+                "is_verified": user.is_verified,
+                "is_creator": user.is_creator,
+                "is_breaking_news": user.is_breaking_news,
+                "is_banned": user.is_banned
+            ])
+        })
+        topPresentationController().present(alert, animated: true)
+    }
+
+    private func presentNativeAdminTimeout(_ user: NativeAdminUser) {
+        let alert = UIAlertController(title: "Timeout @\(user.username)", message: "Enter hours. Use 0 to clear timeout.", preferredStyle: .alert)
+        alert.addTextField {
+            $0.placeholder = "Hours"
+            $0.text = user.is_timed_out ? "0" : "24"
+            $0.keyboardType = .numberPad
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Apply", style: .default) { [weak self, weak alert] _ in
+            let hours = Int(alert?.textFields?.first?.text ?? "24") ?? 24
+            self?.submitNativeAdminUserAction(action: "timeout", user: user, body: ["hours": hours])
+        })
+        topPresentationController().present(alert, animated: true)
+    }
+
+    private func confirmNativeAdminDelete(_ user: NativeAdminUser) {
+        let alert = UIAlertController(title: "Delete @\(user.username)?", message: "This permanently removes the account and related content. Admin accounts are protected.", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in
+            self?.submitNativeAdminUserAction(action: "delete_user", user: user, body: [:])
+        })
+        topPresentationController().present(alert, animated: true)
+    }
+
+    private func submitNativeAdminUserAction(action: String, user: NativeAdminUser?, body: [String: Any]) {
+        var payload = body
+        payload["action"] = action
+        if let user {
+            payload["target_id"] = user.id
+        }
+        showNativeFlash(message: "Updating admin...", category: "success")
+        performNativeJSONRequest(path: "/api/admin/users", method: "POST", bodyObject: payload) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    if let response = try? JSONDecoder().decode(NativeAdminActionResponse.self, from: data), response.ok {
+                        self.showNativeFlash(message: response.message ?? "Admin updated.", category: "success")
+                        self.loadNativeAdminUsers(query: self.nativeAdminSearchQuery)
+                    } else if let errorResponse = try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data) {
+                        self.showNativeFlash(message: errorResponse.error ?? "Admin update failed.", category: "error")
+                    } else {
+                        self.showNativeFlash(message: "Admin update failed.", category: "error")
+                    }
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
+    private func submitNativeAdminReportResolve(_ report: NativeAdminReport) {
+        showNativeFlash(message: "Resolving report...", category: "success")
+        performNativeJSONRequest(path: "/api/admin/reports/\(report.id)/resolve", method: "POST", bodyObject: [:]) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    if let response = try? JSONDecoder().decode(NativeAdminReportActionResponse.self, from: data), response.ok {
+                        self.showNativeFlash(message: response.message ?? "Report resolved.", category: "success")
+                        self.loadNativeAdminSummary()
+                    } else if let errorResponse = try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data) {
+                        self.showNativeFlash(message: errorResponse.displayMessage ?? "Report update failed.", category: "error")
+                    } else {
+                        self.showNativeFlash(message: "Report update failed.", category: "error")
+                    }
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
     }
 
     private func adminStatTile(title: String, value: Int) -> UIView {
@@ -2655,10 +3254,28 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             self.nativeAuthContainer.isHidden = !visible
             self.nativeAuthContainer.isUserInteractionEnabled = visible
             self.nativeAuthContainer.layer.zPosition = visible ? 1000 : 0
+            if visible {
+                self.nativeAuthBackdrop.transform = .identity
+                self.nativeAuthLogoView.transform = .identity
+            }
         }
         if animated {
-            if visible { nativeAuthContainer.isHidden = false }
-            UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut], animations: changes, completion: completion)
+            if visible {
+                nativeAuthContainer.isHidden = false
+                nativeAuthBackdrop.transform = CGAffineTransform(translationX: 0, y: 18).scaledBy(x: 0.985, y: 0.985)
+                nativeAuthLogoView.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
+                nativeAuthTitleLabel.transform = CGAffineTransform(translationX: 0, y: 12)
+                nativeAuthSubtitleLabel.transform = CGAffineTransform(translationX: 0, y: 12)
+            }
+            UIView.animate(withDuration: visible ? 0.36 : 0.2, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0.38, options: [.curveEaseOut, .allowUserInteraction]) {
+                changes()
+                self.nativeAuthBackdrop.transform = .identity
+                self.nativeAuthLogoView.transform = .identity
+                self.nativeAuthTitleLabel.transform = .identity
+                self.nativeAuthSubtitleLabel.transform = .identity
+            } completion: { finished in
+                completion(finished)
+            }
         } else {
             nativeAuthContainer.isHidden = !visible
             nativeAuthContainer.isUserInteractionEnabled = visible
@@ -2698,11 +3315,71 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                         return
                     }
                     self.applyNativeLoggedInUser(user, resetContent: true)
+                    if payload.must_change_password {
+                        self.presentNativeRequiredPasswordChange()
+                    }
                 case .failure(let error):
                     self.nativeAuthErrorLabel.text = error.localizedDescription
                     self.nativeAuthErrorLabel.isHidden = false
                 }
             }
+        }
+    }
+
+    private func presentNativeRequiredPasswordChange() {
+        DispatchQueue.main.async {
+            guard self.presentedViewController == nil else { return }
+            let alert = UIAlertController(
+                title: "Change your password",
+                message: "This account is using the temporary password. Choose a new one to continue.",
+                preferredStyle: .alert
+            )
+            alert.addTextField {
+                $0.placeholder = "Current password"
+                $0.isSecureTextEntry = true
+                $0.textContentType = .password
+            }
+            alert.addTextField {
+                $0.placeholder = "New password"
+                $0.isSecureTextEntry = true
+                $0.textContentType = .newPassword
+            }
+            alert.addTextField {
+                $0.placeholder = "Confirm new password"
+                $0.isSecureTextEntry = true
+                $0.textContentType = .newPassword
+            }
+            alert.addAction(UIAlertAction(title: "Save", style: .default) { [weak self, weak alert] _ in
+                guard let self else { return }
+                let fields = alert?.textFields ?? []
+                let current = fields[safe: 0]?.text ?? ""
+                let newPassword = fields[safe: 1]?.text ?? ""
+                let confirm = fields[safe: 2]?.text ?? ""
+                self.performNativeJSONRequest(path: "/api/password/change", method: "POST", bodyObject: [
+                    "current_password": current,
+                    "new_password": newPassword,
+                    "confirm_password": confirm
+                ]) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        switch result {
+                        case .success(let data):
+                            if let payload = try? JSONDecoder().decode(NativePasswordChangeResponse.self, from: data), payload.ok {
+                                self.showNativeFlash(message: "Password updated.", category: "success")
+                                self.syncNativeSessionFromAPI()
+                                return
+                            }
+                            let error = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.error ?? "Password update failed."
+                            self.showNativeFlash(message: error, category: "error")
+                            self.presentNativeRequiredPasswordChange()
+                        case .failure(let error):
+                            self.showNativeFlash(message: error.localizedDescription, category: "error")
+                            self.presentNativeRequiredPasswordChange()
+                        }
+                    }
+                }
+            })
+            self.present(alert, animated: true)
         }
     }
 
@@ -3013,9 +3690,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if currentPrimarySection == .search {
             showNativeSearchIfNeeded()
         } else {
-            hideNativeSearchIfNeeded()
+            forceHideNativeSearchLayer()
         }
         setNativeAccountButtonVisible(isLoggedIntoWebApp && currentPrimarySection == .feed, animated: true)
+        setComposeButtonVisible(nativeComposerAvailable, animated: true)
     }
 
     private func shouldPreserveNativeSection(against payloadRoute: String) -> Bool {
@@ -3047,6 +3725,27 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         return ["home", "fyp", "breaking"].contains(tab)
     }
 
+    private func animateNativeSurfaceIn(_ surface: UIView) {
+        guard !UIAccessibility.isReduceMotionEnabled else {
+            surface.alpha = 1
+            surface.transform = .identity
+            return
+        }
+        surface.layer.removeAllAnimations()
+        surface.alpha = 0.92
+        surface.transform = CGAffineTransform(translationX: 0, y: 14).scaledBy(x: 0.985, y: 0.985)
+        UIView.animate(
+            withDuration: 0.34,
+            delay: 0,
+            usingSpringWithDamping: 0.78,
+            initialSpringVelocity: 0.42,
+            options: [.beginFromCurrentState, .allowUserInteraction]
+        ) {
+            surface.alpha = 1
+            surface.transform = .identity
+        }
+    }
+
     private func showNativeFeedIfNeeded() {
         guard !isShowingNativeFeed else {
             syncNativeFeedSegment()
@@ -3057,6 +3756,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeFeedContainer.isHidden = false
         nativeFeedContainer.isUserInteractionEnabled = true
         nativeFeedContainer.alpha = 1
+        animateNativeSurfaceIn(nativeFeedContainer)
         view.bringSubviewToFront(nativeFeedContainer)
         bringPersistentNativeControlsToFront()
         if nativeFeedPosts.isEmpty && nativeFeedPolls.isEmpty {
@@ -3085,6 +3785,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativePostDetailContainer.isHidden = false
         nativePostDetailContainer.isUserInteractionEnabled = true
         nativePostDetailContainer.alpha = 1
+        animateNativeSurfaceIn(nativePostDetailContainer)
         view.bringSubviewToFront(nativePostDetailContainer)
         bringPersistentNativeControlsToFront()
         loadNativePostDetail(postID: post.id)
@@ -3110,10 +3811,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func showNativeProfileIfNeeded(username: String) {
         guard !username.isEmpty else { return }
+        let shouldAnimate = !isShowingNativeProfile
         isShowingNativeProfile = true
         nativeProfileContainer.isHidden = false
         nativeProfileContainer.isUserInteractionEnabled = true
         nativeProfileContainer.alpha = 1
+        if shouldAnimate {
+            animateNativeSurfaceIn(nativeProfileContainer)
+        }
         view.bringSubviewToFront(nativeProfileContainer)
         bringPersistentNativeControlsToFront()
         loadNativeProfile(username: username, force: nativeProfileUser?.username != username)
@@ -3135,7 +3840,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         isShowingNativeSearch = true
         nativeSearchContainer.isHidden = false
         nativeSearchContainer.isUserInteractionEnabled = true
+        nativeSearchTableView.isUserInteractionEnabled = true
         nativeSearchContainer.alpha = 1
+        animateNativeSurfaceIn(nativeSearchContainer)
         view.bringSubviewToFront(nativeSearchContainer)
         bringPersistentNativeControlsToFront()
         if nativeSearchUsers.isEmpty && nativeSearchPosts.isEmpty {
@@ -3147,12 +3854,23 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         guard isShowingNativeSearch else { return }
         isShowingNativeSearch = false
         nativeSearchContainer.isUserInteractionEnabled = false
+        nativeSearchTableView.isUserInteractionEnabled = false
         nativeSearchField.resignFirstResponder()
         UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseInOut]) {
             self.nativeSearchContainer.alpha = 0
         } completion: { _ in
             self.nativeSearchContainer.isHidden = true
         }
+    }
+
+    private func forceHideNativeSearchLayer() {
+        isShowingNativeSearch = false
+        nativeSearchField.resignFirstResponder()
+        nativeSearchContainer.layer.removeAllAnimations()
+        nativeSearchContainer.alpha = 0
+        nativeSearchContainer.isHidden = true
+        nativeSearchContainer.isUserInteractionEnabled = false
+        nativeSearchTableView.isUserInteractionEnabled = false
     }
 
     private func syncNativeFeedSegment() {
@@ -3174,6 +3892,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         nativeMessagesContainer.isHidden = false
         nativeMessagesContainer.isUserInteractionEnabled = true
         nativeMessagesContainer.alpha = 1
+        animateNativeSurfaceIn(nativeMessagesContainer)
         view.bringSubviewToFront(nativeMessagesContainer)
         bringPersistentNativeControlsToFront()
         loadNativeInbox()
@@ -3577,6 +4296,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     }
                     if payload.logged_in, let user = payload.user {
                         self.applyNativeLoggedInUser(user, resetContent: self.currentUsername != user.username)
+                        if payload.must_change_password {
+                            self.presentNativeRequiredPasswordChange()
+                        }
                     } else {
                         self.handleLoginState(loggedIn: false, username: "")
                     }
@@ -3773,7 +4495,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func setComposeButtonVisible(_ visible: Bool, animated: Bool) {
         nativeComposerAvailable = visible
-        let shouldShowCompose = visible && !isShowingNativeMessages && currentPrimarySection != .messages
+        let shouldShowCompose = visible && currentPrimarySection == .feed && routeSupportsNativeFeed(currentRoute)
         if shouldShowCompose {
             composeButton.isHidden = false
         }
@@ -4079,7 +4801,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 let preview = String(data: responseData, encoding: .utf8)?.prefix(300) ?? ""
                 print("Native API response status=\(status) body=\(preview)")
                 guard (200..<300).contains(status) else {
-                    let message = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: responseData).error) ?? "Request failed (\(status))."
+                    let message = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: responseData).displayMessage) ?? "Request failed (\(status))."
                     finish(.failure(NSError(domain: "NativeMessages", code: status, userInfo: [NSLocalizedDescriptionKey: message])))
                     return
                 }
@@ -4393,6 +5115,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
 
     private func openNativeStory(_ story: NativeFeedStory) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        nativeOpenStory = story
         nativeStoryViewer.configure(story: story, avatarCache: nativeAvatarImageCache, mediaCache: nativeFeedImageCache)
         nativeStoryViewer.isHidden = false
         view.bringSubviewToFront(nativeStoryViewer)
@@ -4407,6 +5130,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         } completion: { _ in
             self.nativeStoryViewer.isHidden = true
             self.nativeStoryViewer.prepareForReuse()
+            self.nativeOpenStory = nil
         }
     }
 
@@ -4416,6 +5140,49 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         controller.player = player
         present(controller, animated: true) {
             player.play()
+        }
+    }
+
+    private func confirmDeleteNativeStory() {
+        guard let story = nativeOpenStory, story.can_delete == true else {
+            showNativeFlash(message: "You cannot delete this story.", category: "error")
+            return
+        }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        let alert = UIAlertController(title: "Delete story?", message: "This removes the story for everyone.", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in
+            self?.deleteNativeStory(story)
+        })
+        present(alert, animated: true)
+    }
+
+    private func deleteNativeStory(_ story: NativeFeedStory) {
+        performNativeJSONRequest(path: "/stories/\(story.id)/delete", method: "POST", bodyObject: [:]) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    if let payload = try? JSONDecoder().decode(NativeDeleteResponse.self, from: data), payload.ok == true {
+                        self.nativeFeedStories.removeAll { $0.id == story.id }
+                        self.dismissNativeStoryViewer()
+                        self.nativeFeedStoriesHeader.configure(
+                            stories: self.nativeFeedStories,
+                            currentUser: self.nativeCurrentUser,
+                            hasCurrentUserStory: self.nativeFeedStories.contains { $0.author.id == self.nativeCurrentUser?.id },
+                            imageCache: self.nativeAvatarImageCache
+                        )
+                        self.resizeNativeFeedHeader()
+                        self.showNativeFlash(message: "Story deleted.", category: "success")
+                        self.loadNativeFeed(force: true)
+                    } else {
+                        let error = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.displayMessage
+                        self.showNativeFlash(message: error ?? "Story could not be deleted.", category: "error")
+                    }
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
         }
     }
 
@@ -5049,7 +5816,10 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             let preview = String(responseText.prefix(300)).replacingOccurrences(of: "\n", with: " ")
             print("Native DM response status=\(status) body=\(preview)")
             guard (200..<300).contains(status) else {
-                completion(.failure(NSError(domain: "NativeMessages", code: status, userInfo: [NSLocalizedDescriptionKey: preview.isEmpty ? "Native request failed." : preview])))
+                let data = Data(responseText.utf8)
+                let message = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data).displayMessage)
+                    ?? (preview.isEmpty ? "Native request failed." : preview)
+                completion(.failure(NSError(domain: "NativeMessages", code: status, userInfo: [NSLocalizedDescriptionKey: message])))
                 return
             }
             completion(.success(responseText.data(using: .utf8) ?? Data()))
@@ -5109,16 +5879,150 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
     }
 
     private func prefetchPrimaryRoutesIfNeeded(username: String) {
+        guard isLoggedIntoWebApp, !username.isEmpty, warmedRoutesForUsername != username else { return }
         warmedRoutesForUsername = username
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+            guard let self, self.isLoggedIntoWebApp, self.currentUsername == username else { return }
+            if self.nativeFeedPosts.isEmpty && self.nativeFeedPolls.isEmpty && !self.isLoadingNativeFeed {
+                self.loadNativeFeed(force: false)
+            }
+            if self.nativeMessageConversations.isEmpty && !self.isLoadingNativeInbox {
+                self.loadNativeInbox()
+            }
+            if self.nativeProfileUser?.username != username && !self.isLoadingNativeProfile {
+                self.loadNativeProfile(username: username, force: false)
+            }
+        }
     }
 
     @objc private func handleNativeTabTap(_ sender: UIButton) {
         guard let section = section(for: sender.tag) else { return }
+        if section == .feed {
+            if currentPrimarySection != .feed || currentRoute != "/" {
+                pushNativeRouteSnapshot()
+            }
+            nativeRouteOverrideUntil = Date().addingTimeInterval(4)
+            hideNativePostDetailIfNeeded()
+            dismissNativeComments()
+            dismissNativeConnections()
+            currentPrimarySection = .feed
+            currentFeedTab = "home"
+            currentRoute = "/"
+            lastRouteBySection[.feed] = "/"
+            updateNativeTabSelection(animated: true)
+            updateNativeSectionPresentation()
+            syncNativeFeedSegment()
+            if nativeFeedTableView.numberOfRows(inSection: 0) > 0 {
+                nativeFeedTableView.setContentOffset(CGPoint(x: 0, y: -nativeFeedTableView.adjustedContentInset.top), animated: true)
+            }
+            loadNativeFeed(force: true)
+            navigateWebView(to: "/", replace: false)
+            return
+        }
         openPrimarySection(section)
+    }
+
+    @objc private func handleNativeBackSwipe(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        guard gesture.state == .ended else { return }
+        let translation = gesture.translation(in: view)
+        guard translation.x > 54, abs(translation.x) > abs(translation.y) else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        performNativeBackNavigation()
+    }
+
+    private func performNativeBackNavigation() {
+        if isShowingNativePostDetail {
+            closeNativePostDetail()
+            return
+        }
+        if !nativeCommentsSheet.isHidden {
+            dismissNativeComments()
+            return
+        }
+        if !nativeConnectionsSheet.isHidden {
+            dismissNativeConnections()
+            return
+        }
+        if !nativeUtilitySheet.isHidden {
+            dismissNativeUtilityPanel()
+            return
+        }
+        nativeRouteOverrideUntil = Date().addingTimeInterval(2.5)
+        forceHideNativeSearchLayer()
+        if let snapshot = nativeRouteHistory.popLast() {
+            restoreNativeRoute(snapshot)
+            return
+        }
+        if webView?.canGoBack == true {
+            webView?.goBack()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.syncComposerAvailabilityFromPage()
+            }
+            return
+        }
+        if currentPrimarySection != .feed {
+            openPrimarySection(.feed)
+        }
+    }
+
+    private func pushNativeRouteSnapshot() {
+        let snapshot = NativeRouteSnapshot(section: currentPrimarySection, route: currentRoute, feedTab: currentFeedTab)
+        if let last = nativeRouteHistory.last, last.section == snapshot.section, last.route == snapshot.route, last.feedTab == snapshot.feedTab {
+            return
+        }
+        nativeRouteHistory.append(snapshot)
+        if nativeRouteHistory.count > 24 {
+            nativeRouteHistory.removeFirst(nativeRouteHistory.count - 24)
+        }
+    }
+
+    private func restoreNativeRoute(_ snapshot: NativeRouteSnapshot) {
+        nativeRouteOverrideUntil = Date().addingTimeInterval(4)
+        currentPrimarySection = snapshot.section
+        currentRoute = snapshot.route
+        currentFeedTab = snapshot.feedTab
+        lastRouteBySection[snapshot.section] = snapshot.route
+        updateNativeTabSelection(animated: true)
+        syncNativeFeedSegment()
+        dismissNativeComments()
+        dismissNativeConnections()
+        hideNativePostDetailIfNeeded()
+        if snapshot.section != .search {
+            forceHideNativeSearchLayer()
+        }
+        updateNativeSectionPresentation()
+        switch snapshot.section {
+        case .feed:
+            loadNativeFeed(force: false)
+        case .profile:
+            let username = nativeProfileUsername(from: snapshot.route) ?? currentUsername
+            loadNativeProfile(username: username, force: nativeProfileUser?.username != username)
+        case .messages:
+            loadNativeInbox()
+        case .search:
+            showNativeSearchIfNeeded()
+        }
+        navigateWebView(to: snapshot.route, replace: false)
     }
 
     @objc private func handleNativeFeedRefresh() {
         loadNativeFeed(force: true)
+    }
+
+    @objc private func handleNativeFeedLogoTap() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        currentPrimarySection = .feed
+        currentFeedTab = "home"
+        currentRoute = "/"
+        lastRouteBySection[.feed] = "/"
+        updateNativeTabSelection(animated: true)
+        updateNativeSectionPresentation()
+        syncNativeFeedSegment()
+        if nativeFeedTableView.numberOfRows(inSection: 0) > 0 {
+            nativeFeedTableView.setContentOffset(CGPoint(x: 0, y: -nativeFeedTableView.adjustedContentInset.top), animated: true)
+        }
+        loadNativeFeed(force: true)
+        navigateWebView(to: "/", replace: false)
     }
 
     @objc private func handleNativeFeedSegmentChanged() {
@@ -5172,6 +6076,44 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 item.bookmark_count = max(0, item.bookmark_count + (item.has_bookmarked ? 1 : -1))
             }
             performNativeFeedPostAction(path: "/post/\(post.id)/bookmark")
+        case .report:
+            presentNativePostReportPrompt(post)
+        case .delete:
+            confirmDeleteNativePost(post)
+        }
+    }
+
+    private func confirmDeleteNativePost(_ post: NativeFeedPost) {
+        guard post.can_edit == true else {
+            showNativeFlash(message: "You cannot delete this post.", category: "error")
+            return
+        }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        let alert = UIAlertController(title: "Delete post?", message: "This removes the post for everyone.", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { [weak self] _ in
+            self?.deleteNativePost(post)
+        })
+        present(alert, animated: true)
+    }
+
+    private func deleteNativePost(_ post: NativeFeedPost) {
+        performNativeJSONRequest(path: "/post/\(post.id)/delete", method: "POST", bodyObject: [:]) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let data):
+                    if let payload = try? JSONDecoder().decode(NativeDeleteResponse.self, from: data), payload.ok == true {
+                        self.removeNativePost(id: post.id)
+                        self.showNativeFlash(message: "Post deleted.", category: "success")
+                    } else {
+                        let error = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.displayMessage
+                        self.showNativeFlash(message: error ?? "Post could not be deleted.", category: "error")
+                    }
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
         }
     }
 
@@ -5464,6 +6406,161 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
     }
 
+    private func toggleNativeProfileBlock() {
+        guard let user = nativeProfileUser, user.can_block == true || user.can_follow else { return }
+        nativeProfileHeaderView.setBlockLoading(true)
+        performNativeJSONRequest(path: "/api/users/\(user.username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? user.username)/block", method: "POST", bodyObject: [:]) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.nativeProfileHeaderView.setBlockLoading(false)
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeProfileBlockResponse.self, from: data), payload.ok else {
+                        let message = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.displayMessage ?? "Block failed. Try again."
+                        self.showNativeFlash(message: message, category: "error")
+                        self.nativeProfileHeaderView.configure(user: user, imageCache: self.nativeAvatarImageCache)
+                        return
+                    }
+                    self.nativeProfileUser = payload.user
+                    self.nativeProfileHeaderView.configure(user: payload.user, imageCache: self.nativeAvatarImageCache)
+                    self.loadNativeFeed(force: true)
+                    if payload.blocked {
+                        self.nativeProfilePosts = []
+                        self.nativeProfileTableView.reloadData()
+                        self.nativeProfileEmptyLabel.text = "You blocked @\(payload.user.username)."
+                        self.nativeProfileEmptyLabel.isHidden = false
+                    } else {
+                        self.loadNativeProfile(username: payload.user.username, force: true)
+                    }
+                    self.showNativeFlash(message: payload.blocked ? "Blocked @\(payload.user.username)." : "Unblocked @\(payload.user.username).", category: "success")
+                case .failure(let error):
+                    self.nativeProfileHeaderView.configure(user: user, imageCache: self.nativeAvatarImageCache)
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
+    private func presentNativeProfileActions() {
+        guard let user = nativeProfileUser, user.can_block == true || user.can_follow else { return }
+        let sheet = UIAlertController(title: "@\(user.username)", message: "Moderation tools", preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: user.is_blocked == true ? "Unblock" : "Block", style: .destructive) { [weak self] _ in
+            self?.toggleNativeProfileBlock()
+        })
+        sheet.addAction(UIAlertAction(title: user.is_muted == true ? "Unmute" : "Mute", style: .default) { [weak self] _ in
+            self?.toggleNativeProfileMute()
+        })
+        sheet.addAction(UIAlertAction(title: "Report profile", style: .default) { [weak self] _ in
+            self?.presentNativeProfileReportPrompt()
+        })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = nativeProfileHeaderView
+            popover.sourceRect = CGRect(x: nativeProfileHeaderView.bounds.maxX - 64, y: 92, width: 44, height: 44)
+        }
+        topPresentationController().present(sheet, animated: true)
+    }
+
+    private func toggleNativeProfileMute() {
+        guard let user = nativeProfileUser, user.can_block == true || user.can_follow else { return }
+        nativeProfileHeaderView.setBlockLoading(true)
+        performNativeJSONRequest(path: "/api/users/\(user.username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? user.username)/mute", method: "POST", bodyObject: [:]) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.nativeProfileHeaderView.setBlockLoading(false)
+                switch result {
+                case .success(let data):
+                    guard let payload = try? JSONDecoder().decode(NativeProfileMuteResponse.self, from: data), payload.ok else {
+                        let message = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.displayMessage ?? "Mute failed. Try again."
+                        self.showNativeFlash(message: message, category: "error")
+                        return
+                    }
+                    self.nativeProfileUser = payload.user
+                    self.nativeProfileHeaderView.configure(user: payload.user, imageCache: self.nativeAvatarImageCache)
+                    self.loadNativeFeed(force: true)
+                    self.loadNativeProfile(username: payload.user.username, force: true)
+                    self.showNativeFlash(message: payload.muted ? "Muted @\(payload.user.username)." : "Unmuted @\(payload.user.username).", category: "success")
+                case .failure(let error):
+                    self.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
+    private func presentNativeProfileReportPrompt() {
+        guard let user = nativeProfileUser else { return }
+        let alert = UIAlertController(title: "Report @\(user.username)", message: "Tell admin what needs review.", preferredStyle: .alert)
+        alert.addTextField { field in
+            field.placeholder = "Reason"
+            field.text = "Profile reported from native app"
+            field.clearButtonMode = .whileEditing
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Send Report", style: .destructive) { [weak self, weak alert] _ in
+            let reason = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            self?.reportNativeProfile(reason: reason.isEmpty ? "Profile reported from native app" : reason)
+        })
+        topPresentationController().present(alert, animated: true)
+    }
+
+    private func reportNativeProfile(reason: String) {
+        guard let user = nativeProfileUser else { return }
+        performNativeJSONRequest(path: "/api/users/\(user.username.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? user.username)/report", method: "POST", bodyObject: [
+            "reason": reason
+        ]) { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let data):
+                    if let payload = try? JSONDecoder().decode(NativeReportResponse.self, from: data), payload.ok {
+                        self?.showNativeFlash(message: payload.message ?? "Report sent to admin.", category: "success")
+                    } else {
+                        let message = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.displayMessage ?? "Report failed. Try again."
+                        self?.showNativeFlash(message: message, category: "error")
+                    }
+                case .failure(let error):
+                    self?.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
+    private func presentNativePostReportPrompt(_ post: NativeFeedPost) {
+        let alert = UIAlertController(title: "Report post", message: "Tell admin what needs review.", preferredStyle: .alert)
+        alert.addTextField { field in
+            field.placeholder = "Reason"
+            field.text = "Post reported from native app"
+            field.clearButtonMode = .whileEditing
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.addAction(UIAlertAction(title: "Send Report", style: .destructive) { [weak self, weak alert] _ in
+            let reason = alert?.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            self?.reportNativePost(post, reason: reason.isEmpty ? "Post reported from native app" : reason)
+        })
+        topPresentationController().present(alert, animated: true)
+    }
+
+    private func reportNativePost(_ post: NativeFeedPost, reason: String) {
+        performNativeJSONRequest(path: "/report", method: "POST", bodyObject: [
+            "post_id": post.id,
+            "username": post.author.username,
+            "reason": reason
+        ]) { [weak self] result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let data):
+                    if let payload = try? JSONDecoder().decode(NativeReportResponse.self, from: data), payload.ok {
+                        self?.showNativeFlash(message: payload.message ?? "Post reported to admin.", category: "success")
+                    } else {
+                        let message = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.displayMessage ?? "Report failed. Try again."
+                        self?.showNativeFlash(message: message, category: "error")
+                    }
+                case .failure(let error):
+                    self?.showNativeFlash(message: error.localizedDescription, category: "error")
+                }
+            }
+        }
+    }
+
     private func updateNativeFeedPost(id: Int, mutate: (inout NativeFeedPost) -> Void) {
         if let index = nativeFeedPosts.firstIndex(where: { $0.id == id }) {
             mutate(&nativeFeedPosts[index])
@@ -5489,11 +6586,38 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
     }
 
+    private func removeNativePost(id: Int) {
+        nativeFeedPosts.removeAll { $0.id == id || $0.quote?.id == id }
+        nativeProfilePosts.removeAll { $0.id == id || $0.quote?.id == id }
+        nativeSearchPosts.removeAll { $0.id == id || $0.quote?.id == id }
+        nativeSavedPosts.removeAll { $0.id == id || $0.quote?.id == id }
+        nativePostDetailComments.removeAll { $0.id == id }
+        if nativePostDetailPost?.id == id {
+            hideNativePostDetailIfNeeded()
+            nativePostDetailPost = nil
+            nativePostDetailComments = []
+        }
+        if nativeCommentsPost?.id == id {
+            dismissNativeComments()
+            nativeCommentsPost = nil
+            nativeComments = []
+        }
+        nativeFeedTableView.reloadData()
+        nativeProfileTableView.reloadData()
+        nativeSearchTableView.reloadData()
+        nativePostDetailTableView.reloadData()
+        nativeFeedEmptyLabel.isHidden = !(nativeFeedPosts.isEmpty && nativeFeedPolls.isEmpty)
+    }
+
     private func openPrimarySection(_ section: PrimarySection) {
         nativeRouteOverrideUntil = Date().addingTimeInterval(4)
         hideNativePostDetailIfNeeded()
+        if section != currentPrimarySection {
+            pushNativeRouteSnapshot()
+        }
         if section == .messages {
             currentPrimarySection = .messages
+            forceHideNativeSearchLayer()
             updateNativeTabSelection(animated: true)
             updateNativeSectionPresentation()
             if let routeTarget = nativeMessageUsername(from: lastRouteBySection[.messages] ?? "/messages") {
@@ -5528,12 +6652,14 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         updateNativeTabSelection(animated: true)
         hideNativeMessagesIfNeeded()
         if section == .feed {
+            forceHideNativeSearchLayer()
             currentFeedTab = preferredRoute.contains("tab=fyp") ? "fyp" : (preferredRoute.contains("tab=breaking") ? "breaking" : "home")
             currentRoute = preferredRoute
             lastRouteBySection[.feed] = preferredRoute
             updateNativeSectionPresentation()
             loadNativeFeed(force: false)
         } else if section == .profile {
+            forceHideNativeSearchLayer()
             currentRoute = preferredRoute
             lastRouteBySection[.profile] = preferredRoute
             hideNativeFeedIfNeeded()
@@ -5719,6 +6845,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             cell.onAction = { [weak self] post, action in
                 self?.handleNativeFeedPostAction(post, action: action)
             }
+            cell.onOpenAuthor = { [weak self] user in
+                self?.openNativeProfile(username: user.username)
+            }
+            cell.onOpenVideo = { [weak self] url in
+                self?.presentNativeVideo(url: url)
+            }
             return cell
         }
         if tableView === nativePostDetailTableView {
@@ -5727,6 +6859,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 cell.configure(with: post, avatarCache: nativeAvatarImageCache, mediaCache: nativeFeedImageCache)
                 cell.onAction = { [weak self] post, action in
                     self?.handleNativeFeedPostAction(post, action: action)
+                }
+                cell.onOpenAuthor = { [weak self] user in
+                    self?.openNativeProfile(username: user.username)
+                }
+                cell.onOpenVideo = { [weak self] url in
+                    self?.presentNativeVideo(url: url)
                 }
                 return cell
             }
@@ -5740,6 +6878,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.beginNativeCommentReply(to: comment)
                 }
             }
+            cell.onOpenAuthor = { [weak self] user in
+                self?.openNativeProfile(username: user.username)
+            }
             return cell
         }
         if tableView === nativeProfileTableView {
@@ -5747,6 +6888,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             cell.configure(with: nativeProfilePosts[indexPath.row], avatarCache: nativeAvatarImageCache, mediaCache: nativeFeedImageCache)
             cell.onAction = { [weak self] post, action in
                 self?.handleNativeFeedPostAction(post, action: action)
+            }
+            cell.onOpenAuthor = { [weak self] user in
+                self?.openNativeProfile(username: user.username)
+            }
+            cell.onOpenVideo = { [weak self] url in
+                self?.presentNativeVideo(url: url)
             }
             return cell
         }
@@ -5761,6 +6908,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             cell.configure(with: post, avatarCache: nativeAvatarImageCache, mediaCache: nativeFeedImageCache)
             cell.onAction = { [weak self] post, action in
                 self?.handleNativeFeedPostAction(post, action: action)
+            }
+            cell.onOpenAuthor = { [weak self] user in
+                self?.openNativeProfile(username: user.username)
+            }
+            cell.onOpenVideo = { [weak self] url in
+                self?.presentNativeVideo(url: url)
             }
             return cell
         }
@@ -5779,11 +6932,31 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             cell.configure(with: nativeComments[indexPath.row], imageCache: nativeAvatarImageCache)
             cell.onLike = { [weak self] comment in self?.toggleNativeCommentLike(comment) }
             cell.onReply = { [weak self] comment in self?.beginNativeCommentReply(to: comment) }
+            cell.onOpenAuthor = { [weak self] user in
+                self?.openNativeProfile(username: user.username)
+            }
             return cell
         }
         let cell = tableView.dequeueReusableCell(withIdentifier: NativeThreadMessageCell.reuseIdentifier, for: indexPath) as! NativeThreadMessageCell
         cell.configure(with: nativeThreadMessages[indexPath.row], imageCache: nativeAvatarImageCache)
         return cell
+    }
+
+    private func openNativeProfile(username: String) {
+        nativeRouteOverrideUntil = Date().addingTimeInterval(12)
+        if currentPrimarySection != .profile || currentRoute != "/users/\(username)" {
+            pushNativeRouteSnapshot()
+        }
+        hideNativePostDetailIfNeeded()
+        currentPrimarySection = .profile
+        currentRoute = "/users/\(username)"
+        lastRouteBySection[.profile] = currentRoute
+        updateNativeTabSelection(animated: true)
+        forceHideNativeSearchLayer()
+        dismissNativeConnections()
+        dismissNativeComments()
+        updateNativeSectionPresentation()
+        syncWebViewToNativeProfile(username: username, route: currentRoute)
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
@@ -5801,14 +6974,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         if tableView === nativeSearchTableView {
             if indexPath.row < nativeSearchUsers.count {
                 let user = nativeSearchUsers[indexPath.row]
-                nativeRouteOverrideUntil = Date().addingTimeInterval(12)
-                currentPrimarySection = .profile
-                currentRoute = "/users/\(user.username)"
-                lastRouteBySection[.profile] = currentRoute
-                updateNativeTabSelection(animated: true)
-                dismissNativeConnections()
-                updateNativeSectionPresentation()
-                syncWebViewToNativeProfile(username: user.username, route: currentRoute)
+                openNativeProfile(username: user.username)
             } else {
                 showNativePostDetail(for: nativeSearchPosts[indexPath.row - nativeSearchUsers.count])
             }
@@ -5816,14 +6982,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         if tableView === nativeConnectionsTableView {
             let user = nativeConnectionsUsers[indexPath.row]
-            dismissNativeConnections()
-            nativeRouteOverrideUntil = Date().addingTimeInterval(12)
-            currentPrimarySection = .profile
-            currentRoute = "/users/\(user.username)"
-            lastRouteBySection[.profile] = currentRoute
-            updateNativeTabSelection(animated: true)
-            updateNativeSectionPresentation()
-            syncWebViewToNativeProfile(username: user.username, route: currentRoute)
+            openNativeProfile(username: user.username)
             return
         }
         if tableView === nativePostDetailTableView {
@@ -5859,6 +7018,36 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         guard !composerSheet.isHidden else { return }
         view.bringSubviewToFront(composerDimView)
         view.bringSubviewToFront(composerSheet)
+        presentPostMediaSourceOptions()
+    }
+
+    private func presentPostMediaSourceOptions() {
+        let alert = UIAlertController(title: "Add Photo", message: nil, preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: "Use Camera", style: .default) { [weak self] _ in
+            self?.presentCameraForPost()
+        })
+        alert.addAction(UIAlertAction(title: "Upload Photo or Video", style: .default) { [weak self] _ in
+            self?.presentPhotoPicker(purpose: .post, mediaFilter: .any(of: [.images, .videos]))
+        })
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        topPresentationController().present(alert, animated: true)
+    }
+
+    private func presentCameraForPost() {
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            presentPhotoPicker(purpose: .post, mediaFilter: .images)
+            return
+        }
+        photoPickerPurpose = .post
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.mediaTypes = ["public.image"]
+        picker.allowsEditing = true
+        picker.delegate = self
+        topPresentationController().present(picker, animated: true)
+    }
+
+    private func openPhotoLibraryForPost() {
         presentPhotoPicker(purpose: .post, mediaFilter: .any(of: [.images, .videos]))
     }
 
@@ -5946,6 +7135,11 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     }
                     if purpose == .profileAvatar {
                         self.presentNativeImageAdjuster(image, title: "Adjust Profile Picture", aspectRatio: 1, circularGuide: true) { [weak self] adjusted in
+                            self?.nativeSettingsPreviewAvatarImage = adjusted
+                            self?.nativeSettingsPreviewAvatarView?.configure(image: adjusted)
+                            self?.nativeProfileAvatarView.configure(image: adjusted)
+                            self?.nativeAccountAvatarView.configure(image: adjusted)
+                            self?.nativeAccountAvatarLargeView.configure(image: adjusted)
                             guard let data = adjusted.jpegData(compressionQuality: 0.9) else { return }
                             self?.uploadNativeSettingsImage(imageData: data, fieldName: "avatar", imageName: "avatar.jpg")
                         }
@@ -6051,6 +7245,35 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     self.showNativeFlash(message: "Profile media saved.", category: "success")
                     self.nativeAvatarImageCache.removeAllObjects()
                     self.nativeFeedImageCache.removeAllObjects()
+                    self.refreshNativeSettingsProfileAfterMediaUpload()
+                }
+            }.resume()
+        }
+    }
+
+    private func refreshNativeSettingsProfileAfterMediaUpload() {
+        guard !currentUsername.isEmpty else { return }
+        performNativeJSONRequest(path: "/api/users/\(currentUsername.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? currentUsername)") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if case .success(let data) = result,
+                   let payload = try? JSONDecoder().decode(NativeProfileResponse.self, from: data),
+                   payload.ok {
+                    self.nativeProfileUser = payload.user
+                    self.nativeProfilePosts = payload.posts
+                    self.nativeCurrentUser = payload.user.summary
+                    self.nativeSettingsPreviewAvatarImage = nil
+                    self.nativeProfileAvatarView.configure(with: payload.user.summary, imageCache: self.nativeAvatarImageCache)
+                    self.updateNativeAccountAvatar()
+                    self.configureNativeProfileTabAvatar()
+                    if self.currentPrimarySection == .profile {
+                        self.nativeProfileHeaderView.configure(user: payload.user, imageCache: self.nativeAvatarImageCache)
+                        self.nativeProfileTableView.reloadData()
+                    }
+                    if !self.nativeUtilitySheet.isHidden, self.nativeUtilityTitleLabel.text == "Settings" {
+                        self.presentNativeSettingsPanel()
+                    }
+                } else {
                     if self.currentPrimarySection == .profile {
                         self.loadNativeProfile(username: self.currentUsername, force: true)
                     }
@@ -6058,7 +7281,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                         self.loadNativeFeed(force: true)
                     }
                 }
-            }.resume()
+            }
         }
     }
 
@@ -6160,6 +7383,7 @@ private struct NativeSessionResponse: Decodable {
     let ok: Bool
     let logged_in: Bool
     let accepted_terms: Bool?
+    let must_change_password: Bool
     let user: NativeUserSummary?
     let error: String?
 
@@ -6167,6 +7391,7 @@ private struct NativeSessionResponse: Decodable {
         case ok
         case logged_in
         case accepted_terms
+        case must_change_password
         case user
         case error
     }
@@ -6176,6 +7401,7 @@ private struct NativeSessionResponse: Decodable {
         ok = try container.decodeIfPresent(Bool.self, forKey: .ok) ?? false
         logged_in = try container.decodeIfPresent(Bool.self, forKey: .logged_in) ?? false
         accepted_terms = try container.decodeIfPresent(Bool.self, forKey: .accepted_terms)
+        must_change_password = try container.decodeIfPresent(Bool.self, forKey: .must_change_password) ?? false
         user = try container.decodeIfPresent(NativeUserSummary.self, forKey: .user)
         error = try container.decodeIfPresent(String.self, forKey: .error)
     }
@@ -6200,6 +7426,12 @@ private struct NativeAccountsResponse: Decodable {
     }
 }
 
+private struct NativePasswordChangeResponse: Decodable {
+    let ok: Bool
+    let must_change_password: Bool?
+    let user: NativeUserSummary?
+}
+
 fileprivate struct NativeFeedStory: Decodable {
     let id: Int
     let author: NativeUserSummary
@@ -6208,6 +7440,7 @@ fileprivate struct NativeFeedStory: Decodable {
     let media_type: String
     let url: String
     let expires_at: String
+    let can_delete: Bool?
 }
 
 fileprivate struct NativeFeedPoll: Decodable {
@@ -6276,6 +7509,7 @@ private struct NativeFeedPost: Decodable {
     var has_bookmarked: Bool
     let is_mine: Bool
     let is_breaking: Bool
+    let can_edit: Bool?
 }
 
 private struct NativeFeedQuote: Decodable {
@@ -6289,6 +7523,18 @@ private struct NativeFeedQuote: Decodable {
 private struct NativeAPIErrorResponse: Decodable {
     let ok: Bool?
     let error: String?
+    let message: String?
+
+    var displayMessage: String? {
+        if let error, !error.isEmpty { return error }
+        if let message, !message.isEmpty { return message }
+        return nil
+    }
+}
+
+private struct NativeDeleteResponse: Decodable {
+    let ok: Bool
+    let deleted: Bool?
 }
 
 private struct NativeCommentsResponse: Decodable {
@@ -6322,11 +7568,36 @@ private struct NativeProfileFollowResponse: Decodable {
     let user: NativeProfileUser
 }
 
+private struct NativeProfileBlockResponse: Decodable {
+    let ok: Bool
+    let blocked: Bool
+    let user: NativeProfileUser
+}
+
+private struct NativeProfileMuteResponse: Decodable {
+    let ok: Bool
+    let muted: Bool
+    let user: NativeProfileUser
+}
+
+private struct NativeReportResponse: Decodable {
+    let ok: Bool
+    let message: String?
+    let report_id: Int?
+    let report: NativeAdminReport?
+}
+
 private struct NativeSearchResponse: Decodable {
     let ok: Bool
     let query: String
     let users: [NativeProfileUser]
     let posts: [NativeFeedPost]
+}
+
+private struct NativeModerationListResponse: Decodable {
+    let ok: Bool
+    let blocked: [NativeProfileUser]
+    let muted: [NativeProfileUser]
 }
 
 private struct NativeSavedResponse: Decodable {
@@ -6343,6 +7614,45 @@ private struct NativeAdminSummaryResponse: Decodable {
     let polls: [NativeAdminPoll]
 }
 
+private struct NativeAdminUsersResponse: Decodable {
+    let ok: Bool
+    let query: String
+    let count: Int
+    let users: [NativeAdminUser]
+
+    private enum CodingKeys: String, CodingKey {
+        case ok
+        case query
+        case count
+        case total
+        case users
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decodeIfPresent(Bool.self, forKey: .ok) ?? false
+        query = try container.decodeIfPresent(String.self, forKey: .query) ?? ""
+        users = try container.decodeIfPresent([NativeAdminUser].self, forKey: .users) ?? []
+        count = try container.decodeIfPresent(Int.self, forKey: .count)
+            ?? container.decodeIfPresent(Int.self, forKey: .total)
+            ?? users.count
+    }
+}
+
+private struct NativeAdminActionResponse: Decodable {
+    let ok: Bool
+    let message: String?
+    let user: NativeAdminUser?
+    let deleted_id: String?
+    let error: String?
+}
+
+private struct NativeAdminReportActionResponse: Decodable {
+    let ok: Bool
+    let message: String?
+    let report: NativeAdminReport?
+}
+
 private struct NativeAdminStats: Decodable {
     let users: Int
     let posts: Int
@@ -6351,6 +7661,31 @@ private struct NativeAdminStats: Decodable {
     let messages: Int
     let banned: Int
     let timeouts: Int
+
+    init(users: Int, posts: Int, stories: Int, reports: Int, messages: Int, banned: Int, timeouts: Int) {
+        self.users = users
+        self.posts = posts
+        self.stories = stories
+        self.reports = reports
+        self.messages = messages
+        self.banned = banned
+        self.timeouts = timeouts
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case users, posts, stories, reports, messages, banned, timeouts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        users = try container.decodeIfPresent(Int.self, forKey: .users) ?? 0
+        posts = try container.decodeIfPresent(Int.self, forKey: .posts) ?? 0
+        stories = try container.decodeIfPresent(Int.self, forKey: .stories) ?? 0
+        reports = try container.decodeIfPresent(Int.self, forKey: .reports) ?? 0
+        messages = try container.decodeIfPresent(Int.self, forKey: .messages) ?? 0
+        banned = try container.decodeIfPresent(Int.self, forKey: .banned) ?? 0
+        timeouts = try container.decodeIfPresent(Int.self, forKey: .timeouts) ?? 0
+    }
 }
 
 private struct NativeAdminUser: Decodable {
@@ -6358,16 +7693,86 @@ private struct NativeAdminUser: Decodable {
     let username: String
     let display_name: String
     let email: String
+    let bio: String
     let is_admin: Bool
     let is_verified: Bool
     let is_creator: Bool
+    let is_breaking_news: Bool
     let is_banned: Bool
+    let is_timed_out: Bool
+    let timeout_until: String
+    let created_at: String
+    let password_note: String
+    let can_delete: Bool
+    let can_manage_admin: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id, username, display_name, email, bio, is_admin, is_verified, is_creator, is_breaking_news, is_banned, is_timed_out, timeout_until, created_at, password_note, can_delete, can_manage_admin
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(Int.self, forKey: .id) ?? 0
+        username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
+        display_name = try container.decodeIfPresent(String.self, forKey: .display_name) ?? username
+        email = try container.decodeIfPresent(String.self, forKey: .email) ?? ""
+        bio = try container.decodeIfPresent(String.self, forKey: .bio) ?? ""
+        is_admin = try container.decodeIfPresent(Bool.self, forKey: .is_admin) ?? false
+        is_verified = try container.decodeIfPresent(Bool.self, forKey: .is_verified) ?? false
+        is_creator = try container.decodeIfPresent(Bool.self, forKey: .is_creator) ?? false
+        is_breaking_news = try container.decodeIfPresent(Bool.self, forKey: .is_breaking_news) ?? false
+        is_banned = try container.decodeIfPresent(Bool.self, forKey: .is_banned) ?? false
+        is_timed_out = try container.decodeIfPresent(Bool.self, forKey: .is_timed_out) ?? false
+        timeout_until = try container.decodeIfPresent(String.self, forKey: .timeout_until) ?? ""
+        created_at = try container.decodeIfPresent(String.self, forKey: .created_at) ?? ""
+        password_note = try container.decodeIfPresent(String.self, forKey: .password_note) ?? "Set a new temporary password."
+        can_delete = try container.decodeIfPresent(Bool.self, forKey: .can_delete) ?? !is_admin
+        can_manage_admin = try container.decodeIfPresent(Bool.self, forKey: .can_manage_admin) ?? true
+    }
 }
 
 private struct NativeAdminReport: Decodable {
     let id: Int
     let reason: String
     let status: String
+    let created_at: String
+    let reporter: NativeUserSummary?
+    let reported_user: NativeUserSummary?
+    let post: NativeAdminReportedPost?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, reason, status, created_at, reporter, reported_user, post
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(Int.self, forKey: .id) ?? 0
+        reason = try container.decodeIfPresent(String.self, forKey: .reason) ?? "Needs review"
+        status = try container.decodeIfPresent(String.self, forKey: .status) ?? "open"
+        created_at = try container.decodeIfPresent(String.self, forKey: .created_at) ?? ""
+        reporter = try container.decodeIfPresent(NativeUserSummary.self, forKey: .reporter)
+        reported_user = try container.decodeIfPresent(NativeUserSummary.self, forKey: .reported_user)
+        post = try container.decodeIfPresent(NativeAdminReportedPost.self, forKey: .post)
+    }
+}
+
+private struct NativeAdminReportedPost: Decodable {
+    let id: Int
+    let body: String
+    let author: NativeUserSummary?
+    let url: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id, body, author, url
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(Int.self, forKey: .id) ?? 0
+        body = try container.decodeIfPresent(String.self, forKey: .body) ?? ""
+        author = try container.decodeIfPresent(NativeUserSummary.self, forKey: .author)
+        url = try container.decodeIfPresent(String.self, forKey: .url) ?? ""
+    }
 }
 
 private struct NativeAdminPoll: Decodable {
@@ -6416,6 +7821,9 @@ private struct NativeProfileUser: Decodable {
     let post_count: Int
     let is_following: Bool
     let can_follow: Bool
+    let can_block: Bool?
+    let is_blocked: Bool?
+    let is_muted: Bool?
 
     var summary: NativeUserSummary {
         NativeUserSummary(
@@ -6568,7 +7976,7 @@ private final class NativeAvatarView: UIView {
         addSubview(backgroundCircle)
 
         imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.contentMode = .scaleAspectFit
+        imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
         imageView.layer.cornerRadius = 24
         imageView.layer.cornerCurve = .continuous
@@ -6628,6 +8036,13 @@ private final class NativeAvatarView: UIView {
             }
         }.resume()
     }
+
+    func configure(image: UIImage) {
+        currentAvatarKey = nil
+        imageView.image = image
+        imageView.isHidden = false
+        emojiLabel.isHidden = true
+    }
 }
 
 private final class NativeProfileHeaderView: UIView {
@@ -6646,8 +8061,10 @@ private final class NativeProfileHeaderView: UIView {
     private let followingButton = UIButton(type: .system)
     private let metaLabel = UILabel()
     private let followButton = UIButton(type: .system)
+    private let blockButton = UIButton(type: .system)
     private var currentBannerKey = ""
     var onFollowTap: (() -> Void)?
+    var onBlockTap: (() -> Void)?
     var onFollowersTap: (() -> Void)?
     var onFollowingTap: (() -> Void)?
     var preferredHeight: CGFloat { 430 }
@@ -6746,6 +8163,15 @@ private final class NativeProfileHeaderView: UIView {
         followButton.addTarget(self, action: #selector(handleFollowTap), for: .touchUpInside)
         cardView.addSubview(followButton)
 
+        blockButton.translatesAutoresizingMaskIntoConstraints = false
+        blockButton.setImage(UIImage(systemName: "ellipsis"), for: .normal)
+        blockButton.tintColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.82)
+        blockButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .bold)
+        blockButton.layer.cornerRadius = 18
+        blockButton.layer.cornerCurve = .continuous
+        blockButton.addTarget(self, action: #selector(handleBlockTap), for: .touchUpInside)
+        cardView.addSubview(blockButton)
+
         NSLayoutConstraint.activate([
             cardView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             cardView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
@@ -6767,9 +8193,14 @@ private final class NativeProfileHeaderView: UIView {
             followButton.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
             followButton.widthAnchor.constraint(equalToConstant: 104),
             followButton.heightAnchor.constraint(equalToConstant: 36),
+            blockButton.trailingAnchor.constraint(equalTo: followButton.leadingAnchor, constant: -8),
+            blockButton.centerYAnchor.constraint(equalTo: followButton.centerYAnchor),
+            blockButton.widthAnchor.constraint(equalToConstant: 44),
+            blockButton.heightAnchor.constraint(equalToConstant: 36),
             nameLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 18),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: verifiedBadgeView.leadingAnchor, constant: -6),
             nameLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 14),
+            verifiedBadgeView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 6),
             verifiedBadgeView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             verifiedBadgeView.widthAnchor.constraint(equalToConstant: 20),
             verifiedBadgeView.heightAnchor.constraint(equalToConstant: 20),
@@ -6813,12 +8244,23 @@ private final class NativeProfileHeaderView: UIView {
         configureStatButton(followersButton, value: user.follower_count, label: "Followers")
         configureStatButton(followingButton, value: user.following_count, label: "Following")
         configureBanner(urlString: user.banner_url, imageCache: imageCache)
-        followButton.isHidden = !user.can_follow
+        let isBlocked = user.is_blocked == true
+        followButton.isHidden = !user.can_follow || isBlocked
         followButton.setTitle(user.is_following ? "Following" : "Follow", for: .normal)
         followButton.setTitleColor(user.is_following ? UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1) : .white, for: .normal)
         followButton.backgroundColor = user.is_following
             ? UIColor(red: 241.0 / 255.0, green: 245.0 / 255.0, blue: 252.0 / 255.0, alpha: 1)
             : UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
+        blockButton.isHidden = !(user.can_block == true || user.can_follow)
+        blockButton.setTitle(nil, for: .normal)
+        blockButton.setImage(UIImage(systemName: "ellipsis"), for: .normal)
+        blockButton.setTitleColor(isBlocked || user.is_muted == true ? .white : UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.82), for: .normal)
+        blockButton.tintColor = isBlocked || user.is_muted == true ? .white : UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 0.82)
+        blockButton.backgroundColor = isBlocked
+            ? UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 1)
+            : (user.is_muted == true
+                ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 0.92)
+                : UIColor(red: 242.0 / 255.0, green: 247.0 / 255.0, blue: 255.0 / 255.0, alpha: 1))
     }
 
     private func configureStatButton(_ button: UIButton, value: Int, label: String) {
@@ -6876,8 +8318,22 @@ private final class NativeProfileHeaderView: UIView {
         }
     }
 
+    func setBlockLoading(_ loading: Bool) {
+        blockButton.isEnabled = !loading
+        blockButton.alpha = loading ? 0.65 : 1
+        if loading {
+            blockButton.setImage(UIImage(systemName: "hourglass"), for: .normal)
+        } else {
+            blockButton.setImage(UIImage(systemName: "ellipsis"), for: .normal)
+        }
+    }
+
     @objc private func handleFollowTap() {
         onFollowTap?()
+    }
+
+    @objc private func handleBlockTap() {
+        onBlockTap?()
     }
 
     @objc private func handleFollowersTap() {
@@ -6893,6 +8349,7 @@ private final class NativeStoryViewerView: UIView {
     private let dimView = UIView()
     private let imageView = UIImageView()
     private let closeButton = UIButton(type: .system)
+    private let deleteButton = UIButton(type: .system)
     private let avatarView = NativeAvatarView()
     private let nameLabel = UILabel()
     private let bodyLabel = UILabel()
@@ -6901,6 +8358,7 @@ private final class NativeStoryViewerView: UIView {
     private var videoURL: URL?
     var onClose: (() -> Void)?
     var onOpenVideo: ((URL) -> Void)?
+    var onDelete: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -6931,6 +8389,16 @@ private final class NativeStoryViewerView: UIView {
         closeButton.layer.cornerCurve = .continuous
         closeButton.addTarget(self, action: #selector(handleClose), for: .touchUpInside)
         addSubview(closeButton)
+
+        deleteButton.translatesAutoresizingMaskIntoConstraints = false
+        deleteButton.setImage(UIImage(systemName: "trash"), for: .normal)
+        deleteButton.tintColor = .white
+        deleteButton.backgroundColor = UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 0.78)
+        deleteButton.layer.cornerRadius = 18
+        deleteButton.layer.cornerCurve = .continuous
+        deleteButton.addTarget(self, action: #selector(handleDelete), for: .touchUpInside)
+        deleteButton.isHidden = true
+        addSubview(deleteButton)
 
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
         bodyLabel.font = .systemFont(ofSize: 18, weight: .semibold)
@@ -6963,12 +8431,16 @@ private final class NativeStoryViewerView: UIView {
             avatarView.widthAnchor.constraint(equalToConstant: 38),
             avatarView.heightAnchor.constraint(equalToConstant: 38),
             nameLabel.leadingAnchor.constraint(equalTo: avatarView.trailingAnchor, constant: 10),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -12),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: deleteButton.leadingAnchor, constant: -12),
             nameLabel.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
             closeButton.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -18),
             closeButton.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 36),
             closeButton.heightAnchor.constraint(equalToConstant: 36),
+            deleteButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -10),
+            deleteButton.centerYAnchor.constraint(equalTo: closeButton.centerYAnchor),
+            deleteButton.widthAnchor.constraint(equalToConstant: 36),
+            deleteButton.heightAnchor.constraint(equalToConstant: 36),
             bodyLabel.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 28),
             bodyLabel.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -28),
             bodyLabel.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -46),
@@ -6988,6 +8460,7 @@ private final class NativeStoryViewerView: UIView {
         nameLabel.text = story.author.display_name
         bodyLabel.text = story.body
         bodyLabel.isHidden = story.body.isEmpty
+        deleteButton.isHidden = story.can_delete != true
         videoURL = URL(string: story.media_url)
         videoButton.isHidden = story.media_type != "video" || videoURL == nil
         imageView.image = nil
@@ -7013,6 +8486,7 @@ private final class NativeStoryViewerView: UIView {
         currentMediaKey = ""
         imageView.image = nil
         videoURL = nil
+        deleteButton.isHidden = true
     }
 
     @objc private func handleClose() {
@@ -7022,6 +8496,10 @@ private final class NativeStoryViewerView: UIView {
     @objc private func handleVideo() {
         guard let videoURL else { return }
         onOpenVideo?(videoURL)
+    }
+
+    @objc private func handleDelete() {
+        onDelete?()
     }
 }
 
@@ -7034,9 +8512,10 @@ private final class NativeImageAdjustViewController: UIViewController, UIScrollV
     private let scrollView = UIScrollView()
     private let imageView = UIImageView()
     private let cropGuide = UIView()
+    private var didConfigureInitialZoom = false
 
     init(image: UIImage, title: String = "Adjust Photo", aspectRatio: CGFloat = 1.38, circularGuide: Bool = false, completion: @escaping (UIImage) -> Void) {
-        self.image = image
+        self.image = NativeImageAdjustViewController.normalizedImage(image)
         self.titleText = title
         self.aspectRatio = max(0.4, aspectRatio)
         self.circularGuide = circularGuide
@@ -7068,7 +8547,7 @@ private final class NativeImageAdjustViewController: UIViewController, UIScrollV
 
         let useButton = UIButton(type: .system)
         useButton.translatesAutoresizingMaskIntoConstraints = false
-        useButton.setTitle("Use", for: .normal)
+        useButton.setTitle("Confirm", for: .normal)
         useButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .bold)
         useButton.setTitleColor(.white, for: .normal)
         useButton.backgroundColor = UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1)
@@ -7090,7 +8569,7 @@ private final class NativeImageAdjustViewController: UIViewController, UIScrollV
         scrollView.showsVerticalScrollIndicator = false
         view.addSubview(scrollView)
 
-        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.frame = CGRect(origin: .zero, size: image.size)
         imageView.image = image
         imageView.contentMode = .scaleAspectFill
         scrollView.addSubview(imageView)
@@ -7110,7 +8589,7 @@ private final class NativeImageAdjustViewController: UIViewController, UIScrollV
             cancelButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             useButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -22),
             useButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            useButton.widthAnchor.constraint(equalToConstant: 72),
+            useButton.widthAnchor.constraint(equalToConstant: 92),
             useButton.heightAnchor.constraint(equalToConstant: 36),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 18),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
@@ -7119,23 +8598,22 @@ private final class NativeImageAdjustViewController: UIViewController, UIScrollV
             cropGuide.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             cropGuide.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
             cropGuide.topAnchor.constraint(equalTo: scrollView.topAnchor),
-            cropGuide.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
-            imageView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            imageView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            imageView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            imageView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-            imageView.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor)
+            cropGuide.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor)
         ])
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         cropGuide.layer.cornerRadius = circularGuide ? cropGuide.bounds.width / 2 : 18
+        configureInitialZoomIfNeeded()
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
         imageView
+    }
+
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        centerImageInScrollView()
     }
 
     @objc private func cancel() {
@@ -7143,12 +8621,57 @@ private final class NativeImageAdjustViewController: UIViewController, UIScrollV
     }
 
     @objc private func useImage() {
-        let renderer = UIGraphicsImageRenderer(size: scrollView.bounds.size)
-        let rendered = renderer.image { context in
-            scrollView.drawHierarchy(in: scrollView.bounds, afterScreenUpdates: true)
+        let outputSize = scrollView.bounds.size
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: outputSize, format: format)
+        let rendered = renderer.image { _ in
+            UIColor.black.setFill()
+            UIBezierPath(rect: CGRect(origin: .zero, size: outputSize)).fill()
+            let drawRect = CGRect(
+                x: -(scrollView.contentOffset.x + scrollView.contentInset.left),
+                y: -(scrollView.contentOffset.y + scrollView.contentInset.top),
+                width: image.size.width * scrollView.zoomScale,
+                height: image.size.height * scrollView.zoomScale
+            )
+            image.draw(in: drawRect)
         }
         dismiss(animated: true) {
             self.completion(rendered)
+        }
+    }
+
+    private func configureInitialZoomIfNeeded() {
+        guard !didConfigureInitialZoom, scrollView.bounds.width > 0, scrollView.bounds.height > 0, image.size.width > 0, image.size.height > 0 else { return }
+        didConfigureInitialZoom = true
+        imageView.frame = CGRect(origin: .zero, size: image.size)
+        scrollView.contentSize = image.size
+        let minScale = max(scrollView.bounds.width / image.size.width, scrollView.bounds.height / image.size.height)
+        scrollView.minimumZoomScale = minScale
+        scrollView.maximumZoomScale = max(minScale * 5, minScale + 1)
+        scrollView.zoomScale = minScale
+        centerImageInScrollView()
+        let contentWidth = image.size.width * minScale
+        let contentHeight = image.size.height * minScale
+        scrollView.contentOffset = CGPoint(
+            x: max(0, (contentWidth - scrollView.bounds.width) / 2 - scrollView.contentInset.left),
+            y: max(0, (contentHeight - scrollView.bounds.height) / 2 - scrollView.contentInset.top)
+        )
+    }
+
+    private func centerImageInScrollView() {
+        let scaledWidth = image.size.width * scrollView.zoomScale
+        let scaledHeight = image.size.height * scrollView.zoomScale
+        let horizontalInset = max(0, (scrollView.bounds.width - scaledWidth) / 2)
+        let verticalInset = max(0, (scrollView.bounds.height - scaledHeight) / 2)
+        scrollView.contentInset = UIEdgeInsets(top: verticalInset, left: horizontalInset, bottom: verticalInset, right: horizontalInset)
+    }
+
+    private static func normalizedImage(_ image: UIImage) -> UIImage {
+        guard image.imageOrientation != .up else { return image }
+        let renderer = UIGraphicsImageRenderer(size: image.size)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: image.size))
         }
     }
 }
@@ -7161,6 +8684,7 @@ private final class NativeStoriesHeaderView: UIView {
     var onAddStory: (() -> Void)?
     var onOpenStory: ((NativeFeedStory) -> Void)?
     var onDiscover: (() -> Void)?
+    private var currentUserStory: NativeFeedStory?
     var preferredHeight: CGFloat {
         120
     }
@@ -7223,14 +8747,18 @@ private final class NativeStoriesHeaderView: UIView {
             view.removeFromSuperview()
         }
 
+        currentUserStory = nil
         if let currentUser {
+            currentUserStory = stories.first(where: { $0.author.username == currentUser.username })
             let addChip = NativeStoryChipView()
             addChip.configure(user: currentUser, title: "Your Story", active: hasCurrentUserStory, showsAddBadge: true, imageCache: imageCache)
             addChip.addTarget(self, action: #selector(handleAddStoryTap), for: .touchUpInside)
             stackView.addArrangedSubview(addChip)
         }
 
-        stories.forEach { story in
+        stories.filter { story in
+            currentUser.map { story.author.username != $0.username } ?? true
+        }.forEach { story in
             let chip = NativeStoryChipView()
             chip.configure(user: story.author, title: "@\(story.author.username)", active: true, showsAddBadge: false, imageCache: imageCache)
             chip.story = story
@@ -7241,6 +8769,10 @@ private final class NativeStoriesHeaderView: UIView {
     }
 
     @objc private func handleAddStoryTap() {
+        if let currentUserStory {
+            onOpenStory?(currentUserStory)
+            return
+        }
         onAddStory?()
     }
 
@@ -7375,6 +8907,8 @@ private final class NativeFeedMediaView: UIView {
     private let imageView = UIImageView()
     private let videoBadge = UILabel()
     private var currentURL = ""
+    private var currentVideoURL: URL?
+    var onOpenVideo: ((URL) -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -7383,9 +8917,11 @@ private final class NativeFeedMediaView: UIView {
         layer.cornerRadius = 18
         layer.cornerCurve = .continuous
         clipsToBounds = true
+        isUserInteractionEnabled = true
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleTap)))
 
         imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.contentMode = .scaleAspectFill
+        imageView.contentMode = .scaleAspectFit
         imageView.clipsToBounds = true
         addSubview(imageView)
 
@@ -7419,16 +8955,25 @@ private final class NativeFeedMediaView: UIView {
 
     func configure(urlString: String, mediaType: String, cache: NSCache<NSString, UIImage>) {
         currentURL = urlString
+        currentVideoURL = mediaType == "video" ? URL(string: urlString) : nil
         videoBadge.isHidden = mediaType != "video"
         imageView.image = nil
         isHidden = urlString.isEmpty
         guard !urlString.isEmpty else { return }
-        let key = NSString(string: urlString)
+        let key = NSString(string: "\(mediaType):\(urlString)")
         if let cached = cache.object(forKey: key) {
             imageView.image = cached
             return
         }
         guard let url = URL(string: urlString) else { return }
+        if mediaType == "video" {
+            generateVideoThumbnail(url: url) { [weak self] image in
+                guard let self, self.currentURL == urlString, let image else { return }
+                cache.setObject(image, forKey: key)
+                self.imageView.image = image
+            }
+            return
+        }
         URLSession.shared.dataTask(with: url) { data, _, _ in
             guard let data, let image = downsampledImage(data: data, maxPixelSize: 1000) else { return }
             cache.setObject(image, forKey: key)
@@ -7438,6 +8983,26 @@ private final class NativeFeedMediaView: UIView {
             }
         }.resume()
     }
+
+    private func generateVideoThumbnail(url: URL, completion: @escaping (UIImage?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let asset = AVURLAsset(url: url)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: 900, height: 900)
+            let time = CMTime(seconds: 0.25, preferredTimescale: 600)
+            let image = try? generator.copyCGImage(at: time, actualTime: nil)
+            DispatchQueue.main.async {
+                completion(image.map { UIImage(cgImage: $0) })
+            }
+        }
+    }
+
+    @objc private func handleTap() {
+        guard let currentVideoURL else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        onOpenVideo?(currentVideoURL)
+    }
 }
 
 private enum NativeFeedPostAction: Int {
@@ -7445,6 +9010,8 @@ private enum NativeFeedPostAction: Int {
     case repost = 1
     case comment = 2
     case bookmark = 3
+    case report = 4
+    case delete = 5
 }
 
 private final class NativeFeedPollCell: UITableViewCell {
@@ -7602,6 +9169,8 @@ private final class NativeFeedPostCell: UITableViewCell {
     private var bodyTopToBreakingConstraint: NSLayoutConstraint!
     private var currentPost: NativeFeedPost?
     var onAction: ((NativeFeedPost, NativeFeedPostAction) -> Void)?
+    var onOpenAuthor: ((NativeUserSummary) -> Void)?
+    var onOpenVideo: ((URL) -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -7625,11 +9194,15 @@ private final class NativeFeedPostCell: UITableViewCell {
         cardView.addSubview(repostLabel)
 
         avatarView.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.isUserInteractionEnabled = true
+        avatarView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleAuthorTap)))
         cardView.addSubview(avatarView)
 
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.font = .systemFont(ofSize: 17, weight: .bold)
         nameLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nameLabel.isUserInteractionEnabled = true
+        nameLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleAuthorTap)))
         cardView.addSubview(nameLabel)
 
         verifiedBadgeView.translatesAutoresizingMaskIntoConstraints = false
@@ -7642,6 +9215,8 @@ private final class NativeFeedPostCell: UITableViewCell {
         usernameLabel.translatesAutoresizingMaskIntoConstraints = false
         usernameLabel.font = .systemFont(ofSize: 14, weight: .medium)
         usernameLabel.textColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.92)
+        usernameLabel.isUserInteractionEnabled = true
+        usernameLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleAuthorTap)))
         cardView.addSubview(usernameLabel)
 
         timeLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -7700,7 +9275,7 @@ private final class NativeFeedPostCell: UITableViewCell {
         actionStack.axis = .horizontal
         actionStack.distribution = .fillEqually
         actionStack.spacing = 8
-        ["heart", "arrow.2.squarepath", "bubble.left", "bookmark"].enumerated().forEach { index, symbol in
+        ["heart", "arrow.2.squarepath", "bubble.left", "bookmark", "exclamationmark.bubble", "trash"].enumerated().forEach { index, symbol in
             let button = UIButton(type: .system)
             button.setImage(UIImage(systemName: symbol), for: .normal)
             button.tintColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
@@ -7711,7 +9286,7 @@ private final class NativeFeedPostCell: UITableViewCell {
             button.backgroundColor = UIColor(red: 245.0 / 255.0, green: 248.0 / 255.0, blue: 255.0 / 255.0, alpha: 0.72)
             button.layer.cornerRadius = 20
             button.layer.cornerCurve = .continuous
-            button.accessibilityLabel = ["Like", "Repost", "Comment", "Save"][index]
+            button.accessibilityLabel = ["Like", "Repost", "Comment", "Save", "Report", "Delete"][index]
             actionStack.addArrangedSubview(button)
         }
         cardView.addSubview(actionStack)
@@ -7806,6 +9381,10 @@ private final class NativeFeedPostCell: UITableViewCell {
         mediaView.isHidden = true
         quoteMediaView.isHidden = true
         currentPost = nil
+        onOpenAuthor = nil
+        onOpenVideo = nil
+        mediaView.onOpenVideo = nil
+        quoteMediaView.onOpenVideo = nil
     }
 
     func configure(with post: NativeFeedPost, avatarCache: NSCache<NSString, UIImage>, mediaCache: NSCache<NSString, UIImage>) {
@@ -7821,7 +9400,10 @@ private final class NativeFeedPostCell: UITableViewCell {
         bodyTopToAvatarConstraint.isActive = !post.is_breaking
         bodyTopToBreakingConstraint.isActive = post.is_breaking
         bodyLabel.text = post.body.isEmpty ? "Media post" : post.body
-        mediaHeightConstraint.constant = post.media_url.isEmpty ? 0 : 220
+        mediaHeightConstraint.constant = post.media_url.isEmpty ? 0 : (post.media_type == "video" ? 260 : 340)
+        mediaView.onOpenVideo = { [weak self] url in
+            self?.onOpenVideo?(url)
+        }
         mediaView.configure(urlString: post.media_url, mediaType: post.media_type, cache: mediaCache)
 
         if let quote = post.quote {
@@ -7830,7 +9412,10 @@ private final class NativeFeedPostCell: UITableViewCell {
             quoteView.backgroundColor = UIColor(red: 247.0 / 255.0, green: 250.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
             quoteLabel.text = quote.author.map { "Quoted @\($0.username)" } ?? "Quoted post"
             quoteBodyLabel.text = quote.body.isEmpty ? "Media post" : quote.body
-            quoteMediaHeightConstraint.constant = quote.media_url.isEmpty ? 0 : 116
+            quoteMediaHeightConstraint.constant = quote.media_url.isEmpty ? 0 : (quote.media_type == "video" ? 150 : 180)
+            quoteMediaView.onOpenVideo = { [weak self] url in
+                self?.onOpenVideo?(url)
+            }
             quoteMediaView.configure(urlString: quote.media_url, mediaType: quote.media_type, cache: mediaCache)
         } else {
             quoteView.isHidden = false
@@ -7843,14 +9428,18 @@ private final class NativeFeedPostCell: UITableViewCell {
         }
 
         statsLabel.text = "\(post.view_count) views  \(post.like_count) likes  \(post.comment_count) comments  \(post.repost_count) reposts  \(post.bookmark_count) saves"
-        if actionStack.arrangedSubviews.count == 4 {
+        if actionStack.arrangedSubviews.count >= 6 {
             let disabledColor = UIColor(red: 145.0 / 255.0, green: 155.0 / 255.0, blue: 178.0 / 255.0, alpha: 0.38)
             let defaultColor = UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
             actionStack.arrangedSubviews[0].tintColor = post.is_mine ? disabledColor : (post.has_liked ? UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 1) : defaultColor)
             actionStack.arrangedSubviews[1].tintColor = post.is_mine ? disabledColor : (post.has_reposted ? UIColor(red: 11.0 / 255.0, green: 145.0 / 255.0, blue: 92.0 / 255.0, alpha: 1) : defaultColor)
             actionStack.arrangedSubviews[3].tintColor = post.has_bookmarked ? UIColor(red: 11.0 / 255.0, green: 61.0 / 255.0, blue: 145.0 / 255.0, alpha: 1) : UIColor(red: 88.0 / 255.0, green: 99.0 / 255.0, blue: 126.0 / 255.0, alpha: 0.86)
+            actionStack.arrangedSubviews[4].tintColor = UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 0.86)
+            actionStack.arrangedSubviews[5].tintColor = UIColor(red: 191.0 / 255.0, green: 10.0 / 255.0, blue: 48.0 / 255.0, alpha: 0.92)
+            actionStack.arrangedSubviews[5].isHidden = post.can_edit != true
             actionStack.arrangedSubviews[0].alpha = post.is_mine ? 0.55 : 1
             actionStack.arrangedSubviews[1].alpha = post.is_mine ? 0.55 : 1
+            actionStack.arrangedSubviews[5].alpha = post.can_edit == true ? 1 : 0
         }
     }
 
@@ -7865,6 +9454,12 @@ private final class NativeFeedPostCell: UITableViewCell {
         }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         onAction?(currentPost, action)
+    }
+
+    @objc private func handleAuthorTap() {
+        guard let currentPost else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        onOpenAuthor?(currentPost.author)
     }
 }
 
@@ -7884,6 +9479,7 @@ private final class NativeCommentCell: UITableViewCell {
     private var currentComment: NativeComment?
     var onLike: ((NativeComment) -> Void)?
     var onReply: ((NativeComment) -> Void)?
+    var onOpenAuthor: ((NativeUserSummary) -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -7897,6 +9493,8 @@ private final class NativeCommentCell: UITableViewCell {
         contentView.addSubview(threadLine)
 
         avatarView.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.isUserInteractionEnabled = true
+        avatarView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleAuthorTap)))
         contentView.addSubview(avatarView)
 
         bubbleView.translatesAutoresizingMaskIntoConstraints = false
@@ -7906,6 +9504,8 @@ private final class NativeCommentCell: UITableViewCell {
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.font = .systemFont(ofSize: 14, weight: .bold)
         nameLabel.textColor = UIColor(red: 20.0 / 255.0, green: 33.0 / 255.0, blue: 61.0 / 255.0, alpha: 1)
+        nameLabel.isUserInteractionEnabled = true
+        nameLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleAuthorTap)))
         bubbleView.addSubview(nameLabel)
 
         metaLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -8002,6 +9602,12 @@ private final class NativeCommentCell: UITableViewCell {
     @objc private func handleReplyTap() {
         guard let currentComment else { return }
         onReply?(currentComment)
+    }
+
+    @objc private func handleAuthorTap() {
+        guard let currentComment else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        onOpenAuthor?(currentComment.author)
     }
 }
 
@@ -8465,5 +10071,11 @@ private extension UIView {
             }
         }
         return nil
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
