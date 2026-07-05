@@ -12,6 +12,11 @@
                 <span>{{ story.created_at|timesince }}</span>
             </div>
         </a>
+        {% if current_user.id == story.user_id or current_user.is_admin %}
+        <form action="{{ url_for('delete_story', story_id=story.id) }}" method="post">
+            <button class="ghost danger" type="submit">Delete story</button>
+        </form>
+        {% endif %}
     </div>
     <div class="story-frame">
         {% if story.media_path %}

@@ -21,7 +21,10 @@
     <header class="app-topbar">
         {% if show_topbar_home is not defined or show_topbar_home %}
         <a class="topbar-home" href="{{ url_for('index') }}">
-            <span class="topbar-home-mark">Home</span>
+            <span class="topbar-home-mark">
+                <img src="{{ url_for('static', filename='images/pia-logo.jpeg') }}" alt="" class="topbar-home-logo" aria-hidden="true">
+                <span>Home</span>
+            </span>
         </a>
         {% else %}
         <span class="topbar-home topbar-home-placeholder" aria-hidden="true"></span>
@@ -121,6 +124,7 @@
         const routePrefetchCache = new Map();
         let activeNavAbortController = null;
         let activeNavTarget = null;
+        const avatarImageSelector = "img.user-avatar, img.profile-avatar, img.topbar-avatar, img.mention-option-avatar, .story-ring img, .comment-profile-link img";
         const navCachePaths = new Set([
             "{{ url_for('index') }}",
             "{{ url_for('messages') }}",
@@ -197,9 +201,10 @@
         }
 
         function hydrateAvatarImages(root = document) {
-            root.querySelectorAll("img.user-avatar, img.profile-avatar").forEach((img) => {
+            root.querySelectorAll(avatarImageSelector).forEach((img) => {
                 img.loading = "eager";
                 img.decoding = "async";
+                img.classList.add("native-web-avatar-fix");
                 const src = img.currentSrc || img.src;
                 if (src && avatarImageCache.has(src)) {
                     img.classList.remove("avatar-loading");
@@ -237,7 +242,7 @@
         async function preloadAvatarImages(root) {
             const pending = Array.from(
                 new Set(
-                    Array.from(root.querySelectorAll("img.user-avatar, img.profile-avatar"))
+                    Array.from(root.querySelectorAll(avatarImageSelector))
                         .map((img) => img.currentSrc || img.getAttribute("src") || "")
                         .filter((src) => src && !avatarImageCache.has(src))
                 )
@@ -632,6 +637,17 @@
             return request;
         }
 
+        function prefetchLikelyRouteFromEvent(event) {
+            const link = event.target?.closest?.("a[href]");
+            if (!link || link.target || link.hasAttribute("download")) return;
+            const href = link.getAttribute("href") || "";
+            if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) return;
+            const normalizedUrl = normalizeAppUrl(href);
+            if (isCacheableRoute(normalizedUrl)) {
+                prefetchRoute(href);
+            }
+        }
+
         async function navigateInApp(url, options = {}) {
             const normalizedUrl = normalizeAppUrl(url);
             const currentNormalizedUrl = normalizeAppUrl(window.location.href);
@@ -664,6 +680,7 @@
                         resetScrollPosition();
                     }
                     renderedFromCache = true;
+                    document.body.classList.remove("page-is-transitioning");
                 }
                 const response = await fetchNavigationResponse(url, navController.signal);
                 if (!response.ok) {
@@ -1234,6 +1251,8 @@
 
         window.addEventListener("resize", positionMentionDropdown);
         window.addEventListener("scroll", positionMentionDropdown, true);
+        document.addEventListener("pointerover", prefetchLikelyRouteFromEvent, {passive: true});
+        document.addEventListener("touchstart", prefetchLikelyRouteFromEvent, {passive: true});
 
         window.addEventListener("pageshow", () => {
             document.body.classList.remove("page-is-transitioning");

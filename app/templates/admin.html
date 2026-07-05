@@ -27,8 +27,12 @@
         <div>
             <strong>{{ report.reason }}</strong>
             <p>Status: {{ report.status }}</p>
+            {% if report.reporter %}<p>Reporter: @{{ report.reporter.username }}</p>{% endif %}
             {% if report.reported_user %}<p>User: @{{ report.reported_user.username }}</p>{% endif %}
-            {% if report.post %}<p>Post ID: {{ report.post.id }}</p>{% endif %}
+            {% if report.post %}
+            <p>Post ID: {{ report.post.id }} by @{{ report.post.author.username }}</p>
+            <p class="muted">{{ report.post.body|truncate(180) }}</p>
+            {% endif %}
         </div>
         <form method="post">
             <input type="hidden" name="action" value="resolve_report">
@@ -89,7 +93,7 @@
         </div>
         <div class="form-row">
             <input type="email" name="email" placeholder="Email" required>
-            <input type="password" name="password" placeholder="Temporary password" required>
+            <input type="text" name="password" placeholder="Temporary password" value="Welcome to PIA 2026!" required>
         </div>
         <div class="actions">
             <label><input type="checkbox" name="is_verified"> Verified</label>
@@ -185,12 +189,15 @@
                     <input type="text" name="display_name" value="{{ user.display_name }}" placeholder="Display name">
                     <input type="text" name="username" value="{{ user.username }}" placeholder="Username">
                     <input type="email" name="email" value="{{ user.email }}" placeholder="Email">
+                    <input type="text" value="Existing passwords are hashed; set a new temp password below." readonly>
+                    <input type="password" name="new_password" placeholder="Set new temporary password">
                     <textarea name="bio" rows="3" placeholder="Bio">{{ user.bio }}</textarea>
                     <label><input type="checkbox" name="is_verified" {% if user.is_verified %}checked{% endif %}> Verified</label>
                     <label><input type="checkbox" name="is_creator" {% if user.is_creator %}checked{% endif %}> Creator</label>
                     <label><input type="checkbox" name="is_breaking_news" {% if user.is_breaking_news %}checked{% endif %}> Breaking news</label>
                     <label><input type="checkbox" name="is_banned" {% if user.is_banned %}checked{% endif %}> Banned</label>
                     <label><input type="checkbox" name="timeout_user" {% if user.is_timed_out %}checked{% endif %}> 1 day timeout</label>
+                    <input type="number" name="timeout_hours" min="1" max="720" value="24" placeholder="Timeout hours">
                     <button type="submit">Save changes</button>
                 </form>
             </details>

@@ -34,7 +34,9 @@ DEFAULT_BANNER_PATH = "images/pia-logo.jpeg"
 DEFAULT_AVATAR_EMOJIS = ["🦅", "⭐", "🔥", "🎤", "📣", "🎯", "🗽", "🧢", "🌟", "🚀", "🎬", "💬"]
 SEEDED_ACCOUNTS_PATH = BASE_DIR / "data" / "firebase_seed_accounts.txt"
 PROHIBITED_TERMS_PATH = BASE_DIR / "data" / "prohibited_terms.txt"
-IMPORTED_USER_PASSWORD = os.environ.get("IMPORTED_USER_PASSWORD", "WelcomePIA2026!")
+TEMPORARY_USER_PASSWORD = os.environ.get("TEMPORARY_USER_PASSWORD", "Welcome to PIA 2026!")
+IMPORTED_USER_PASSWORD = os.environ.get("IMPORTED_USER_PASSWORD", TEMPORARY_USER_PASSWORD)
+LEGACY_TEMPORARY_USER_PASSWORDS = ["WelcomePIA2026!"]
 HASHTAG_RE = re.compile(r"#(\w+)")
 MENTION_RE = re.compile(r"@(\w+)")
 PUSH_QUEUE_KEY = "pending_push_notifications"
@@ -456,6 +458,7 @@ class User(db.Model, TimestampMixin):
     is_admin = db.Column(db.Boolean, default=False, nullable=False)
     is_breaking_news = db.Column(db.Boolean, default=False, nullable=False)
     is_banned = db.Column(db.Boolean, default=False, nullable=False)
+    must_change_password = db.Column(db.Boolean, default=False, nullable=False)
     timeout_until = db.Column(db.DateTime)
     accepted_terms_at = db.Column(db.DateTime)
 
@@ -606,6 +609,8 @@ def create_app():
                 .limit(12)
                 .all()
             )
+            hidden_story_user_ids = moderation_hidden_user_ids(user, include_muted=True)
+            active_stories = [story for story in active_stories if story.user_id not in hidden_story_user_ids]
         return {
             "current_user": user,
             "notifications_count": unread_notifications_count(user),
@@ -680,6 +685,7 @@ def create_app():
                 display_name=display_name,
                 email=email,
                 is_admin=User.query.count() == 0,
+                must_change_password=True,
             )
             user.set_password(password)
             db.session.add(user)
@@ -710,6 +716,8 @@ def create_app():
             session["user_id"] = user.id
             remember_account(user)
             flash("Welcome back.", "success")
+            if user_requires_password_change(user):
+                return redirect(url_for("change_password"))
             if not user.accepted_terms_at:
                 return redirect(url_for("terms_agreement"))
             return redirect(url_for("admin" if user.is_admin else "index"))
@@ -725,6 +733,7 @@ def create_app():
                 "ok": True,
                 "logged_in": True,
                 "accepted_terms": bool(user.accepted_terms_at),
+                "must_change_password": user_requires_password_change(user),
                 "user": serialize_user_brief(user),
             }
         )
@@ -748,6 +757,7 @@ def create_app():
                 "ok": True,
                 "logged_in": True,
                 "accepted_terms": bool(user.accepted_terms_at),
+                "must_change_password": user_requires_password_change(user),
                 "user": serialize_user_brief(user),
             }
         )
@@ -792,6 +802,7 @@ def create_app():
                 "ok": True,
                 "logged_in": True,
                 "accepted_terms": bool(user.accepted_terms_at),
+                "must_change_password": user_requires_password_change(user),
                 "user": serialize_user_brief(user),
             }
         )
@@ -825,6 +836,62 @@ def create_app():
             flash("Thanks for agreeing to the community rules.", "success")
             return redirect(url_for("admin" if user.is_admin else "index"))
         return render_template("terms_gate.html", title="Community Rules")
+
+    @app.route("/change-password", methods=["GET", "POST"])
+    @login_required
+    def change_password():
+        user = current_user()
+        force = user_requires_password_change(user)
+        if request.method == "POST":
+            payload = request.get_json(silent=True) or request.form
+            current_password = payload.get("current_password", "")
+            new_password = payload.get("new_password", "")
+            confirm_password = payload.get("confirm_password", "")
+            if not current_password or not new_password or not confirm_password:
+                message = "Fill out every password field."
+                if wants_partial_response():
+                    return jsonify({"ok": False, "error": message}), 400
+                flash(message, "error")
+                return redirect(url_for("change_password"))
+            if not user.check_password(current_password):
+                message = "Your current password is incorrect."
+                if wants_partial_response():
+                    return jsonify({"ok": False, "error": message}), 400
+                flash(message, "error")
+                return redirect(url_for("change_password"))
+            if new_password != confirm_password:
+                message = "New password and confirmation must match."
+                if wants_partial_response():
+                    return jsonify({"ok": False, "error": message}), 400
+                flash(message, "error")
+                return redirect(url_for("change_password"))
+            if len(new_password) < 8:
+                message = "New password must be at least 8 characters."
+                if wants_partial_response():
+                    return jsonify({"ok": False, "error": message}), 400
+                flash(message, "error")
+                return redirect(url_for("change_password"))
+            if new_password == TEMPORARY_USER_PASSWORD:
+                message = "Choose a password that is not the temporary password."
+                if wants_partial_response():
+                    return jsonify({"ok": False, "error": message}), 400
+                flash(message, "error")
+                return redirect(url_for("change_password"))
+            user.set_password(new_password)
+            user.must_change_password = False
+            db.session.commit()
+            if wants_partial_response():
+                return jsonify({"ok": True, "must_change_password": False, "user": serialize_user_brief(user)})
+            flash("Password updated.", "success")
+            if not user.accepted_terms_at:
+                return redirect(url_for("terms_agreement"))
+            return redirect(url_for("admin" if user.is_admin else "index"))
+        return render_template("change_password.html", force=force, title="Change password")
+
+    @app.route("/api/password/change", methods=["POST"])
+    @login_required
+    def api_change_password():
+        return change_password()
 
     @app.route("/media/<path:filename>")
     def media_file(filename):
@@ -1092,13 +1159,22 @@ def create_app():
         user = current_user()
         if target.id == user.id:
             flash("You cannot block yourself.", "error")
+            if wants_partial_response():
+                return jsonify({"ok": False, "error": "You cannot block yourself."}), 400
             return redirect(request.referrer or url_for("profile", username=username))
         block = Block.query.filter_by(blocker_id=user.id, blocked_id=target.id).first()
         if block:
             db.session.delete(block)
             flash("User unblocked.", "success")
+            blocked = False
         else:
             db.session.add(Block(blocker_id=user.id, blocked_id=target.id))
+            Follow.query.filter(
+                or_(
+                    and_(Follow.follower_id == user.id, Follow.followed_id == target.id),
+                    and_(Follow.follower_id == target.id, Follow.followed_id == user.id),
+                )
+            ).delete(synchronize_session=False)
             db.session.add(
                 Report(
                     reporter_id=user.id,
@@ -1107,7 +1183,10 @@ def create_app():
                 )
             )
             flash("User blocked.", "success")
+            blocked = True
         db.session.commit()
+        if wants_partial_response():
+            return jsonify({"ok": True, "blocked": blocked, "user": serialize_profile_user(target, user)})
         return redirect(url_for("index"))
 
     @app.route("/users/<username>/mute", methods=["POST"])
@@ -1115,14 +1194,23 @@ def create_app():
     def mute_user(username):
         target = User.query.filter_by(username=username.lower()).first_or_404()
         user = current_user()
+        if target.id == user.id:
+            if wants_partial_response():
+                return jsonify({"ok": False, "error": "You cannot mute yourself."}), 400
+            flash("You cannot mute yourself.", "error")
+            return redirect(request.referrer or url_for("profile", username=username))
         mute = Mute.query.filter_by(muter_id=user.id, muted_id=target.id).first()
         if mute:
             db.session.delete(mute)
             flash("User unmuted.", "success")
+            muted = False
         else:
             db.session.add(Mute(muter_id=user.id, muted_id=target.id))
             flash("User muted.", "success")
+            muted = True
         db.session.commit()
+        if wants_partial_response():
+            return jsonify({"ok": True, "muted": muted, "user": serialize_profile_user(target, user)})
         return redirect(request.referrer or url_for("profile", username=username))
 
     @app.route("/search")
@@ -1180,7 +1268,9 @@ def create_app():
                 .limit(15)
                 .all()
             )
-        posts = [post for post in posts if viewer_can_see_post(viewer, post)]
+        hidden_user_ids = moderation_hidden_user_ids(viewer, include_muted=True)
+        users = [user for user in users if user.id not in hidden_user_ids]
+        posts = [post for post in posts if viewer_can_see_post(viewer, post) and post.user_id not in hidden_user_ids]
         reset_post_display_state(posts)
         register_visible_posts(posts, viewer)
         return jsonify(
@@ -1426,6 +1516,8 @@ def create_app():
             .limit(12)
             .all()
         )
+        hidden_story_user_ids = moderation_hidden_user_ids(user, include_muted=True)
+        stories = [story for story in stories if story.user_id not in hidden_story_user_ids]
         return jsonify(
             {
                 "ok": True,
@@ -1433,7 +1525,7 @@ def create_app():
                 "latest_post_id": max((post.id for post in posts), default=0),
                 "count": len(posts),
                 "posts": [serialized for serialized in (serialize_feed_post(post, user) for post in posts) if serialized],
-                "stories": [serialized for serialized in (serialize_feed_story(story) for story in stories) if serialized],
+                "stories": [serialized for serialized in (serialize_feed_story(story, user) for story in stories) if serialized],
                 "polls": [serialized for serialized in (serialize_feed_poll(poll, user) for poll in get_active_polls(user)) if serialized],
                 "current_user": serialize_user_brief(user),
                 "current_user_story": story_owner_has_active_story(user),
@@ -1493,6 +1585,59 @@ def create_app():
             create_notification(target.id, user.id, "follow", f"{user.username} followed you", url_for("profile", username=user.username))
         db.session.commit()
         return jsonify({"ok": True, "user": serialize_profile_user(target, user)})
+
+    @app.route("/api/users/<username>/block", methods=["POST"])
+    @login_required
+    def api_block_user(username):
+        target = User.query.filter_by(username=username.lower()).first_or_404()
+        user = current_user()
+        if target.id == user.id:
+            return jsonify({"ok": False, "error": "You cannot block yourself."}), 400
+        block = Block.query.filter_by(blocker_id=user.id, blocked_id=target.id).first()
+        if block:
+            db.session.delete(block)
+            blocked = False
+        else:
+            db.session.add(Block(blocker_id=user.id, blocked_id=target.id))
+            Follow.query.filter(
+                or_(
+                    and_(Follow.follower_id == user.id, Follow.followed_id == target.id),
+                    and_(Follow.follower_id == target.id, Follow.followed_id == user.id),
+                )
+            ).delete(synchronize_session=False)
+            blocked = True
+        db.session.commit()
+        return jsonify({"ok": True, "blocked": blocked, "user": serialize_profile_user(target, user)})
+
+    @app.route("/api/users/<username>/mute", methods=["POST"])
+    @login_required
+    def api_mute_user(username):
+        target = User.query.filter_by(username=username.lower()).first_or_404()
+        user = current_user()
+        if target.id == user.id:
+            return jsonify({"ok": False, "error": "You cannot mute yourself."}), 400
+        mute = Mute.query.filter_by(muter_id=user.id, muted_id=target.id).first()
+        if mute:
+            db.session.delete(mute)
+            muted = False
+        else:
+            db.session.add(Mute(muter_id=user.id, muted_id=target.id))
+            muted = True
+        db.session.commit()
+        return jsonify({"ok": True, "muted": muted, "user": serialize_profile_user(target, user)})
+
+    @app.route("/api/users/<username>/report", methods=["POST"])
+    @login_required
+    def api_report_user(username):
+        target = User.query.filter_by(username=username.lower()).first_or_404()
+        if target.id == current_user().id:
+            return jsonify({"ok": False, "error": "You cannot report yourself."}), 400
+        payload = request.get_json(silent=True) or {}
+        reason = (payload.get("reason") or "Profile reported from native app").strip()
+        report = Report(reporter_id=current_user().id, reported_user_id=target.id, reason=reason)
+        db.session.add(report)
+        db.session.commit()
+        return jsonify({"ok": True, "message": "Report sent to moderation.", "report": serialize_admin_report(report)})
 
     @app.route("/api/users/<username>/connections")
     @login_required
@@ -1627,6 +1772,7 @@ def create_app():
                     flash("New password must be at least 8 characters.", "error")
                     return redirect(url_for("settings"))
                 user.set_password(new_password)
+                user.must_change_password = False
             db.session.commit()
             flash("Settings updated.", "success")
             return redirect(url_for("settings"))
@@ -1683,7 +1829,7 @@ def create_app():
         db.session.add(story)
         db.session.commit()
         if wants_partial_response():
-            return jsonify({"ok": True, "story": serialize_feed_story(story)})
+            return jsonify({"ok": True, "story": serialize_feed_story(story, current_user())})
         flash("Story posted for 24 hours.", "success")
         return redirect(url_for("index"))
 
@@ -1698,6 +1844,23 @@ def create_app():
             flash("That story has expired.", "error")
             return redirect(url_for("index"))
         return render_template("story_view.html", story=story, title=f"@{story.author.username} story")
+
+    @app.route("/stories/<int:story_id>/delete", methods=["POST"])
+    @login_required
+    def delete_story(story_id):
+        story = Story.query.get_or_404(story_id)
+        user = current_user()
+        if story.user_id != user.id and not user.is_admin:
+            if wants_partial_response():
+                return jsonify({"ok": False, "error": "You cannot delete this story."}), 403
+            flash("You cannot delete this story.", "error")
+            return redirect(url_for("story_view", story_id=story.id))
+        db.session.delete(story)
+        db.session.commit()
+        if wants_partial_response():
+            return jsonify({"ok": True, "deleted": True, "story_id": story_id})
+        flash("Story deleted.", "success")
+        return redirect(url_for("index"))
 
     @app.route("/bookmarks")
     @login_required
@@ -1737,18 +1900,31 @@ def create_app():
     @app.route("/report", methods=["POST"])
     @login_required
     def report():
-        reason = request.form.get("reason", "").strip() or "Needs review"
-        post_id = request.form.get("post_id")
-        username = request.form.get("username")
+        payload = request.get_json(silent=True) or {}
+        reason = (payload.get("reason") or request.form.get("reason", "")).strip() or "Needs review"
+        post_id = payload.get("post_id") or request.form.get("post_id")
+        username = payload.get("username") or request.form.get("username")
         reported_user = User.query.filter_by(username=username.lower()).first() if username else None
+        post = None
+        if post_id:
+            try:
+                post = Post.query.get(int(post_id))
+            except (TypeError, ValueError):
+                post = None
+        if post_id and not post:
+            return jsonify({"ok": False, "error": "That post could not be found."}), 404
+        if username and not reported_user:
+            return jsonify({"ok": False, "error": "That user could not be found."}), 404
         report = Report(
             reporter_id=current_user().id,
-            post_id=int(post_id) if post_id else None,
+            post_id=post.id if post else None,
             reported_user_id=reported_user.id if reported_user else None,
             reason=reason,
         )
         db.session.add(report)
         db.session.commit()
+        if wants_partial_response():
+            return jsonify({"ok": True, "message": "Report sent to moderation.", "report_id": report.id, "report": serialize_admin_report(report)})
         flash("Report sent to moderation.", "success")
         return redirect(request.referrer or url_for("index"))
 
@@ -1802,27 +1978,8 @@ def create_app():
             {
                 "ok": True,
                 "stats": stats,
-                "reports": [
-                    {
-                        "id": report.id,
-                        "reason": report.reason,
-                        "status": report.status,
-                    }
-                    for report in reports
-                ],
-                "users": [
-                    {
-                        "id": user.id,
-                        "username": user.username,
-                        "display_name": user.display_name,
-                        "email": user.email,
-                        "is_admin": user.is_admin,
-                        "is_verified": user.is_verified,
-                        "is_creator": user.is_creator,
-                        "is_banned": user.is_banned,
-                    }
-                    for user in users
-                ],
+                "reports": [serialize_admin_report(report) for report in reports],
+                "users": [serialize_admin_user(user, current_user()) for user in users],
                 "polls": [
                     {
                         "id": poll.id,
@@ -1834,6 +1991,180 @@ def create_app():
                 ],
             }
         )
+
+    def serialize_admin_report(report):
+        post = report.post
+        reported_user = report.reported_user or (post.author if post and post.author else None)
+        return {
+            "id": report.id,
+            "reason": report.reason,
+            "status": report.status,
+            "created_at": report.created_at.isoformat() if report.created_at else "",
+            "reporter": serialize_user_brief(report.reporter) if report.reporter else None,
+            "reported_user": serialize_user_brief(reported_user) if reported_user else None,
+            "post": (
+                {
+                    "id": post.id,
+                    "body": post.body or "",
+                    "author": serialize_user_brief(post.author) if post.author else None,
+                    "url": url_for("post_detail", post_id=post.id),
+                }
+                if post
+                else None
+            ),
+        }
+
+    def serialize_admin_user(user, admin_user):
+        timeout_until = user.timeout_until
+        if timeout_until and timeout_until.tzinfo is None:
+            timeout_until = timeout_until.replace(tzinfo=timezone.utc)
+        return {
+            "id": user.id,
+            "username": user.username,
+            "display_name": user.display_name,
+            "email": user.email,
+            "bio": user.bio or "",
+            "is_admin": bool(user.is_admin),
+            "is_verified": bool(user.is_verified),
+            "is_creator": bool(user.is_creator),
+            "is_breaking_news": bool(user.is_breaking_news),
+            "is_banned": bool(user.is_banned),
+            "is_timed_out": bool(user.is_timed_out),
+            "timeout_until": timeout_until.isoformat() if timeout_until else "",
+            "created_at": user.created_at.isoformat() if user.created_at else "",
+            "password_note": "Passwords are one-way hashed. Admins can set a new temporary password.",
+            "can_delete": bool(not user.is_admin),
+            "can_manage_admin": bool(user.id != admin_user.id),
+        }
+
+    @app.route("/api/admin/users", methods=["GET", "POST"])
+    @app.route("/api/admin/users/", methods=["GET", "POST"])
+    @app.route("/api/admin/users/list", methods=["GET"])
+    @admin_required
+    def api_admin_users():
+        admin_user = current_user()
+        if request.method == "GET":
+            query = request.args.get("q", "").strip().lower()
+            try:
+                limit = int(request.args.get("limit", 250))
+            except (TypeError, ValueError):
+                limit = 250
+            limit = max(1, min(limit, 1000))
+            users_query = User.query
+            if query:
+                like = f"%{query}%"
+                users_query = users_query.filter(
+                    or_(
+                        db.func.lower(User.display_name).like(like),
+                        db.func.lower(User.username).like(like),
+                        db.func.lower(User.email).like(like),
+                    )
+                )
+            total = users_query.count()
+            users = users_query.order_by(User.created_at.desc()).limit(limit).all()
+            return jsonify(
+                {
+                    "ok": True,
+                    "query": query,
+                    "count": total,
+                    "limit": limit,
+                    "users": [serialize_admin_user(user, admin_user) for user in users],
+                }
+            )
+
+        payload = request.get_json(silent=True) or {}
+        action = (payload.get("action") or "").strip()
+        target = None
+        if payload.get("target_id"):
+            target = User.query.get_or_404(int(payload.get("target_id")))
+
+        if action == "create_user":
+            display_name = (payload.get("display_name") or "").strip()
+            username = (payload.get("username") or "").strip().lower()
+            email = (payload.get("email") or "").strip().lower()
+            password = (payload.get("password") or "").strip()
+            if not display_name or not username or not email or len(password) < 8:
+                return jsonify({"ok": False, "error": "Add display name, username, email, and an 8+ character password."}), 400
+            if User.query.filter((User.username == username) | (User.email == email)).first():
+                return jsonify({"ok": False, "error": "That username or email is already in use."}), 400
+            target = User(
+                username=username,
+                display_name=display_name,
+                email=email,
+                bio=(payload.get("bio") or "").strip(),
+                is_verified=bool(payload.get("is_verified")),
+                is_creator=bool(payload.get("is_creator")),
+                is_breaking_news=bool(payload.get("is_breaking_news")),
+                must_change_password=True,
+            )
+            target.set_password(password)
+            db.session.add(target)
+            db.session.commit()
+            return jsonify({"ok": True, "message": "Account created.", "user": serialize_admin_user(target, admin_user)})
+
+        if not target:
+            return jsonify({"ok": False, "error": "Missing user."}), 400
+
+        if action == "update_user":
+            username = (payload.get("username") or target.username).strip().lower()
+            email = (payload.get("email") or target.email).strip().lower()
+            if username != target.username and User.query.filter(User.username == username, User.id != target.id).first():
+                return jsonify({"ok": False, "error": "That username is already in use."}), 400
+            if email != target.email and User.query.filter(User.email == email, User.id != target.id).first():
+                return jsonify({"ok": False, "error": "That email is already in use."}), 400
+            target.display_name = (payload.get("display_name") or target.display_name).strip() or target.display_name
+            target.username = username or target.username
+            target.email = email or target.email
+            target.bio = (payload.get("bio") or "").strip()
+            for flag in ("is_verified", "is_creator", "is_breaking_news", "is_banned"):
+                if flag in payload:
+                    setattr(target, flag, bool(payload.get(flag)))
+            if target.is_banned:
+                target.timeout_until = None
+            password = (payload.get("password") or "").strip()
+            if password:
+                if len(password) < 8:
+                    return jsonify({"ok": False, "error": "New password must be at least 8 characters."}), 400
+                target.set_password(password)
+                target.must_change_password = True
+            db.session.commit()
+            return jsonify({"ok": True, "message": "User updated.", "user": serialize_admin_user(target, admin_user)})
+
+        if action == "toggle_flag":
+            flag = payload.get("flag")
+            if flag not in {"is_verified", "is_creator", "is_breaking_news", "is_banned"}:
+                return jsonify({"ok": False, "error": "Unknown flag."}), 400
+            setattr(target, flag, not bool(getattr(target, flag)))
+            if flag == "is_banned" and target.is_banned:
+                target.timeout_until = None
+            db.session.commit()
+            return jsonify({"ok": True, "message": "Flag updated.", "user": serialize_admin_user(target, admin_user)})
+
+        if action == "set_admin":
+            if target.id == admin_user.id:
+                return jsonify({"ok": False, "error": "You cannot change your own admin access here."}), 400
+            target.is_admin = bool(payload.get("is_admin"))
+            db.session.commit()
+            return jsonify({"ok": True, "message": "Admin access updated.", "user": serialize_admin_user(target, admin_user)})
+
+        if action == "timeout":
+            hours = int(payload.get("hours") or 24)
+            if hours <= 0:
+                target.timeout_until = None
+            else:
+                target.is_banned = False
+                target.timeout_until = datetime.now(timezone.utc) + timedelta(hours=min(hours, 24 * 30))
+            db.session.commit()
+            return jsonify({"ok": True, "message": "Timeout updated.", "user": serialize_admin_user(target, admin_user)})
+
+        if action == "delete_user":
+            if target.is_admin:
+                return jsonify({"ok": False, "error": "Admin accounts cannot be deleted here."}), 400
+            purge_user_account(target)
+            db.session.commit()
+            return jsonify({"ok": True, "message": "Account deleted.", "deleted_id": payload.get("target_id")})
+
+        return jsonify({"ok": False, "error": "Unknown admin action."}), 400
 
     @app.route("/admin", methods=["GET", "POST"])
     @admin_required
@@ -1907,10 +2238,18 @@ def create_app():
                 user.is_creator = bool(request.form.get("is_creator"))
                 user.is_breaking_news = bool(request.form.get("is_breaking_news"))
                 user.is_banned = bool(request.form.get("is_banned"))
+                new_password = request.form.get("new_password", "").strip()
+                if new_password:
+                    if len(new_password) < 8:
+                        flash("New password must be at least 8 characters.", "error")
+                        return redirect(url_for("admin", tab=tab))
+                    user.set_password(new_password)
+                    user.must_change_password = True
                 if user.is_banned:
                     user.timeout_until = None
                 elif request.form.get("timeout_user"):
-                    user.timeout_until = datetime.now(timezone.utc) + timedelta(days=1)
+                    timeout_hours = int(request.form.get("timeout_hours", 24) or 24)
+                    user.timeout_until = datetime.now(timezone.utc) + timedelta(hours=min(max(timeout_hours, 1), 24 * 30))
                 else:
                     user.timeout_until = None
                 flash("User details updated.", "success")
@@ -1932,8 +2271,10 @@ def create_app():
                     is_verified=bool(request.form.get("is_verified")),
                     is_creator=bool(request.form.get("is_creator")),
                     is_breaking_news=bool(request.form.get("is_breaking_news")),
+                    must_change_password=True,
                 )
                 user.set_password(password)
+                user.must_change_password = True
                 db.session.add(user)
                 flash("Account created.", "success")
             elif action == "promote_admin_by_email":
@@ -2107,6 +2448,19 @@ def current_user():
     return None
 
 
+def user_requires_password_change(user):
+    if not user:
+        return False
+    if bool(getattr(user, "must_change_password", False)):
+        return True
+    try:
+        return user.check_password(TEMPORARY_USER_PASSWORD) or any(
+            user.check_password(password) for password in LEGACY_TEMPORARY_USER_PASSWORDS
+        )
+    except Exception:
+        return False
+
+
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
@@ -2116,7 +2470,12 @@ def login_required(view):
                 return jsonify({"ok": False, "error": "Sign in to continue."}), 401
             flash("Sign in to continue.", "error")
             return redirect(url_for("login"))
-        allowed_without_terms = {"terms_agreement", "terms_of_use", "privacy", "logout"}
+        allowed_password_change = {"change_password", "api_change_password", "logout", "privacy", "terms_of_use"}
+        if user_requires_password_change(user) and request.endpoint not in allowed_password_change:
+            if request.path.startswith("/api/") or wants_partial_response():
+                return jsonify({"ok": False, "error": "Change your temporary password to continue.", "must_change_password": True}), 403
+            return redirect(url_for("change_password"))
+        allowed_without_terms = {"terms_agreement", "terms_of_use", "privacy", "logout", "change_password", "api_change_password"}
         if not user.accepted_terms_at and request.endpoint not in allowed_without_terms:
             if request.path.startswith("/api/") or wants_partial_response():
                 return jsonify({"ok": False, "error": "Please accept the Terms of Use to continue."}), 403
@@ -2142,6 +2501,8 @@ def admin_required(view):
     def wrapped(*args, **kwargs):
         user = current_user()
         if not user or not user.is_admin:
+            if request.path.startswith("/api/") or wants_partial_response():
+                return jsonify({"ok": False, "error": "Admin access only."}), 403
             flash("Admin access only.", "error")
             return redirect(url_for("index"))
         return view(*args, **kwargs)
@@ -2333,6 +2694,8 @@ def serialize_direct_message(message, viewer):
 
 def serialize_profile_user(user, viewer):
     summary = serialize_user_brief(user)
+    viewer_blocks_user = bool(viewer and viewer.id != user.id and is_blocked(viewer, user))
+    viewer_mutes_user = bool(viewer and viewer.id != user.id and is_muted(viewer, user))
     summary.update(
         {
             "bio": user.bio or "",
@@ -2344,12 +2707,15 @@ def serialize_profile_user(user, viewer):
             "post_count": Post.query.filter_by(user_id=user.id, reply_to_id=None).count(),
             "is_following": is_following(viewer, user),
             "can_follow": bool(viewer and viewer.id != user.id),
+            "can_block": bool(viewer and viewer.id != user.id),
+            "is_blocked": viewer_blocks_user,
+            "is_muted": viewer_mutes_user,
         }
     )
     return summary
 
 
-def serialize_feed_story(story):
+def serialize_feed_story(story, viewer=None):
     if not story or not story.author:
         return None
     media_path = story.media_path or ""
@@ -2361,6 +2727,7 @@ def serialize_feed_story(story):
         "media_type": "video" if media_path.lower().endswith((".mp4", ".mov", ".m4v", ".webm")) else ("image" if media_path else "text"),
         "url": url_for("story_view", story_id=story.id),
         "expires_at": story.expires_at.isoformat() if story.expires_at else "",
+        "can_delete": bool(viewer and (viewer.id == story.user_id or viewer.is_admin)),
     }
 
 
@@ -2504,6 +2871,25 @@ def is_blocked(viewer, target_user):
     return Block.query.filter_by(blocker_id=viewer.id, blocked_id=target_user.id).first() is not None
 
 
+def moderation_hidden_user_ids(viewer, include_muted=False):
+    if not viewer:
+        return set()
+    hidden = {
+        block.blocked_id
+        for block in Block.query.filter_by(blocker_id=viewer.id).all()
+    }
+    hidden.update(
+        block.blocker_id
+        for block in Block.query.filter_by(blocked_id=viewer.id).all()
+    )
+    if include_muted:
+        hidden.update(
+            mute.muted_id
+            for mute in Mute.query.filter_by(muter_id=viewer.id).all()
+        )
+    return hidden
+
+
 def has_liked(viewer, post):
     if not viewer or not post:
         return False
@@ -2638,8 +3024,11 @@ def create_notification(user_id, actor_id, note_type, message, link):
 def trending_topics(viewer=None):
     cutoff = datetime.now(timezone.utc) - timedelta(days=3)
     posts = Post.query.filter(Post.created_at >= cutoff, Post.reply_to_id.is_(None)).all()
+    hidden_user_ids = moderation_hidden_user_ids(viewer, include_muted=True)
     ranked = []
     for post in posts:
+        if post.user_id in hidden_user_ids:
+            continue
         if not viewer_can_see_post(viewer, post):
             continue
         score = (
@@ -2658,7 +3047,8 @@ def get_suggested_users(user):
     if not user:
         return User.query.order_by(User.created_at.desc()).limit(5).all()
     followed_ids = [follow.followed_id for follow in Follow.query.filter_by(follower_id=user.id).all()]
-    excluded = followed_ids + [user.id]
+    excluded = set(followed_ids + [user.id])
+    excluded.update(moderation_hidden_user_ids(user, include_muted=True))
     return User.query.filter(~User.id.in_(excluded)).order_by(User.created_at.desc()).limit(5).all()
 
 
@@ -3033,6 +3423,7 @@ def import_seed_accounts():
             username=username_from_email(email),
             display_name=display_name_from_email(email),
             email=email,
+            must_change_password=True,
         )
         user.set_password(IMPORTED_USER_PASSWORD)
         db.session.add(user)
@@ -3048,6 +3439,8 @@ def ensure_schema_updates():
     }
     if "is_banned" not in columns:
         db.session.execute(text("ALTER TABLE user ADD COLUMN is_banned BOOLEAN NOT NULL DEFAULT 0"))
+    if "must_change_password" not in columns:
+        db.session.execute(text("ALTER TABLE user ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT 0"))
     if "timeout_until" not in columns:
         db.session.execute(text("ALTER TABLE user ADD COLUMN timeout_until DATETIME"))
     if "dark_mode" not in columns:
