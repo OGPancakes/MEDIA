@@ -4,6 +4,8 @@ import app as app_module
 from app import app, db
 
 
+# Redeploy trigger: 2026-07-08T15:55:00-04:00
+
 def _no_forced_password_change(user):
     return False
 
