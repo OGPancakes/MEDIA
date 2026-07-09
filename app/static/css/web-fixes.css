@@ -1,5 +1,16 @@
 /* Emergency desktop web fixes that must load after the main stylesheet. */
-.post-card img.media-frame,
+.post-card img.media-frame {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: clamp(300px, 48vw, 620px) !important;
+    max-height: 620px !important;
+    aspect-ratio: auto !important;
+    margin: 0 auto !important;
+    object-fit: cover !important;
+    object-position: center center !important;
+}
+
 .post-detail-thread img.media-frame,
 img.media-frame {
     display: block !important;
@@ -7,7 +18,6 @@ img.media-frame {
     max-width: 100% !important;
     height: auto !important;
     max-height: none !important;
-    aspect-ratio: auto !important;
     margin: 0 auto !important;
     object-fit: contain !important;
     object-position: center center !important;
