@@ -1,4 +1,4 @@
-const CACHE_NAME = "pia-social-v2";
+const CACHE_NAME = "pia-social-v3";
 const CORE_ASSETS = [
   "/",
   "/static/css/styles.css",
@@ -7,21 +7,30 @@ const CORE_ASSETS = [
 ];
 
 const MEDIA_FRAME_FIX = `
+.post-card img.media-frame,
+.post-detail-thread img.media-frame,
 img.media-frame {
   display: block;
-  width: auto;
+  width: 100% !important;
   max-width: 100%;
-  height: auto;
-  max-height: min(620px, 72vh);
-  margin-inline: auto;
-  object-fit: contain;
-  object-position: center;
+  height: auto !important;
+  max-height: none !important;
+  aspect-ratio: auto !important;
+  margin: 0 auto !important;
+  object-fit: contain !important;
+  object-position: center center !important;
 }
 
+.post-card video.media-frame,
+.post-detail-thread video.media-frame,
 video.media-frame {
   display: block;
-  width: 100%;
-  max-height: min(620px, 72vh);
+  width: 100% !important;
+  max-width: 100%;
+  height: auto !important;
+  max-height: min(620px, 72vh) !important;
+  object-fit: contain !important;
+  object-position: center center !important;
 }
 `;
 
