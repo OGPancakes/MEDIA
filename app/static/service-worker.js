@@ -1,4 +1,4 @@
-const CACHE_NAME = "pia-social-v4";
+const CACHE_NAME = "pia-social-v5";
 const CORE_ASSETS = [
   "/",
   "/static/css/styles.css",
@@ -56,6 +56,7 @@ function appendMediaFrameFix(response) {
   return response.text().then((css) => {
     const headers = new Headers(response.headers);
     headers.set("content-type", "text/css; charset=utf-8");
+    headers.delete("content-length");
     return new Response(`${css}\n${MEDIA_FRAME_FIX}`, {
       status: response.status,
       statusText: response.statusText,
