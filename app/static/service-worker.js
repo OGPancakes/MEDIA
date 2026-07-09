@@ -1,4 +1,4 @@
-const CACHE_NAME = "pia-social-v3";
+const CACHE_NAME = "pia-social-v4";
 const CORE_ASSETS = [
   "/",
   "/static/css/styles.css",
@@ -7,7 +7,18 @@ const CORE_ASSETS = [
 ];
 
 const MEDIA_FRAME_FIX = `
-.post-card img.media-frame,
+.post-card img.media-frame {
+  display: block;
+  width: 100% !important;
+  max-width: 100%;
+  height: clamp(300px, 48vw, 620px) !important;
+  max-height: 620px !important;
+  aspect-ratio: auto !important;
+  margin: 0 auto !important;
+  object-fit: cover !important;
+  object-position: center center !important;
+}
+
 .post-detail-thread img.media-frame,
 img.media-frame {
   display: block;
@@ -15,7 +26,6 @@ img.media-frame {
   max-width: 100%;
   height: auto !important;
   max-height: none !important;
-  aspect-ratio: auto !important;
   margin: 0 auto !important;
   object-fit: contain !important;
   object-position: center center !important;
