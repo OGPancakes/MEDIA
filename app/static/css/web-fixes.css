@@ -1,0 +1,16 @@
+img.media-frame {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    max-height: min(620px, 72vh);
+    margin-inline: auto;
+    object-fit: contain;
+    object-position: center;
+}
+
+video.media-frame {
+    display: block;
+    width: 100%;
+    max-height: min(620px, 72vh);
+}
