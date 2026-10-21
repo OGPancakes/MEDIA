@@ -80,6 +80,8 @@ py -m venv .venv
 
 Fresh development databases do not receive a default administrator password. Existing accounts keep their passwords across restarts. For a new administrator, privately configure `PIA_INITIAL_ADMIN_PASSWORD` and optionally `PIA_INITIAL_ADMIN_EMAIL` before the first start. Remove the bootstrap password from the environment after the account exists.
 
+The retained local database contains legacy test accounts. Do not use that database for a real deployment. Start production with a fresh private `DATA_DIR` and configure a unique administrator password privately; never reuse historical test credentials. Existing stored test passwords have not been automatically changed.
+
 The app creates its SQLite database and a private `.secret_key` in `DATA_DIR`, which defaults to the project root. `.secret_key` must stay private and untracked. `.env` files are not automatically loaded by this Flask application; configure environment variables in your terminal or deployment service. Do not copy a production secret into documentation.
 
 APNs needs locally configured `APNS_KEY_ID`, `APNS_TEAM_ID`, and either `APNS_AUTH_KEY_PATH` or `APNS_AUTH_KEY`, plus the bundle/environment settings. Obtain private signing material through an authorized private channel. GitHub should not contain the private key.
