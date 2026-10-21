@@ -1,6 +1,6 @@
 # PIA Social
 
-Source setup instructions. Public-history credential and user-data remediation is still pending; the complete local backup is verified, but the latest source has not yet been pushed or verified from GitHub.
+The main branch contains sanitized source for Mac and Windows development. A complete local safety backup is retained separately. Older public history contains legacy test fixtures; do not reuse historical test credentials or publish private runtime data.
 
 PIA Social is a Python/Flask web application with a Capacitor iOS shell. The repository also includes Android source and a separate `pokestock-intel` application. Keep these existing folders unless a deliberate project split is planned.
 
@@ -138,3 +138,7 @@ If a conflict or diverged-history message appears, stop and inspect it. Do not b
 **Switching:** push on A → verify → open B → pull before editing.
 
 Official Codex/Windows guidance: https://learn.chatgpt.com/docs/windows/windows-app
+
+## Mac safety archive
+
+The local branch `private-history/pre-publication-20261021` and the private safety bundle preserve the original local commit history. Its source changes are included in public `main`, but the archive itself must stay local because it contains historical private/test material. Do not push the archive branch or use `git push --mirror`. Normal work uses `main` and a regular `git push`. The existing GitHub history was preserved without a force-push.
