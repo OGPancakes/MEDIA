@@ -1,5 +1,50 @@
+# Installed dependencies and generated web output
 node_modules/
 pokestock-intel/dist/
+
+# Xcode local state and generated output (keep project/workspace, assets and Podfile.lock)
+DerivedData/
+xcuserdata/
+*.xcuserstate
 ios/App/build/
 ios/App/Pods/
 ios/App/App/public/
+
+# Python runtime and development caches
+.pycache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Private runtime data: preserve locally; never publish account data or uploads
+/*.db
+/*.db-wal
+/*.db-shm
+/uploads/
+/app/static/uploads/
+/data/firebase_seed_accounts.txt
+/tools/google-play-internal-testers.csv
+/.local-data/
+
+# Private environment and signing material
+.secret_key
+.env
+.env.*
+!.env.example
+*.p8
+*.p12
+*.pfx
+*.pem
+*.key
+*.jks
+*.keystore
+*.mobileprovision
+
+# OS/editor metadata and logs
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+*.log

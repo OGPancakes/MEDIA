@@ -34,9 +34,10 @@ DEFAULT_BANNER_PATH = "images/pia-logo.jpeg"
 DEFAULT_AVATAR_EMOJIS = ["🦅", "⭐", "🔥", "🎤", "📣", "🎯", "🗽", "🧢", "🌟", "🚀", "🎬", "💬"]
 SEEDED_ACCOUNTS_PATH = BASE_DIR / "data" / "firebase_seed_accounts.txt"
 PROHIBITED_TERMS_PATH = BASE_DIR / "data" / "prohibited_terms.txt"
-TEMPORARY_USER_PASSWORD = os.environ.get("TEMPORARY_USER_PASSWORD", "Welcome to PIA 2026!")
+TEMPORARY_USER_PASSWORD = os.environ.get("TEMPORARY_USER_PASSWORD", "")
 IMPORTED_USER_PASSWORD = os.environ.get("IMPORTED_USER_PASSWORD", TEMPORARY_USER_PASSWORD)
-LEGACY_TEMPORARY_USER_PASSWORDS = ["WelcomePIA2026!"]
+LEGACY_TEMPORARY_USER_PASSWORDS = [value for value in os.environ.get("LEGACY_TEMPORARY_USER_PASSWORDS", "").splitlines() if value]
+SOFT_ENFORCE_PASSWORD_CHANGE = os.environ.get("SOFT_ENFORCE_PASSWORD_CHANGE", "1").lower() in {"1", "true", "yes", "on"}
 HASHTAG_RE = re.compile(r"#(\w+)")
 MENTION_RE = re.compile(r"@(\w+)")
 PUSH_QUEUE_KEY = "pending_push_notifications"
@@ -685,7 +686,8 @@ def create_app():
                 display_name=display_name,
                 email=email,
                 is_admin=User.query.count() == 0,
-                must_change_password=True,
+                must_change_password=False,
+                accepted_terms_at=datetime.now(timezone.utc),
             )
             user.set_password(password)
             db.session.add(user)
@@ -728,12 +730,14 @@ def create_app():
         user = current_user()
         if not user:
             return jsonify({"ok": True, "logged_in": False, "user": None})
+        if soften_password_change_requirement(user):
+            db.session.commit()
         return jsonify(
             {
                 "ok": True,
                 "logged_in": True,
                 "accepted_terms": bool(user.accepted_terms_at),
-                "must_change_password": user_requires_password_change(user),
+                "must_change_password": session_must_change_password(user),
                 "user": serialize_user_brief(user),
             }
         )
@@ -750,6 +754,10 @@ def create_app():
             return jsonify({"ok": False, "error": "This account has been banned."}), 403
         if user.is_timed_out:
             return jsonify({"ok": False, "error": "This account is temporarily timed out."}), 403
+        if not user.accepted_terms_at:
+            user.accepted_terms_at = datetime.now(timezone.utc)
+        soften_password_change_requirement(user)
+        db.session.commit()
         session["user_id"] = user.id
         remember_account(user)
         return jsonify(
@@ -757,7 +765,7 @@ def create_app():
                 "ok": True,
                 "logged_in": True,
                 "accepted_terms": bool(user.accepted_terms_at),
-                "must_change_password": user_requires_password_change(user),
+                "must_change_password": session_must_change_password(user),
                 "user": serialize_user_brief(user),
             }
         )
@@ -795,6 +803,10 @@ def create_app():
             return jsonify({"ok": False, "error": "This account has been banned."}), 403
         if user.is_timed_out:
             return jsonify({"ok": False, "error": "This account is temporarily timed out."}), 403
+        if not user.accepted_terms_at:
+            user.accepted_terms_at = datetime.now(timezone.utc)
+        soften_password_change_requirement(user)
+        db.session.commit()
         session["user_id"] = user.id
         remember_account(user)
         return jsonify(
@@ -802,7 +814,7 @@ def create_app():
                 "ok": True,
                 "logged_in": True,
                 "accepted_terms": bool(user.accepted_terms_at),
-                "must_change_password": user_requires_password_change(user),
+                "must_change_password": session_must_change_password(user),
                 "user": serialize_user_brief(user),
             }
         )
@@ -844,9 +856,9 @@ def create_app():
         force = user_requires_password_change(user)
         if request.method == "POST":
             payload = request.get_json(silent=True) or request.form
-            current_password = payload.get("current_password", "")
-            new_password = payload.get("new_password", "")
-            confirm_password = payload.get("confirm_password", "")
+            current_password = (payload.get("current_password", "") or "").strip()
+            new_password = (payload.get("new_password", "") or "").strip()
+            confirm_password = (payload.get("confirm_password", "") or "").strip()
             if not current_password or not new_password or not confirm_password:
                 message = "Fill out every password field."
                 if wants_partial_response():
@@ -871,7 +883,8 @@ def create_app():
                     return jsonify({"ok": False, "error": message}), 400
                 flash(message, "error")
                 return redirect(url_for("change_password"))
-            if new_password == TEMPORARY_USER_PASSWORD:
+            temporary_passwords = {TEMPORARY_USER_PASSWORD.strip(), *(password.strip() for password in LEGACY_TEMPORARY_USER_PASSWORDS)}
+            if new_password in temporary_passwords:
                 message = "Choose a password that is not the temporary password."
                 if wants_partial_response():
                     return jsonify({"ok": False, "error": message}), 400
@@ -2126,7 +2139,8 @@ def create_app():
                 is_verified=bool(payload.get("is_verified")),
                 is_creator=bool(payload.get("is_creator")),
                 is_breaking_news=bool(payload.get("is_breaking_news")),
-                must_change_password=True,
+                must_change_password=False,
+                accepted_terms_at=datetime.now(timezone.utc),
             )
             target.set_password(password)
             db.session.add(target)
@@ -2157,7 +2171,7 @@ def create_app():
                 if len(password) < 8:
                     return jsonify({"ok": False, "error": "New password must be at least 8 characters."}), 400
                 target.set_password(password)
-                target.must_change_password = True
+                target.must_change_password = False
             db.session.commit()
             return jsonify({"ok": True, "message": "User updated.", "user": serialize_admin_user(target, admin_user)})
 
@@ -2283,7 +2297,7 @@ def create_app():
                         flash("New password must be at least 8 characters.", "error")
                         return redirect(url_for("admin", tab=tab))
                     user.set_password(new_password)
-                    user.must_change_password = True
+                    user.must_change_password = False
                 if user.is_banned:
                     user.timeout_until = None
                 elif request.form.get("timeout_user"):
@@ -2310,10 +2324,10 @@ def create_app():
                     is_verified=bool(request.form.get("is_verified")),
                     is_creator=bool(request.form.get("is_creator")),
                     is_breaking_news=bool(request.form.get("is_breaking_news")),
-                    must_change_password=True,
+                    must_change_password=False,
+                    accepted_terms_at=datetime.now(timezone.utc),
                 )
                 user.set_password(password)
-                user.must_change_password = True
                 db.session.add(user)
                 flash("Account created.", "success")
             elif action == "promote_admin_by_email":
@@ -2487,6 +2501,23 @@ def current_user():
     return None
 
 
+def soften_password_change_requirement(user):
+    if not user or not SOFT_ENFORCE_PASSWORD_CHANGE:
+        return False
+    if bool(getattr(user, "must_change_password", False)):
+        user.must_change_password = False
+        return True
+    return False
+
+
+def session_must_change_password(user):
+    if not user:
+        return False
+    if SOFT_ENFORCE_PASSWORD_CHANGE:
+        return False
+    return user_requires_password_change(user)
+
+
 def user_requires_password_change(user):
     if not user:
         return False
@@ -2509,12 +2540,18 @@ def login_required(view):
                 return jsonify({"ok": False, "error": "Sign in to continue."}), 401
             flash("Sign in to continue.", "error")
             return redirect(url_for("login"))
-        allowed_password_change = {"change_password", "api_change_password", "logout", "privacy", "terms_of_use"}
-        if user_requires_password_change(user) and request.endpoint not in allowed_password_change:
+        allowed_password_change = {"change_password", "api_change_password", "logout", "privacy", "terms_of_use", "api_session"}
+        hard_password_gate = user_requires_password_change(user) and request.endpoint not in allowed_password_change
+        if SOFT_ENFORCE_PASSWORD_CHANGE and (request.path.startswith("/api/") or wants_partial_response()):
+            hard_password_gate = False
+        if hard_password_gate:
             if request.path.startswith("/api/") or wants_partial_response():
                 return jsonify({"ok": False, "error": "Change your temporary password to continue.", "must_change_password": True}), 403
             return redirect(url_for("change_password"))
         allowed_without_terms = {"terms_agreement", "terms_of_use", "privacy", "logout", "change_password", "api_change_password"}
+        if not user.accepted_terms_at and (request.path.startswith("/api/") or wants_partial_response()):
+            user.accepted_terms_at = datetime.now(timezone.utc)
+            db.session.commit()
         if not user.accepted_terms_at and request.endpoint not in allowed_without_terms:
             if request.path.startswith("/api/") or wants_partial_response():
                 return jsonify({"ok": False, "error": "Please accept the Terms of Use to continue."}), 403
@@ -3385,24 +3422,22 @@ def cleanup_expired_stories():
 
 
 def ensure_admin_account():
-    admin_user = User.query.filter_by(username="johnny").first()
-    if not admin_user:
-        admin_user = User(
-            username="johnny",
-            display_name="Johnny",
-            email="johnny-admin@local.app",
-            is_admin=True,
-            is_verified=True,
-            is_breaking_news=True,
-        )
-        admin_user.set_password("admin")
-        db.session.add(admin_user)
-    else:
-        admin_user.display_name = "Johnny"
-        admin_user.is_admin = True
-        admin_user.is_verified = True
-        admin_user.is_breaking_news = True
-        admin_user.set_password("admin")
+    # Existing accounts own their passwords. Never reset them at startup.
+    if User.query.filter_by(username="johnny").first():
+        return
+    initial_password = os.environ.get("PIA_INITIAL_ADMIN_PASSWORD", "").strip()
+    if not initial_password:
+        return
+    admin_user = User(
+        username="johnny",
+        display_name="Johnny",
+        email=os.environ.get("PIA_INITIAL_ADMIN_EMAIL", "johnny@example.invalid"),
+        is_admin=True,
+        is_verified=True,
+        is_breaking_news=True,
+    )
+    admin_user.set_password(initial_password)
+    db.session.add(admin_user)
     db.session.commit()
 
 
@@ -3453,6 +3488,9 @@ def display_name_from_email(email):
 
 
 def import_seed_accounts():
+    # Import only when an operator supplies a private initial password.
+    if not IMPORTED_USER_PASSWORD:
+        return
     emails = load_seed_account_emails()
     created = 0
     for email in emails:
@@ -3462,7 +3500,8 @@ def import_seed_accounts():
             username=username_from_email(email),
             display_name=display_name_from_email(email),
             email=email,
-            must_change_password=True,
+            must_change_password=False,
+            accepted_terms_at=datetime.now(timezone.utc),
         )
         user.set_password(IMPORTED_USER_PASSWORD)
         db.session.add(user)

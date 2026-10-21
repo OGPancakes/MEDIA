@@ -4,6 +4,7 @@ import UserNotifications
 
 extension Notification.Name {
     static let piaDidRegisterPushToken = Notification.Name("piaDidRegisterPushToken")
+    static let piaDidTapPushNotification = Notification.Name("piaDidTapPushNotification")
 }
 
 @UIApplicationMain
@@ -13,6 +14,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        if let payload = launchOptions?[.remoteNotification] as? [AnyHashable: Any] {
+            persistNotificationLink(from: payload)
+        }
         return true
     }
 
@@ -58,6 +62,31 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         print("APNs registration failed: \(error.localizedDescription)")
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        if #available(iOS 14.0, *) {
+            completionHandler([.banner, .list, .sound, .badge])
+        } else {
+            completionHandler([.alert, .sound, .badge])
+        }
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        let userInfo = response.notification.request.content.userInfo
+        if let link = persistNotificationLink(from: userInfo) {
+            NotificationCenter.default.post(name: .piaDidTapPushNotification, object: nil, userInfo: ["link": link])
+        }
+        completionHandler()
+    }
+
+    @discardableResult
+    private func persistNotificationLink(from userInfo: [AnyHashable: Any]) -> String? {
+        guard let rawLink = userInfo["link"] as? String else { return nil }
+        let link = rawLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !link.isEmpty else { return nil }
+        UserDefaults.standard.set(link, forKey: "pia.pendingPushLink")
+        return link
     }
 
 }

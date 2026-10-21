@@ -2175,7 +2175,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                         }
                         self.applyNativeLoggedInUser(user, resetContent: true)
                         if payload.must_change_password {
-                            self.presentNativeRequiredPasswordChange()
+                            self.presentNativeRequiredPasswordChange(for: user.username)
                             return
                         }
                         self.showNativeFlash(message: "Switched to @\(user.username).", category: "success")
@@ -3037,8 +3037,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
         alert.addTextField {
             $0.placeholder = "Temporary password"
-            $0.text = "Welcome to PIA 2026!"
-            $0.isSecureTextEntry = false
+            $0.isSecureTextEntry = true
         }
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         alert.addAction(UIAlertAction(title: "Create", style: .default) { [weak self, weak alert] _ in
@@ -3316,7 +3315,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     }
                     self.applyNativeLoggedInUser(user, resetContent: true)
                     if payload.must_change_password {
-                        self.presentNativeRequiredPasswordChange()
+                        self.presentNativeRequiredPasswordChange(for: user.username)
                     }
                 case .failure(let error):
                     self.nativeAuthErrorLabel.text = error.localizedDescription
@@ -3326,12 +3325,16 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
         }
     }
 
-    private func presentNativeRequiredPasswordChange() {
+    private func presentNativeRequiredPasswordChange(for username: String? = nil, errorMessage: String? = nil) {
         DispatchQueue.main.async {
             guard self.presentedViewController == nil else { return }
+            let requiredUsername = username ?? self.currentUsername
+            guard requiredUsername.isEmpty || self.currentUsername.isEmpty || self.currentUsername == requiredUsername else { return }
+            let baseMessage = "This account is using the temporary password. Choose a new one to continue."
+            let message = [baseMessage, errorMessage].compactMap { $0 }.joined(separator: "\n\n")
             let alert = UIAlertController(
                 title: "Change your password",
-                message: "This account is using the temporary password. Choose a new one to continue.",
+                message: message,
                 preferredStyle: .alert
             )
             alert.addTextField {
@@ -3352,9 +3355,9 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
             alert.addAction(UIAlertAction(title: "Save", style: .default) { [weak self, weak alert] _ in
                 guard let self else { return }
                 let fields = alert?.textFields ?? []
-                let current = fields[safe: 0]?.text ?? ""
-                let newPassword = fields[safe: 1]?.text ?? ""
-                let confirm = fields[safe: 2]?.text ?? ""
+                let current = (fields[safe: 0]?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let newPassword = (fields[safe: 1]?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let confirm = (fields[safe: 2]?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 self.performNativeJSONRequest(path: "/api/password/change", method: "POST", bodyObject: [
                     "current_password": current,
                     "new_password": newPassword,
@@ -3362,6 +3365,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                 ]) { [weak self] result in
                     DispatchQueue.main.async {
                         guard let self else { return }
+                        guard requiredUsername.isEmpty || self.currentUsername == requiredUsername else { return }
                         switch result {
                         case .success(let data):
                             if let payload = try? JSONDecoder().decode(NativePasswordChangeResponse.self, from: data), payload.ok {
@@ -3369,12 +3373,12 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                                 self.syncNativeSessionFromAPI()
                                 return
                             }
-                            let error = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.error ?? "Password update failed."
+                            let error = (try? JSONDecoder().decode(NativeAPIErrorResponse.self, from: data))?.displayMessage ?? "Password update failed."
                             self.showNativeFlash(message: error, category: "error")
-                            self.presentNativeRequiredPasswordChange()
+                            self.presentNativeRequiredPasswordChange(for: requiredUsername, errorMessage: error)
                         case .failure(let error):
                             self.showNativeFlash(message: error.localizedDescription, category: "error")
-                            self.presentNativeRequiredPasswordChange()
+                            self.presentNativeRequiredPasswordChange(for: requiredUsername, errorMessage: error.localizedDescription)
                         }
                     }
                 }
@@ -4297,7 +4301,7 @@ final class AppViewController: CAPBridgeViewController, WKScriptMessageHandler, 
                     if payload.logged_in, let user = payload.user {
                         self.applyNativeLoggedInUser(user, resetContent: self.currentUsername != user.username)
                         if payload.must_change_password {
-                            self.presentNativeRequiredPasswordChange()
+                            self.presentNativeRequiredPasswordChange(for: user.username)
                         }
                     } else {
                         self.handleLoginState(loggedIn: false, username: "")

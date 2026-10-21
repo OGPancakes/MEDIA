@@ -2106,6 +2106,23 @@ body.native-compose-enabled .home-flow .composer {
     border: 1px solid var(--line);
 }
 
+img.media-frame {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    max-height: min(620px, 72vh);
+    margin-inline: auto;
+    object-fit: contain;
+    object-position: center;
+}
+
+video.media-frame {
+    display: block;
+    width: 100%;
+    max-height: min(620px, 72vh);
+}
+
 .flash {
     padding: 0.8rem 0.95rem;
     border-radius: 16px;
@@ -4168,4 +4185,47 @@ body.dark-mode .site-footer a {
     .profile-timeline-card {
         padding-bottom: 1rem;
     }
+}
+
+/* Emergency web media sizing override: feed cards should not reserve a huge
+   blank frame around portrait images on desktop browsers. */
+.post-card img.media-frame {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 auto !important;
+    object-fit: contain !important;
+    object-position: center center !important;
+}
+
+.post-detail-thread img.media-frame,
+.post-detail-card img.media-frame {
+    height: auto !important;
+    max-height: none !important;
+    object-fit: contain !important;
+}
+
+body:not(.native-compose-enabled) .home-flow .composer {
+    display: grid !important;
+}
+
+.web-compose-fab {
+    position: fixed;
+    right: max(1rem, env(safe-area-inset-right));
+    bottom: calc(6.2rem + env(safe-area-inset-bottom));
+    z-index: 70;
+    width: 52px;
+    height: 52px;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--navy);
+    color: var(--white);
+    text-decoration: none;
+    font-size: 1.55rem;
+    font-weight: 900;
+    line-height: 1;
+    box-shadow: 0 18px 44px rgba(11, 61, 145, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.3);
 }

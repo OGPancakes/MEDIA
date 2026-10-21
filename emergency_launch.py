@@ -1,3 +1,6 @@
+# Legacy launch wrapper: bypasses account password-change gates.
+# Normal deployment intentionally uses app:app instead.
+
 from datetime import datetime, timezone
 
 import app as app_module
